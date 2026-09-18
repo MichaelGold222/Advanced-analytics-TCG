@@ -1,5 +1,12 @@
-import { afterEach, describe, expect, it, vi } from 'vitest'
-import { PriceNetworkError, pokemonTcgIo, refreshQuotes } from './pricing'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { PriceNetworkError, maxAttempts, pokemonTcgIo, pricingTuning, refreshQuotes, resetPacing } from './pricing'
+
+// Exercise the real retry logic without waiting out its real backoff.
+beforeEach(() => {
+  pricingTuning.minRequestGapMs = 0
+  pricingTuning.retryDelaysMs = [0, 0, 0, 0]
+  resetPacing()
+})
 
 const CARD = {
   name: 'Charizard',
@@ -82,14 +89,30 @@ describe('lookup', () => {
     expect((await pokemonTcgIo.lookup({ name: 'Charizard' }))?.market).toBe(320)
   })
 
-  it('reports an unreachable API distinctly from a miss', async () => {
-    stubFetch(() => new TypeError('Failed to fetch'))
+  it('reports an unreachable API distinctly from a miss, after exhausting retries', async () => {
+    const queries = stubFetch(() => new TypeError('Failed to fetch'))
     await expect(pokemonTcgIo.lookup({ name: 'Charizard' })).rejects.toBeInstanceOf(PriceNetworkError)
+    expect(queries).toHaveLength(maxAttempts())
   })
 
-  it('names rate limiting for what it is', async () => {
-    stubFetch(() => ({ ok: false, status: 429 }))
-    await expect(pokemonTcgIo.lookup({ name: 'Charizard' })).rejects.toThrow(/rate limited/i)
+  it('retries a refused request before giving up', async () => {
+    // The API fails about half its requests with 500/502 regardless of rate,
+    // so a single failure must never end a lookup.
+    const queries = stubFetch(() => ({ ok: false, status: 500 }))
+    await expect(pokemonTcgIo.lookup({ name: 'Charizard' })).rejects.toThrow(/failed \d+ times/i)
+    expect(queries).toHaveLength(maxAttempts())
+  })
+
+  it('succeeds when a retry succeeds', async () => {
+    let calls = 0
+    stubFetch(() => (++calls < 3 ? { ok: false, status: 502 } : { cards: [CARD] }))
+    expect((await pokemonTcgIo.lookup({ name: 'Charizard' }))?.market).toBe(320)
+  })
+
+  it('recovers from an intermittent network-level failure', async () => {
+    let calls = 0
+    stubFetch(() => (++calls < 2 ? new TypeError('Failed to fetch') : { cards: [CARD] }))
+    expect((await pokemonTcgIo.lookup({ name: 'Charizard' }))?.market).toBe(320)
   })
 })
 
@@ -103,13 +126,16 @@ describe('test connection', () => {
     stubFetch(() => new TypeError('Failed to fetch'))
     const r = await pokemonTcgIo.test()
     expect(r.status).toBe('blocked')
-    expect(r.message).toMatch(/stopped from making the request/i)
+    expect(r.message).toMatch(/did not answer after \d+ attempts/i)
   })
 
-  it('distinguishes rate limiting and server errors', async () => {
-    stubFetch(() => ({ ok: false, status: 429 }))
-    expect((await pokemonTcgIo.test()).status).toBe('rate_limited')
-    vi.unstubAllGlobals()
+  it('does not call a recoverable failure a block', async () => {
+    let calls = 0
+    stubFetch(() => (++calls < 3 ? { ok: false, status: 502 } : { cards: [CARD] }))
+    expect((await pokemonTcgIo.test()).status).toBe('ok')
+  })
+
+  it('reports a persistent server error as a server error, not a block', async () => {
     stubFetch(() => ({ ok: false, status: 503 }))
     expect((await pokemonTcgIo.test()).status).toBe('http_error')
   })
@@ -126,9 +152,10 @@ describe('refreshQuotes', () => {
     // the identical failure once per row.
     const queries = stubFetch(() => new TypeError('Failed to fetch'))
     const outcome = await refreshQuotes(targets, pokemonTcgIo)
-    expect(outcome.blocked).toMatch(/could not reach/i)
+    expect(outcome.blocked).toMatch(/did not answer/i)
     expect(outcome.quotes.size).toBe(0)
-    expect(queries.length).toBeLessThan(targets.length)
+    // One card's worth of retries, not every card's.
+    expect(queries).toHaveLength(maxAttempts())
   })
 
   it('collects per-item misses without stopping', async () => {

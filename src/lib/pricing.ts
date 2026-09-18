@@ -34,16 +34,71 @@ export interface ConnectionResult {
 }
 
 /**
- * A blocked request and a failed one are indistinguishable to `fetch`: both
- * arrive as a bare TypeError, because the browser withholds the reason from
- * page code. Naming the likely cause is the only useful thing to do with it.
+ * A courtesy gap between requests. Measured against the live API, request
+ * spacing made no difference to the failure rate (4/10 failures back to back,
+ * 5/10 at 0.5s, 5/10 at 1.2s), so this is politeness, not a fix.
+ */
+const DEFAULT_MIN_REQUEST_GAP_MS = 250
+
+/**
+ * Backoff between retries.
+ *
+ * The API currently fails roughly half of all requests with 500 and 502,
+ * regardless of rate, and those failures carry no Access-Control-Allow-Origin
+ * header — so the browser discards them and hands page code a bare TypeError
+ * with no status, which is indistinguishable from being blocked. Retrying is
+ * the only thing that helps: at an observed ~50% failure rate, five attempts
+ * bring a single lookup's chance of failing to about 3%.
+ */
+const DEFAULT_RETRY_DELAYS_MS = [500, 1200, 2500, 5000]
+
+/** Request timing, in one place so it can be tuned or driven fast in tests. */
+export const pricingTuning = {
+  minRequestGapMs: DEFAULT_MIN_REQUEST_GAP_MS,
+  retryDelaysMs: [...DEFAULT_RETRY_DELAYS_MS],
+}
+
+/** Total attempts per request: the first, plus one per backoff delay. */
+export function maxAttempts(): number {
+  return pricingTuning.retryDelaysMs.length + 1
+}
+
+let nextSlot = 0
+
+function sleep(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(resolve, ms)
+    signal?.addEventListener('abort', () => {
+      clearTimeout(timer)
+      reject(new DOMException('Aborted', 'AbortError'))
+    }, { once: true })
+  })
+}
+
+/** Serialize requests onto a shared schedule, whatever calls them. */
+async function takeSlot(signal?: AbortSignal): Promise<void> {
+  const now = Date.now()
+  const at = Math.max(now, nextSlot)
+  nextSlot = at + pricingTuning.minRequestGapMs
+  if (at > now) await sleep(at - now, signal)
+}
+
+/** Reset pacing, so a test or a fresh run does not inherit an old schedule. */
+export function resetPacing(): void {
+  nextSlot = 0
+}
+
+/**
+ * Raised once retries are exhausted. The cause is genuinely ambiguous at this
+ * point — sustained throttling and a blocked page produce the identical bare
+ * TypeError — so the message names both rather than asserting one.
  */
 export class PriceNetworkError extends Error {
   readonly blocked = true
   readonly provider: string
   constructor(provider: string) {
     super(
-      `Could not reach ${provider}. This page was stopped from making the request — the page is not permitted to call outside services, or the network is down. Use Test connection in Data & settings for the specific cause.`,
+      `${provider} did not answer after ${maxAttempts()} attempts. This service currently fails about half of all requests with server errors, so some lookups failing is expected and retrying later usually works. It can also mean this page is not permitted to call outside services, or the network is down.`,
     )
     this.provider = provider
     this.name = 'PriceNetworkError'
@@ -83,25 +138,27 @@ export const pokemonTcgIo: PriceProvider = {
 
   async test(signal) {
     try {
-      const res = await fetch(cardsUrl('name:"pikachu"', 1), {
-        signal,
-        headers: apiKeyHeaders(),
-      })
-      if (res.status === 429) {
-        return { status: 'rate_limited' as const, message: 'Reached the price API, but it is rate limiting this browser. Add a free API key below, or wait a minute.' }
+      // Through fetchCards, so the test exercises the same pacing and retries
+      // the real lookups use and cannot report a transient refusal as a block.
+      await fetchCards('name:"pikachu"', this.label, signal)
+      return {
+        status: 'ok' as const,
+        message: 'Connected to the price API. Note that this service is currently unreliable — it fails roughly half of all requests — so a refresh retries each card up to 5 times and may still miss a few. Run it again to pick up the stragglers.',
       }
-      if (!res.ok) {
-        return { status: 'http_error' as const, message: `Reached the price API, but it answered ${res.status}. That is a problem on their end; try again later.` }
-      }
-      await res.json()
-      return { status: 'ok' as const, message: 'Connected to the price API. Lookups should work — anything still unpriced is a name that did not match, a graded card, or sealed product.' }
     } catch (err) {
       if ((err as Error)?.name === 'AbortError') throw err
+      if (err instanceof PriceNetworkError) {
+        return {
+          status: 'blocked' as const,
+          message: isFileOrigin()
+            ? 'This page was opened directly from a file, and browsers do not let a page opened that way call an outside service. That is the whole problem — the app and the price API are both fine. Serve the app over http instead (npm run serve), or set a price API address below.'
+            : err.message,
+        }
+      }
+      const message = err instanceof Error ? err.message : String(err)
       return {
-        status: 'blocked' as const,
-        message: isFileOrigin()
-          ? 'This page was opened directly from a file, and browsers do not let a page opened that way call an outside service. That is the whole problem — the app and the price API are both fine. Serve the app over http instead (npm run serve), or set a price API address below.'
-          : new PriceNetworkError(this.label).message,
+        status: /refus|rate/i.test(message) ? ('rate_limited' as const) : ('http_error' as const),
+        message,
       }
     }
   },
@@ -136,22 +193,33 @@ export const pokemonTcgIo: PriceProvider = {
 }
 
 async function fetchCards(query: string, label: string, signal?: AbortSignal): Promise<RawCard[]> {
-  let res: Response
-  try {
-    res = await fetch(cardsUrl(query, 8), { signal, headers: apiKeyHeaders() })
-  } catch (err) {
-    if ((err as Error)?.name === 'AbortError') throw err
-    throw new PriceNetworkError(label)
-  }
-  if (!res.ok) {
+  for (let attempt = 0; ; attempt++) {
+    if (attempt > 0) await sleep(pricingTuning.retryDelaysMs[attempt - 1], signal)
+    await takeSlot(signal)
+
+    let res: Response
+    try {
+      res = await fetch(cardsUrl(query, 8), { signal, headers: apiKeyHeaders() })
+    } catch (err) {
+      if ((err as Error)?.name === 'AbortError') throw err
+      // Either a genuine network failure or a refusal whose response the
+      // browser dropped for want of a CORS header. Retrying separates them.
+      if (attempt < pricingTuning.retryDelaysMs.length) continue
+      throw new PriceNetworkError(label)
+    }
+
+    if (res.ok) {
+      const body = (await res.json()) as { data?: unknown[] }
+      return (body.data ?? []) as RawCard[]
+    }
+    // 429 and 5xx are what throttling looks like when the status does survive.
+    if ((res.status === 429 || res.status >= 500) && attempt < pricingTuning.retryDelaysMs.length) continue
     throw new Error(
-      res.status === 429
-        ? 'Rate limited by the price API — add a free API key in Data & settings.'
+      res.status === 429 || res.status >= 500
+        ? `The price API failed ${maxAttempts()} times for this card (HTTP ${res.status}). The service is currently unreliable; try again later.`
         : `Price API returned ${res.status}.`,
     )
   }
-  const body = (await res.json()) as { data?: unknown[] }
-  return (body.data ?? []) as RawCard[]
 }
 
 interface RawCard {
@@ -312,7 +380,9 @@ export async function refreshQuotes(
   provider: PriceProvider = pokemonTcgIo,
   opts: { concurrency?: number; onProgress?: (done: number, total: number) => void; signal?: AbortSignal } = {},
 ): Promise<RefreshOutcome> {
-  const concurrency = opts.concurrency ?? 3
+  // Requests are serialized by the shared pacer regardless, so extra workers
+  // would only queue behind each other.
+  const concurrency = opts.concurrency ?? 1
   const quotes = new Map<string, PriceQuote>()
   const errors: RefreshOutcome['errors'] = []
   const skipped: RefreshOutcome['skipped'] = []

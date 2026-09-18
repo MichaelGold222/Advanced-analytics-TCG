@@ -35,6 +35,23 @@ the browser. A host that mediates downloads — the claude.ai Artifact viewer, w
 plain download link silently does nothing — is detected at runtime and the save is
 routed through it instead, so the same build works in both places.
 
+## About the price service
+
+Measured directly against `api.pokemontcg.io` (see `.github/workflows/api-check.yml`,
+which can be re-run any time): the service currently **fails roughly half of all
+requests** with HTTP 500 and Cloudflare 502, and request spacing makes no
+difference — 4/10 failures back to back, 5/10 at 0.5s apart, 5/10 at 1.2s apart.
+It is not rate limiting; the service is simply unreliable.
+
+Its error responses also carry no `Access-Control-Allow-Origin` header, so a
+browser discards them and hands page code a bare failure with no status — which
+is indistinguishable from the page being blocked from making the request at all.
+That is why a failing refresh used to report the wrong cause.
+
+Each lookup is therefore retried up to 5 times with backoff, which brings a
+single card's chance of failing to roughly 3%. A refresh that misses a few cards
+is expected; running it again picks them up.
+
 ## If prices will not load
 
 Price lookups go from the page straight to the Pokémon TCG API. Some hosts

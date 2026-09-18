@@ -291,8 +291,10 @@ export const useStore = create<AppState>((setState, getState) => ({
         error: outcome.blocked
           ? outcome.blocked
           : priced === 0 && outcome.attempted > 0
-            ? `Priced none of the ${outcome.attempted} items looked up. Every name came back without a match — check the spelling of a card and its set, or use Test connection in Data & settings.`
-            : null,
+            ? `Priced none of the ${outcome.attempted} items looked up. The price service is currently failing about half of all requests, so running the refresh again often picks up what it missed. If it never succeeds, use Test connection in Data & settings.`
+            : priced < outcome.attempted
+              ? `Priced ${priced} of ${outcome.attempted}. The price service is currently unreliable — run the refresh again to fill in the rest.`
+              : null,
       })
       scheduleSave(getState())
     } catch (err) {

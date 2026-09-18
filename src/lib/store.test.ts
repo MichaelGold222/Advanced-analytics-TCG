@@ -9,6 +9,7 @@ vi.mock('idb-keyval', () => ({
 }))
 
 import { purgeGradedSnapshots, selectSeries, useStore } from './store'
+import { pricingTuning, resetPacing } from './pricing'
 import { holdingKey } from './portfolio'
 import { computeFmv } from './analytics'
 import type { Holding } from './types'
@@ -44,7 +45,14 @@ const SLAB = holding({ name: 'Charizard', set: 'Base Set', number: '4', conditio
 
 beforeEach(() => {
   stubFetch()
-  useStore.setState({ holdings: [], watchlist: [], quotes: {}, snapshots: {}, uploadedHistory: {}, error: null })
+  // Exercise the real retry logic without waiting out its real backoff.
+  pricingTuning.minRequestGapMs = 0
+  pricingTuning.retryDelaysMs = [0, 0, 0, 0]
+  resetPacing()
+  useStore.setState({
+    holdings: [], watchlist: [], quotes: {}, snapshots: {}, uploadedHistory: {}, error: null,
+    refresh: { running: false, done: 0, total: 0, lastRun: null, errors: [], skipped: [] },
+  })
 })
 afterEach(() => vi.unstubAllGlobals())
 
@@ -123,7 +131,7 @@ describe('refreshPrices', () => {
     vi.stubGlobal('fetch', async () => { throw new TypeError('Failed to fetch') })
     useStore.setState({ holdings: [RAW] })
     await useStore.getState().refreshPrices()
-    expect(useStore.getState().error).toMatch(/could not reach/i)
+    expect(useStore.getState().error).toMatch(/did not answer/i)
   })
 
   it('keeps one snapshot per day, updating a same-day refresh in place', async () => {
