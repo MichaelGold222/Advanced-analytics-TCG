@@ -160,8 +160,29 @@ interface RawCard {
   cardmarket?: { url?: string; updatedAt?: string; prices?: { averageSellPrice?: number; lowPrice?: number; trendPrice?: number } }
 }
 
+const DIRECT_API = 'https://api.pokemontcg.io'
+
+/**
+ * Where to send price requests.
+ *
+ * Direct by default. Some hosts forbid a page from calling an outside service
+ * at all, and the browser reports that identically to being offline — no
+ * client-side change can talk its way past it. `npm run serve` therefore
+ * serves the app with a same-origin proxy and stamps its path into this meta
+ * tag, which removes the cross-origin call entirely.
+ */
+export function apiBase(): string {
+  if (typeof document === 'undefined') return DIRECT_API
+  const configured = document.querySelector('meta[name="price-api-base"]')?.getAttribute('content')
+  return configured?.trim() || DIRECT_API
+}
+
 function cardsUrl(query: string, pageSize: number): string {
-  const url = new URL('https://api.pokemontcg.io/v2/cards')
+  const base = apiBase()
+  const url = new URL(
+    `${base.replace(/\/$/, '')}/v2/cards`,
+    typeof location === 'undefined' ? DIRECT_API : location.href,
+  )
   url.searchParams.set('q', query)
   url.searchParams.set('pageSize', String(pageSize))
   url.searchParams.set('orderBy', '-set.releaseDate')
@@ -229,7 +250,12 @@ export const PROVIDERS: PriceProvider[] = [pokemonTcgIo]
 export interface RefreshTarget {
   key: string
   query: PriceLookup
-  /** Sealed product and graded slabs are not priced by a singles API. */
+  /**
+   * Graded copies still get a quote — it is shown as context — but the price
+   * describes a raw card, so it must never be recorded as this item's history.
+   */
+  graded?: boolean
+  /** Sealed product is not priced by a singles API. */
   skipReason?: string
 }
 

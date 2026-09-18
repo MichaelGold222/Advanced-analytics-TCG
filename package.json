@@ -10,7 +10,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "preview": "vite preview",
-    "build:single": "SINGLE_FILE=1 vite build && node scripts/inline.mjs"
+    "build:single": "SINGLE_FILE=1 vite build && node scripts/inline.mjs",
+    "serve": "npm run build && node scripts/serve.mjs"
   },
   "dependencies": {
     "idb-keyval": "^6.3.0",

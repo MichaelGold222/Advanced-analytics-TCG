@@ -35,6 +35,24 @@ the browser. A host that mediates downloads — the claude.ai Artifact viewer, w
 plain download link silently does nothing — is detected at runtime and the save is
 routed through it instead, so the same build works in both places.
 
+## If prices will not load
+
+Price lookups go from the page straight to the Pokémon TCG API. Some hosts
+forbid a page from calling an outside service at all, and a browser reports that
+exactly like being offline, so no client-side change can work around it.
+
+**Data & settings → Test connection** makes one small request and says which of
+"cannot reach the API", "rate limited", "server error" or "working" applies.
+If it cannot reach the API:
+
+```bash
+npm run serve      # http://localhost:4300
+```
+
+That serves the app with the price API proxied through the same origin. There is
+no cross-origin request left for anything to block. It is the reliable option
+when a page is restricted.
+
 ## Importing your sheet
 
 Click **Download template** for a workbook with the expected shape, or just upload

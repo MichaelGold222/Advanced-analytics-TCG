@@ -109,7 +109,7 @@ export const useStore = create<AppState>((setState, getState) => ({
   async hydrate() {
     try {
       const saved = await get<PersistedState>(DB_KEY)
-      if (saved) setState({ ...saved, hydrated: true })
+      if (saved) setState({ ...saved, snapshots: purgeGradedSnapshots(saved.snapshots), hydrated: true })
       else setState({ hydrated: true })
     } catch {
       setState({ hydrated: true })
@@ -238,6 +238,7 @@ export const useStore = create<AppState>((setState, getState) => ({
       targets.set(key, {
         key,
         query: { name: item.name, set: item.set, number: item.number },
+        graded: item.grade != null,
         skipReason:
           item.segment === 'sealed' && !provider.coversSealed
             ? 'Sealed product — this provider prices singles only. Import your own sold comps to value it.'
@@ -258,6 +259,7 @@ export const useStore = create<AppState>((setState, getState) => ({
       })
 
       const today = toISODate(new Date())
+      const gradedKeys = new Set(list.filter((t) => t.graded).map((t) => t.key))
       const snapshots = { ...getState().snapshots }
       const quotes = { ...getState().quotes }
       const cutoff = toISODate(new Date(Date.now() - SNAPSHOT_RETENTION_DAYS * 86_400_000))
@@ -266,6 +268,11 @@ export const useStore = create<AppState>((setState, getState) => ({
         quotes[key] = quote
         const price = quote.market ?? quote.mid
         if (price == null || price <= 0) continue
+        // A snapshot becomes permanent history, and this quote prices a raw
+        // card. Recording it against a slab would value a PSA 10 at ungraded
+        // money — and would do it behind the exclusion that exists to stop
+        // exactly that, since stored history is trusted from then on.
+        if (gradedKeys.has(key)) continue
         const existing = (snapshots[key] ?? []).filter((p) => p.date >= cutoff)
         // One snapshot per key per day; a same-day refresh updates in place.
         const withoutToday = existing.filter((p) => p.date !== today)
@@ -309,6 +316,26 @@ export const useStore = create<AppState>((setState, getState) => ({
     setState({ error: null })
   },
 }))
+
+/**
+ * Drop captured snapshots belonging to graded items.
+ *
+ * An earlier version recorded a raw-card quote as history against a slab,
+ * which then fed its valuation as trusted data. The grade is the last segment
+ * of the key, so the bad rows identify themselves. Imported comps are kept:
+ * those are the user's own, and are grade-specific.
+ */
+export function purgeGradedSnapshots(
+  snapshots: Record<string, PricePoint[]> = {},
+): Record<string, PricePoint[]> {
+  const out: Record<string, PricePoint[]> = {}
+  for (const [key, points] of Object.entries(snapshots)) {
+    const isGraded = key.split('|').pop() !== 'raw'
+    const kept = isGraded ? points.filter((p) => p.source !== 'snapshot') : points
+    if (kept.length > 0) out[key] = kept
+  }
+  return out
+}
 
 /** Build the price series for every known item, keyed for lookup. */
 export function selectSeries(state: AppState): Map<string, PriceSeries> {
