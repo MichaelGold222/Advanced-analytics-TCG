@@ -1,9 +1,7 @@
-# Diagnostic: how fast can the price API be called before it starts refusing?
+# Diagnostic: which price sources can actually value graded slabs?
 #
-# Its failures return instantly and carry no Access-Control-Allow-Origin
-# header, so a browser discards them and reports a bare network error with no
-# status. Throttling is therefore indistinguishable, from the page, from being
-# blocked outright. This measures the rate the API actually tolerates.
+# The Pokémon TCG API prices raw singles only. This probes the candidates that
+# claim graded coverage, to see what each requires, before any is wired in.
 #
 # Run from the Actions tab → "Price API check" → Run workflow.
 name: Price API check
@@ -14,44 +12,49 @@ jobs:
   check:
     runs-on: ubuntu-latest
     steps:
-      - name: Burst vs paced
+      - name: PriceCharting - graded singles and sealed
         run: |
-          NAMES="charizard blastoise venusaur pikachu mewtwo umbreon lugia gengar snorlax eevee"
-
-          run_at() {
-            local gap="$1" ok=0 fail=0
-            for n in $NAMES; do
-              code=$(curl -sS -o /dev/null -w '%{http_code}' --get \
-                -H 'Origin: https://michaelgold222.github.io' \
-                --data-urlencode "q=name:\"$n\"" --data-urlencode 'pageSize=8' \
-                'https://api.pokemontcg.io/v2/cards')
-              if [ "$code" = "200" ]; then ok=$((ok+1)); else fail=$((fail+1)); fi
-              printf '%s ' "$code"
-              [ -n "$gap" ] && sleep "$gap"
-            done
-            printf '\n  -> %s ok, %s failed\n\n' "$ok" "$fail"
-          }
-
-          echo "=== 10 requests back to back (what the app did) ==="
-          run_at ""
-          echo "=== 10 requests, 0.5s apart ==="
-          run_at 0.5
-          echo "=== 10 requests, 1.2s apart ==="
-          run_at 1.2
-
-      - name: Does a retry after a pause recover?
-        run: |
-          echo "=== hammer until refused, then wait and retry ==="
-          for i in 1 2 3 4 5 6 7 8; do
-            code=$(curl -sS -o /dev/null -w '%{http_code}' --get \
-              -H 'Origin: https://michaelgold222.github.io' \
-              --data-urlencode 'q=name:"charizard"' 'https://api.pokemontcg.io/v2/cards')
-            echo "burst $i -> $code"
-            [ "$code" != "200" ] && break
-          done
-          echo "waiting 5s..."
-          sleep 5
-          code=$(curl -sS -o /dev/null -w '%{http_code}' --get \
+          echo "=== product lookup, no token ==="
+          curl -sS -o /tmp/pc.json -w 'HTTP %{http_code}\n' \
+            'https://www.pricecharting.com/api/product?t=&q=charizard+base+set' || true
+          head -c 500 /tmp/pc.json; echo
+          echo
+          echo "=== does it serve CORS to a browser? ==="
+          curl -sS -D - -o /dev/null -X OPTIONS \
             -H 'Origin: https://michaelgold222.github.io' \
-            --data-urlencode 'q=name:"charizard"' 'https://api.pokemontcg.io/v2/cards')
-          echo "after pause -> $code"
+            -H 'Access-Control-Request-Method: GET' \
+            'https://www.pricecharting.com/api/product' | tr -d '\r' \
+            | grep -iE '^(HTTP/|access-control-)' || echo "no CORS headers on preflight"
+
+      - name: PSA - auction prices realized
+        run: |
+          echo "=== PSA public API, no token ==="
+          curl -sS -o /tmp/psa.json -w 'HTTP %{http_code}\n' \
+            'https://api.psacard.com/publicapi/cert/GetByCertNumber/12345678' || true
+          head -c 300 /tmp/psa.json; echo
+
+      - name: eBay - browse API reachability
+        run: |
+          echo "=== eBay browse API, no token ==="
+          curl -sS -o /tmp/ebay.json -w 'HTTP %{http_code}\n' \
+            'https://api.ebay.com/buy/browse/v1/item_summary/search?q=charizard+psa+10&limit=1' || true
+          head -c 300 /tmp/ebay.json; echo
+
+      - name: Does the current source carry any grade data at all?
+        run: |
+          echo "=== full record for one card, looking for graded fields ==="
+          curl -sS --get -H 'Origin: https://michaelgold222.github.io' \
+            --data-urlencode 'q=name:"charizard" set.name:"Base Set"' --data-urlencode 'pageSize=1' \
+            'https://api.pokemontcg.io/v2/cards' -o /tmp/p.json -w 'HTTP %{http_code}\n' || true
+          echo "price-related keys present:"
+          grep -oE '"(psa|bgs|cgc|graded|grade)[a-zA-Z0-9]*"' /tmp/p.json | sort -u || echo "  none — raw prices only"
+          echo "tcgplayer price variants offered:"
+          python3 -c "
+import json,sys
+try:
+    d=json.load(open('/tmp/p.json'))
+    c=d['data'][0]
+    print(' ', list((c.get('tcgplayer') or {}).get('prices',{}).keys()) or 'none')
+except Exception as e:
+    print('  could not parse:', e)
+"
