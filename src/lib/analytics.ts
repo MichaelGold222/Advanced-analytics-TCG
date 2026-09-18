@@ -1,0 +1,294 @@
+/**
+ * The valuation engine: fair market value, the trailing-52-week band, and
+ * what counts as a good entry.
+ *
+ * Two principles run through all of it:
+ *   - every number carries a confidence and a plain-English rationale, because
+ *     an unlabelled estimate off two data points is worse than no estimate;
+ *   - nothing is invented. If the history cannot support a 52-week high, the
+ *     result says `estimated` rather than quietly reporting the max of three points.
+ */
+import {
+  annualizedVolatility, clamp, clamp01, daysAgo, daysBetween, mean, percentile,
+  recencyWeight, rejectOutliers, toISODate,
+} from './stats'
+import type {
+  Confidence, EntryResult, EntryVerdict, FmvResult, ItemAnalysis, PricePoint,
+  PriceSeries, RangeResult,
+} from './types'
+
+/** How much each kind of observation is trusted, before recency is applied. */
+export const SOURCE_WEIGHTS: Record<PricePoint['source'], number> = {
+  market: 1.0,
+  sale: 0.95,
+  snapshot: 0.7,
+  mid: 0.5,
+  user: 0.45,
+  listing: 0.25,
+}
+
+/**
+ * Active asks sit above the price things actually clear at, so a listing is
+ * corrected downward rather than merely down-weighted - a systematic bias does
+ * not average out however many listings you add.
+ */
+export const LISTING_HAIRCUT = 0.92
+
+/** A 45-day half-life: a six-week-old comp counts half as much as today's. */
+export const FMV_HALF_LIFE_DAYS = 45
+export const WINDOW_DAYS = 365
+
+function effectivePrice(p: PricePoint): number {
+  return p.source === 'listing' ? p.price * LISTING_HAIRCUT : p.price
+}
+
+/** Sales volume is weak evidence of a thicker market; cap its influence at +50%. */
+function volumeBoost(volume?: number): number {
+  if (!volume || volume <= 0) return 1
+  return 1 + Math.min(Math.log10(1 + volume) / 2, 0.5)
+}
+
+export function pointsInWindow(points: PricePoint[], now = new Date(), windowDays = WINDOW_DAYS): PricePoint[] {
+  return points
+    .filter((p) => p.price > 0 && daysAgo(p.date, now) <= windowDays)
+    .sort((a, b) => a.date.localeCompare(b.date))
+}
+
+export function computeFmv(series: PriceSeries, now = new Date()): FmvResult {
+  const empty: FmvResult = {
+    fmv: null, confidence: 'none', agreement: 0, stalenessDays: null,
+    sampleSize: 0, contributors: [], rationale: ['No price data for this item yet.'],
+  }
+  const windowed = pointsInWindow(series.points, now)
+  if (windowed.length === 0) return empty
+
+  const { kept, dropped } = rejectOutliers(windowed, effectivePrice)
+  const contributors = kept.map((p) => {
+    const age = daysAgo(p.date, now)
+    const weight = SOURCE_WEIGHTS[p.source] * recencyWeight(age, FMV_HALF_LIFE_DAYS) * volumeBoost(p.volume)
+    return { source: p.source, value: effectivePrice(p), weight, date: p.date }
+  }).filter((c) => c.weight > 0)
+
+  const totalWeight = contributors.reduce((a, c) => a + c.weight, 0)
+  if (totalWeight <= 0) return empty
+  const fmv = contributors.reduce((a, c) => a + c.value * c.weight, 0) / totalWeight
+
+  // Weighted dispersion, expressed relative to the estimate itself.
+  const variance = contributors.reduce((a, c) => a + c.weight * (c.value - fmv) ** 2, 0) / totalWeight
+  const relSpread = fmv > 0 ? Math.sqrt(variance) / fmv : 1
+  const agreement = clamp01(1 - relSpread * 2)
+
+  const stalenessDays = Math.min(...kept.map((p) => daysAgo(p.date, now)))
+  const hasHardSource = kept.some((p) => p.source === 'market' || p.source === 'sale')
+
+  let confidence: Confidence = 'low'
+  if (kept.length >= 5 && stalenessDays <= 30 && agreement >= 0.7 && hasHardSource) confidence = 'high'
+  else if (kept.length >= 3 && stalenessDays <= 120 && agreement >= 0.45) confidence = 'medium'
+
+  const rationale: string[] = [
+    `Blended ${kept.length} observation${kept.length === 1 ? '' : 's'} from the last ${WINDOW_DAYS} days, weighted by source quality and recency (${FMV_HALF_LIFE_DAYS}-day half-life).`,
+  ]
+  if (dropped.length) rationale.push(`Discarded ${dropped.length} outlier${dropped.length === 1 ? '' : 's'} more than 3 MAD from the median.`)
+  if (kept.some((p) => p.source === 'listing')) rationale.push(`Active asks were cut ${Math.round((1 - LISTING_HAIRCUT) * 100)}% before blending, since listings sit above where cards actually clear.`)
+  if (!hasHardSource) rationale.push('No completed sale or market quote in the mix, so this leans on softer inputs.')
+  if (stalenessDays > 60) rationale.push(`Newest data point is ${Math.round(stalenessDays)} days old.`)
+  if (agreement < 0.45) rationale.push('Inputs disagree widely, so treat this as a rough midpoint rather than a price.')
+
+  return { fmv, confidence, agreement, stalenessDays, sampleSize: kept.length, contributors, rationale }
+}
+
+export function compute52WeekRange(series: PriceSeries, reference: number | null, now = new Date()): RangeResult {
+  const windowed = pointsInWindow(series.points, now)
+  if (windowed.length === 0) {
+    return { high: null, low: null, position: null, coverageDays: 0, sampleSize: 0, confidence: 'none', estimated: true }
+  }
+  const prices = windowed.map(effectivePrice)
+  const high = Math.max(...prices)
+  const low = Math.min(...prices)
+  const coverageDays = daysBetween(windowed[0].date, windowed[windowed.length - 1].date)
+
+  let confidence: Confidence = 'low'
+  if (coverageDays >= 300 && windowed.length >= 20) confidence = 'high'
+  else if (coverageDays >= 120 && windowed.length >= 8) confidence = 'medium'
+
+  const position = reference != null && high > low ? clamp01((reference - low) / (high - low)) : reference != null ? 0.5 : null
+
+  return {
+    high, low, position, coverageDays, sampleSize: windowed.length, confidence,
+    estimated: coverageDays < 90 || windowed.length < 8,
+  }
+}
+
+/** Fallback discount demanded when a series is too short to measure volatility. */
+export const DEFAULT_DISCOUNT = 0.12
+
+export function computeEntry(
+  fmvResult: FmvResult,
+  range: RangeResult,
+  series: PriceSeries,
+  reference: number | null,
+  now = new Date(),
+): EntryResult {
+  const fmv = fmvResult.fmv
+  const windowed = pointsInWindow(series.points, now)
+  const volatility = annualizedVolatility(windowed.map((p) => ({ date: p.date, price: effectivePrice(p) })))
+
+  // A more volatile asset has to be bought further below fair value to be safe.
+  const requiredDiscount = volatility == null ? DEFAULT_DISCOUNT : clamp(volatility * 0.5, 0.06, 0.3)
+
+  const momentum90d = computeMomentum(windowed, now)
+  const rationale: string[] = []
+
+  if (fmv == null) {
+    return {
+      verdict: 'unknown', score: 0, entryPrice: null, stretchEntry: null,
+      requiredDiscount, volatility, momentum90d,
+      rationale: ['No fair market value could be established, so no entry price can be set.'],
+    }
+  }
+
+  const discountEntry = fmv * (1 - requiredDiscount)
+  // With a real history, blend the model price against where the market has
+  // actually traded, so the target is reachable rather than theoretical.
+  const prices = windowed.map(effectivePrice)
+  const p35 = prices.length >= 8 ? percentile(prices, 0.35) : null
+  const entryPrice = p35 != null ? (discountEntry + p35) / 2 : discountEntry
+
+  // The patient bid sits a further discount below the target, but is never
+  // proposed below anything the market has actually traded at - and never
+  // above the standard target, which a tight yearly low would otherwise cause.
+  const rawStretch = entryPrice * (1 - requiredDiscount)
+  const stretchEntry = Math.min(entryPrice, Math.max(rawStretch, range.low ?? rawStretch))
+
+  rationale.push(
+    volatility == null
+      ? `Too little history to measure volatility, so a default ${pct(DEFAULT_DISCOUNT)} discount to FMV is required.`
+      : `Annualized volatility of ${pct(volatility)} calls for a ${pct(requiredDiscount)} discount to FMV.`,
+  )
+  if (p35 != null) rationale.push('Target blends that discount with the 35th percentile of the last year of prices.')
+  if (stretchEntry >= entryPrice - 0.005 && range.low != null) {
+    rationale.push(`The market has not traded below ${money(range.low)} this year, so there is no deeper bid worth waiting for.`)
+  }
+  if (range.estimated && range.sampleSize > 0) rationale.push('The 52-week band is built on thin history — treat the high and low as indicative.')
+  if (momentum90d != null && momentum90d < -0.12) rationale.push(`Down ${pct(Math.abs(momentum90d))} over 90 days; the band may still be resetting lower, so patience costs little.`)
+  if (momentum90d != null && momentum90d > 0.2) rationale.push(`Up ${pct(momentum90d)} over 90 days; entries near the target may not come back.`)
+
+  if (reference == null) {
+    return {
+      verdict: 'unknown', score: 0, entryPrice, stretchEntry, requiredDiscount, volatility, momentum90d,
+      rationale: [...rationale, 'No asking price given, so there is nothing to judge against the target yet.'],
+    }
+  }
+
+  // 0 at `requiredDiscount` above FMV, ~33 at FMV, 100 at twice the discount below.
+  const rel = (fmv - reference) / fmv
+  const discountScore = clamp01((rel + requiredDiscount) / (3 * requiredDiscount)) * 100
+  const rangeScore = range.position != null ? (1 - range.position) * 100 : null
+  const score = Math.round(rangeScore == null ? discountScore : discountScore * 0.6 + rangeScore * 0.4)
+
+  let verdict: EntryVerdict
+  if (reference <= stretchEntry) verdict = 'strong_buy'
+  else if (reference <= entryPrice) verdict = 'buy'
+  else if (reference <= fmv * (1 + requiredDiscount * 0.5)) verdict = 'fair'
+  else if (reference <= fmv * (1 + requiredDiscount * 1.5)) verdict = 'rich'
+  else verdict = 'overpriced'
+
+  // Never call something a strong buy off evidence that cannot support it.
+  if (fmvResult.confidence === 'none') {
+    verdict = 'unknown'
+  } else if (fmvResult.confidence === 'low' && verdict === 'strong_buy') {
+    verdict = 'buy'
+    rationale.push('Capped at Buy rather than Strong buy: the FMV behind it is low confidence.')
+  }
+
+  rationale.push(
+    reference <= entryPrice
+      ? `Asking ${money(reference)} is at or below the ${money(entryPrice)} target.`
+      : `Asking ${money(reference)} is ${pct((reference - fmv) / fmv)} ${reference >= fmv ? 'above' : 'below'} FMV; the target is ${money(entryPrice)}.`,
+  )
+
+  return { verdict, score, entryPrice, stretchEntry, requiredDiscount, volatility, momentum90d, rationale }
+}
+
+/** Trailing 90-day drift, as a fraction of the mean price over the window. */
+function computeMomentum(points: PricePoint[], now = new Date()): number | null {
+  const recent = points.filter((p) => daysAgo(p.date, now) <= 90)
+  if (recent.length < 3) return null
+  const t0 = Date.parse(recent[0].date)
+  const xs = recent.map((p) => (Date.parse(p.date) - t0) / 86_400_000)
+  const ys = recent.map(effectivePrice)
+  const span = xs[xs.length - 1] - xs[0]
+  if (span < 14) return null
+  const m = mean(ys)
+  if (!(m > 0)) return null
+  const s = slopeOf(xs, ys)
+  return s == null ? null : (s * 90) / m
+}
+
+function slopeOf(xs: number[], ys: number[]): number | null {
+  const mx = mean(xs)
+  const my = mean(ys)
+  let num = 0
+  let den = 0
+  for (let i = 0; i < xs.length; i++) {
+    num += (xs[i] - mx) * (ys[i] - my)
+    den += (xs[i] - mx) ** 2
+  }
+  return den === 0 ? null : num / den
+}
+
+/**
+ * Run the whole pipeline for one item.
+ * `askingPrice` is what the user is being quoted; without one we judge the
+ * current market against itself using FMV as the reference.
+ */
+export function analyzeItem(series: PriceSeries, askingPrice?: number | null, now = new Date()): ItemAnalysis {
+  const fmv = computeFmv(series, now)
+  const reference = askingPrice ?? null
+  const range = compute52WeekRange(series, reference ?? fmv.fmv, now)
+  const entry = computeEntry(fmv, range, series, reference, now)
+  return { key: series.key, fmv, range, entry, referencePrice: reference }
+}
+
+/** Assemble one item's series from uploaded history, stored snapshots and a live quote. */
+export function buildSeries(
+  key: string,
+  uploaded: PricePoint[] = [],
+  snapshots: PricePoint[] = [],
+  quote?: PriceSeries['quote'],
+  opts: { graded?: boolean } = {},
+): PriceSeries {
+  const points: PricePoint[] = [...uploaded, ...snapshots]
+  // A TCGplayer-style quote prices a raw card. Feeding it to a graded copy
+  // would value a PSA 10 at ungraded money, so for a slab the quote is kept
+  // on the series for display and deliberately excluded from the blend.
+  if (quote && !opts.graded) {
+    const date = quote.updatedAt ? toISODate(quote.updatedAt) : toISODate(new Date())
+    if (quote.market != null && quote.market > 0) points.push({ date, price: quote.market, source: 'market' })
+    if (quote.directLow != null && quote.directLow > 0) points.push({ date, price: quote.directLow, source: 'sale' })
+    if (quote.low != null && quote.high != null && quote.low > 0 && quote.high > 0) {
+      points.push({ date, price: (quote.low + quote.high) / 2, source: 'mid' })
+    }
+  }
+  // Collapse exact duplicates that repeated imports would otherwise pile up.
+  const seen = new Set<string>()
+  const deduped = points.filter((p) => {
+    const sig = `${p.date}|${p.price}|${p.source}`
+    if (seen.has(sig)) return false
+    seen.add(sig)
+    return true
+  })
+  return { key, points: deduped, quote }
+}
+
+/** Note appended for a graded item whose only market reference is a raw quote. */
+export const GRADED_QUOTE_NOTE =
+  'Graded copy: the available market quote prices a raw card, so it is shown for reference but excluded from FMV. Add your own sold comps for a grade-accurate value.'
+
+function pct(x: number): string {
+  return `${(x * 100).toFixed(1)}%`
+}
+
+function money(x: number): string {
+  return x.toLocaleString(undefined, { style: 'currency', currency: 'USD', maximumFractionDigits: 2 })
+}
