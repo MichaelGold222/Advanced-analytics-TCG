@@ -1,7 +1,10 @@
 import { useState } from 'react'
 import { Download, FileSpreadsheet, KeyRound, Plug, Trash2 } from 'lucide-react'
 import { UploadZone } from './UploadZone'
-import { getApiKey, pokemonTcgIo, setApiKey, type ConnectionResult } from '../lib/pricing'
+import {
+  getApiBaseOverride, getApiKey, isFileOrigin, pokemonTcgIo, setApiBaseOverride, setApiKey,
+  type ConnectionResult,
+} from '../lib/pricing'
 import { relativeTime } from '../lib/format'
 import type { ImportLogEntry, RefreshState } from '../lib/store'
 
@@ -20,6 +23,8 @@ export function DataPanel({ importLog, refresh, onImport, onTemplate, onExport, 
   const [confirmClear, setConfirmClear] = useState(false)
   const [testing, setTesting] = useState(false)
   const [test, setTest] = useState<ConnectionResult | null>(null)
+  const [apiBase, setApiBase] = useState(getApiBaseOverride())
+  const [baseSaved, setBaseSaved] = useState(false)
 
   async function runTest() {
     setTesting(true)
@@ -71,6 +76,18 @@ export function DataPanel({ importLog, refresh, onImport, onTemplate, onExport, 
             </button>
           </div>
 
+          {isFileOrigin() && (
+            <p
+              className="text-xs mt-4 mb-1 leading-relaxed rounded-md p-2"
+              style={{ background: 'color-mix(in oklab, var(--serious) 14%, transparent)' }}
+            >
+              <strong>Live prices will not work here.</strong> This page was opened straight from a file, and
+              browsers do not let a page opened that way call an outside service. Everything else works —
+              imports, valuations from your own comps, the whole dashboard. For live prices, serve the app over
+              http (<code>npm run serve</code>) or point it at your own address below.
+            </p>
+          )}
+
           <h3 className="text-sm font-semibold mt-5 mb-2">Connection</h3>
           <p className="text-xs secondary leading-relaxed mb-2">
             Makes one small request, so you can tell “this page cannot reach the price API” apart from
@@ -86,14 +103,33 @@ export function DataPanel({ importLog, refresh, onImport, onTemplate, onExport, 
               style={{ color: test.status === 'ok' ? 'var(--delta-up)' : 'var(--serious)' }}
             >
               {test.status === 'ok' ? '\u2713 ' : '\u26a0 '}{test.message}
-              {test.status === 'blocked' && (
+              {test.status === 'blocked' && !isFileOrigin() && (
                 <>
-                  {' '}Download the app as a single .html file and open that copy — a downloaded page is not
-                  subject to whatever is blocking this one.
+                  {' '}Serving the app yourself avoids this: <code>npm run serve</code> proxies price requests
+                  through its own origin, so there is no outside call left to block.
                 </>
               )}
             </p>
           )}
+
+          <h3 className="text-sm font-semibold mt-5 mb-2">Price API address</h3>
+          <p className="text-xs secondary leading-relaxed mb-2">
+            Leave blank to call the Pokémon TCG API directly. Set it to your own proxy or mirror when this page
+            is not allowed to reach it — <code>npm run serve</code> sets this for you automatically.
+          </p>
+          <div className="flex gap-2">
+            <input
+              className="input" placeholder="https://api.pokemontcg.io" value={apiBase}
+              aria-label="Price API base URL"
+              onChange={(e) => { setApiBase(e.target.value); setBaseSaved(false) }}
+            />
+            <button
+              type="button" className="btn"
+              onClick={() => { setApiBaseOverride(apiBase.trim().replace(/\/$/, '')); setBaseSaved(true); setTest(null) }}
+            >
+              {baseSaved ? 'Saved' : 'Save'}
+            </button>
+          </div>
 
           <h3 className="text-sm font-semibold mt-5 mb-2">Last price refresh</h3>
           <p className="text-xs secondary">

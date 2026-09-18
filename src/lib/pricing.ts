@@ -43,7 +43,7 @@ export class PriceNetworkError extends Error {
   readonly provider: string
   constructor(provider: string) {
     super(
-      `Could not reach ${provider}. The page was stopped from making the request — either this page is not allowed to call outside services, or the network is down.`,
+      `Could not reach ${provider}. This page was stopped from making the request — the page is not permitted to call outside services, or the network is down. Use Test connection in Data & settings for the specific cause.`,
     )
     this.provider = provider
     this.name = 'PriceNetworkError'
@@ -99,7 +99,9 @@ export const pokemonTcgIo: PriceProvider = {
       if ((err as Error)?.name === 'AbortError') throw err
       return {
         status: 'blocked' as const,
-        message: new PriceNetworkError(this.label).message,
+        message: isFileOrigin()
+          ? 'This page was opened directly from a file, and browsers do not let a page opened that way call an outside service. That is the whole problem — the app and the price API are both fine. Serve the app over http instead (npm run serve), or set a price API address below.'
+          : new PriceNetworkError(this.label).message,
       }
     }
   },
@@ -171,10 +173,43 @@ const DIRECT_API = 'https://api.pokemontcg.io'
  * serves the app with a same-origin proxy and stamps its path into this meta
  * tag, which removes the cross-origin call entirely.
  */
+const API_BASE_STORAGE = 'aa-tcg.apiBase'
+
+export function getApiBaseOverride(): string {
+  try {
+    return localStorage.getItem(API_BASE_STORAGE) ?? ''
+  } catch {
+    return ''
+  }
+}
+
+export function setApiBaseOverride(base: string): void {
+  try {
+    if (base) localStorage.setItem(API_BASE_STORAGE, base)
+    else localStorage.removeItem(API_BASE_STORAGE)
+  } catch {
+    /* storage unavailable; the override simply will not persist */
+  }
+}
+
 export function apiBase(): string {
+  const override = getApiBaseOverride()
+  if (override) return override
   if (typeof document === 'undefined') return DIRECT_API
   const configured = document.querySelector('meta[name="price-api-base"]')?.getAttribute('content')
   return configured?.trim() || DIRECT_API
+}
+
+/**
+ * True when this page was opened straight from disk.
+ *
+ * Such a page has no origin, and browsers forbid a page with no origin from
+ * calling an outside service. Nothing the page does changes that, so naming it
+ * is the only useful response — the generic "could not reach" message sends
+ * people looking for a network fault that is not there.
+ */
+export function isFileOrigin(): boolean {
+  return typeof location !== 'undefined' && location.protocol === 'file:'
 }
 
 function cardsUrl(query: string, pageSize: number): string {
