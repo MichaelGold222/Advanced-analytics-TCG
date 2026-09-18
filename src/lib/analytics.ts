@@ -9,7 +9,7 @@
  *     result says `estimated` rather than quietly reporting the max of three points.
  */
 import {
-  annualizedVolatility, clamp, clamp01, daysAgo, daysBetween, mean, percentile,
+  annualizedVolatility, clamp, clamp01, daysAgo, daysBetween, mad, mean, median, percentile,
   recencyWeight, rejectOutliers, toISODate,
 } from './stats'
 import type {
@@ -38,6 +38,17 @@ export const LISTING_HAIRCUT = 0.92
 export const FMV_HALF_LIFE_DAYS = 45
 export const WINDOW_DAYS = 365
 
+/**
+ * How many recent sales the median is taken over.
+ *
+ * For graded cards this is the method that matters: a median of the last few
+ * real sales is what the market actually pays, and it is robust to one
+ * outlier in a way an average is not. The weighted blend below is only a
+ * fallback for items with too few real sales to do this properly.
+ */
+export const SALES_FOR_MEDIAN = 5
+export const MIN_SALES_FOR_MEDIAN = 3
+
 function effectivePrice(p: PricePoint): number {
   return p.source === 'listing' ? p.price * LISTING_HAIRCUT : p.price
 }
@@ -62,6 +73,63 @@ export function computeFmv(series: PriceSeries, now = new Date()): FmvResult {
   const windowed = pointsInWindow(series.points, now)
   if (windowed.length === 0) return empty
 
+  return medianOfRecentSales(windowed, now) ?? weightedBlend(windowed, now)
+}
+
+/**
+ * The primary method: the median of the last few completed sales.
+ *
+ * Only real sales count. An asking price is not a sale, and a provider's
+ * market average is a summary of other people's sales rather than an
+ * observation of this item's.
+ */
+function medianOfRecentSales(windowed: PricePoint[], now: Date): FmvResult | null {
+  const sales = windowed
+    .filter((p) => p.source === 'sale')
+    .sort((a, b) => b.date.localeCompare(a.date))
+  if (sales.length < MIN_SALES_FOR_MEDIAN) return null
+
+  const used = sales.slice(0, SALES_FOR_MEDIAN)
+  const values = used.map(effectivePrice)
+  const fmv = median(values)
+  if (!(fmv > 0)) return null
+
+  const spread = mad(values) / fmv
+  const agreement = clamp01(1 - spread * 2)
+  const stalenessDays = daysAgo(used[0].date, now)
+  const oldestUsed = daysAgo(used[used.length - 1].date, now)
+
+  let confidence: Confidence = 'low'
+  if (used.length >= SALES_FOR_MEDIAN && stalenessDays <= 60 && agreement >= 0.6) confidence = 'high'
+  // Sales that disagree wildly do not become trustworthy by being numerous.
+  else if (used.length >= MIN_SALES_FOR_MEDIAN && stalenessDays <= 180 && agreement >= 0.35) confidence = 'medium'
+
+  const rationale = [
+    `Median of the last ${used.length} completed sale${used.length === 1 ? '' : 's'}, spanning ${Math.round(oldestUsed - stalenessDays)} days.`,
+  ]
+  if (sales.length > used.length) rationale.push(`${sales.length - used.length} older sale${sales.length - used.length === 1 ? '' : 's'} on record were not used; only the most recent ${SALES_FOR_MEDIAN} count.`)
+  if (used.length < SALES_FOR_MEDIAN) rationale.push(`Fewer than ${SALES_FOR_MEDIAN} sales available, so this is thinner than ideal.`)
+  if (stalenessDays > 90) rationale.push(`The newest sale is ${Math.round(stalenessDays)} days old.`)
+  if (agreement < 0.5) rationale.push('Those sales varied widely, so the true level is less certain than a single number suggests.')
+
+  return {
+    fmv,
+    confidence,
+    agreement,
+    stalenessDays,
+    sampleSize: used.length,
+    // Equal weight: a median does not favour one sale over another.
+    contributors: used.map((p) => ({ source: p.source, value: effectivePrice(p), weight: 1, date: p.date })),
+    rationale,
+  }
+}
+
+/** Fallback for items without enough real sales: blend whatever exists. */
+function weightedBlend(windowed: PricePoint[], now: Date): FmvResult {
+  const empty: FmvResult = {
+    fmv: null, confidence: 'none', agreement: 0, stalenessDays: null,
+    sampleSize: 0, contributors: [], rationale: ['No price data for this item yet.'],
+  }
   const { kept, dropped } = rejectOutliers(windowed, effectivePrice)
   const contributors = kept.map((p) => {
     const age = daysAgo(p.date, now)
@@ -73,26 +141,25 @@ export function computeFmv(series: PriceSeries, now = new Date()): FmvResult {
   if (totalWeight <= 0) return empty
   const fmv = contributors.reduce((a, c) => a + c.value * c.weight, 0) / totalWeight
 
-  // Weighted dispersion, expressed relative to the estimate itself.
   const variance = contributors.reduce((a, c) => a + c.weight * (c.value - fmv) ** 2, 0) / totalWeight
   const relSpread = fmv > 0 ? Math.sqrt(variance) / fmv : 1
   const agreement = clamp01(1 - relSpread * 2)
 
   const stalenessDays = Math.min(...kept.map((p) => daysAgo(p.date, now)))
-  const hasHardSource = kept.some((p) => p.source === 'market' || p.source === 'sale')
+  const salesOnRecord = kept.filter((p) => p.source === 'sale').length
 
+  // Without enough real sales this can never be more than a rough level,
+  // whatever the inputs agree on: none of them is a sale of this item.
   let confidence: Confidence = 'low'
-  if (kept.length >= 5 && stalenessDays <= 30 && agreement >= 0.7 && hasHardSource) confidence = 'high'
-  else if (kept.length >= 3 && stalenessDays <= 120 && agreement >= 0.45) confidence = 'medium'
+  if (kept.length >= 3 && stalenessDays <= 120 && agreement >= 0.45) confidence = 'medium'
 
   const rationale: string[] = [
-    `Blended ${kept.length} observation${kept.length === 1 ? '' : 's'} from the last ${WINDOW_DAYS} days, weighted by source quality and recency (${FMV_HALF_LIFE_DAYS}-day half-life).`,
+    `Fewer than ${MIN_SALES_FOR_MEDIAN} completed sales on record, so this falls back to a weighted blend of ${kept.length} observation${kept.length === 1 ? '' : 's'} — market quotes, asking prices and anything you entered — rather than a median of real sales.`,
+    `Add ${MIN_SALES_FOR_MEDIAN - salesOnRecord} or more sold comps and this switches to the median of the last ${SALES_FOR_MEDIAN} sales.`,
   ]
   if (dropped.length) rationale.push(`Discarded ${dropped.length} outlier${dropped.length === 1 ? '' : 's'} more than 3 MAD from the median.`)
   if (kept.some((p) => p.source === 'listing')) rationale.push(`Active asks were cut ${Math.round((1 - LISTING_HAIRCUT) * 100)}% before blending, since listings sit above where cards actually clear.`)
-  if (!hasHardSource) rationale.push('No completed sale or market quote in the mix, so this leans on softer inputs.')
   if (stalenessDays > 60) rationale.push(`Newest data point is ${Math.round(stalenessDays)} days old.`)
-  if (agreement < 0.45) rationale.push('Inputs disagree widely, so treat this as a rough midpoint rather than a price.')
 
   return { fmv, confidence, agreement, stalenessDays, sampleSize: kept.length, contributors, rationale }
 }

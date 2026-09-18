@@ -61,9 +61,18 @@ describe('computeFmv', () => {
     expect(r.rationale.join(' ')).toMatch(/asks were cut/i)
   })
 
-  it('throws out a wild outlier once the sample supports doing so', () => {
+  it('is unmoved by a wild outlier, because a median ignores it', () => {
     const points = steady(100, 12, 2)
     points.push({ date: daysBack(5), price: 100_000, source: 'sale' })
+    expect(computeFmv(series(points), NOW).fmv).toBeLessThan(150)
+  })
+
+  it('discards outliers on the blend path, which has no median to protect it', () => {
+    // Non-sale sources, so the median path does not apply.
+    const points: PricePoint[] = Array.from({ length: 12 }, (_, i) => ({
+      date: daysBack(i * 30), price: 100, source: 'user' as const,
+    }))
+    points.push({ date: daysBack(5), price: 100_000, source: 'user' })
     const r = computeFmv(series(points), NOW)
     expect(r.fmv).toBeLessThan(150)
     expect(r.rationale.join(' ')).toMatch(/outlier/i)
@@ -78,7 +87,7 @@ describe('computeFmv', () => {
     expect(r.rationale.join(' ')).not.toMatch(/outlier/i)
   })
 
-  it('drops confidence when the inputs disagree', () => {
+  it('drops confidence when the sales disagree', () => {
     const r = computeFmv(series([
       { date: daysBack(1), price: 50, source: 'sale' },
       { date: daysBack(2), price: 400, source: 'sale' },

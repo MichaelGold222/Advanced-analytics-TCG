@@ -1,7 +1,9 @@
-# Diagnostic: which price sources can actually value graded slabs?
+# Diagnostic: what does automatic eBay sold-comp data actually require?
 #
-# The Pokémon TCG API prices raw singles only. This probes the candidates that
-# claim graded coverage, to see what each requires, before any is wired in.
+# eBay sold listings are the ground truth for graded slabs. This establishes
+# which endpoint carries them, what authentication it needs, and whether a
+# browser can call it at all — which decides whether the dashboard can do this
+# alone or needs something server-side holding a credential.
 #
 # Run from the Actions tab → "Price API check" → Run workflow.
 name: Price API check
@@ -12,41 +14,44 @@ jobs:
   check:
     runs-on: ubuntu-latest
     steps:
-      - name: PriceCharting - graded singles and sealed
+      - name: Marketplace Insights - the sold-items endpoint
         run: |
-          echo "=== product lookup, no token ==="
-          curl -sS -o /tmp/pc.json -w 'HTTP %{http_code}\n' \
-            'https://www.pricecharting.com/api/product?t=&q=charizard+base+set' || true
-          head -c 500 /tmp/pc.json; echo
-          echo
-          echo "=== does it serve CORS to a browser? ==="
+          echo "=== item_sales/search, no token ==="
+          curl -sS -o /tmp/mi.json -w 'HTTP %{http_code}\n' \
+            'https://api.ebay.com/buy/marketplace_insights/v1_beta/item_sales/search?q=charizard%20psa%2010&limit=1' || true
+          head -c 400 /tmp/mi.json; echo
+
+      - name: Can a browser call eBay at all?
+        run: |
+          for path in \
+            'buy/marketplace_insights/v1_beta/item_sales/search' \
+            'buy/browse/v1/item_summary/search'; do
+            echo "=== CORS preflight: $path ==="
+            curl -sS -D - -o /dev/null -X OPTIONS \
+              -H 'Origin: https://michaelgold222.github.io' \
+              -H 'Access-Control-Request-Method: GET' \
+              -H 'Access-Control-Request-Headers: authorization' \
+              "https://api.ebay.com/$path" | tr -d '\r' \
+              | grep -iE '^(HTTP/|access-control-)' || echo "  no access-control headers -> a browser cannot call this"
+            echo
+          done
+
+      - name: Is the OAuth token endpoint browser-callable?
+        run: |
+          echo "=== oauth2/token preflight ==="
           curl -sS -D - -o /dev/null -X OPTIONS \
             -H 'Origin: https://michaelgold222.github.io' \
-            -H 'Access-Control-Request-Method: GET' \
-            'https://www.pricecharting.com/api/product' | tr -d '\r' \
-            | grep -iE '^(HTTP/|access-control-)' || echo "no CORS headers on preflight"
+            -H 'Access-Control-Request-Method: POST' \
+            'https://api.ebay.com/identity/v1/oauth2/token' | tr -d '\r' \
+            | grep -iE '^(HTTP/|access-control-)' || echo "  no access-control headers"
 
-      - name: PSA - auction prices realized
+      - name: Any open aggregator carrying eBay solds?
         run: |
-          echo "=== PSA public API, no token ==="
-          curl -sS -o /tmp/psa.json -w 'HTTP %{http_code}\n' \
-            'https://api.psacard.com/publicapi/cert/GetByCertNumber/12345678' || true
-          head -c 300 /tmp/psa.json; echo
-
-      - name: eBay - browse API reachability
-        run: |
-          echo "=== eBay browse API, no token ==="
-          curl -sS -o /tmp/ebay.json -w 'HTTP %{http_code}\n' \
-            'https://api.ebay.com/buy/browse/v1/item_summary/search?q=charizard+psa+10&limit=1' || true
-          head -c 300 /tmp/ebay.json; echo
-
-      - name: Does the current source carry any grade data at all?
-        run: |
-          echo "=== full record for one card, looking for graded fields ==="
-          curl -sS --get -H 'Origin: https://michaelgold222.github.io' \
-            --data-urlencode 'q=name:"charizard" set.name:"Base Set"' --data-urlencode 'pageSize=1' \
-            'https://api.pokemontcg.io/v2/cards' -o /tmp/p.json -w 'HTTP %{http_code}\n' || true
-          echo "grade-related keys anywhere in the record:"
-          grep -oiE '"(psa|bgs|cgc|sgc|graded|grade)[a-z0-9]*"' /tmp/p.json | sort -u || echo "  none - raw prices only"
-          echo "price variants offered:"
-          grep -oE '"(normal|holofoil|reverseHolofoil|1stEdition[A-Za-z]*|unlimited[A-Za-z]*)"' /tmp/p.json | sort -u || echo "  none"
+          probe() {
+            printf '%-46s -> HTTP %s\n' "$1" \
+              "$(curl -sS -m 12 -o /tmp/a.json -w '%{http_code}' "$2" 2>/dev/null || echo 'unreachable')"
+            head -c 160 /tmp/a.json 2>/dev/null; echo; echo
+          }
+          probe 'cardladder public'  'https://api.cardladder.com/v1/search?q=charizard'
+          probe '130point'           'https://back.130point.com/sales/?query=charizard+psa+10'
+          probe 'tcgplayer api'      'https://api.tcgplayer.com/catalog/categories'
