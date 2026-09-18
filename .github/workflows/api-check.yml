@@ -1,10 +1,9 @@
-# Diagnostic: is the price API reachable, and does it permit browser calls?
+# Diagnostic: which query forms does the price API accept?
 #
-# A browser only sends a cross-origin response to the page if the server
-# returns an Access-Control-Allow-Origin header. Without it the request
-# succeeds at the network level and the browser discards the result, which
-# page code sees as an ordinary failure with no explanation. This checks both
-# facts directly, from a machine with normal internet access.
+# An error response from this API carries no Access-Control-Allow-Origin
+# header, so a browser discards it and reports a bare network failure with no
+# status code. A rejected query is therefore indistinguishable, from the page,
+# from being blocked outright. This finds which forms are accepted.
 #
 # Run from the Actions tab → "Price API check" → Run workflow.
 name: Price API check
@@ -15,29 +14,36 @@ jobs:
   check:
     runs-on: ubuntu-latest
     steps:
-      - name: Does the API answer at all?
+      - name: Try each query form
         run: |
-          echo "=== GET /v2/cards (status + headers) ==="
-          curl -sS -D - -o /tmp/body.json -w '\nHTTP %{http_code} in %{time_total}s\n' \
-            'https://api.pokemontcg.io/v2/cards?q=name:"charizard"&pageSize=1' || echo "REQUEST FAILED"
-          echo
-          echo "=== first 400 bytes of body ==="
-          head -c 400 /tmp/body.json || true
-          echo
+          probe() {
+            local label="$1"; shift
+            # --data-urlencode encodes exactly as the browser's URLSearchParams does.
+            local out
+            out=$(curl -sS -o /tmp/b.json -w '%{http_code}' --get \
+              -H 'Origin: https://michaelgold222.github.io' \
+              "$@" 'https://api.pokemontcg.io/v2/cards' 2>&1)
+            printf '%-52s -> HTTP %s  %s\n' "$label" "$out" "$(head -c 110 /tmp/b.json | tr -d '\n')"
+          }
 
-      - name: Does it allow browser (cross-origin) calls?
-        run: |
-          echo "=== response headers with an Origin, as a browser sends ==="
-          curl -sS -D - -o /dev/null \
-            -H 'Origin: https://michaelgold222.github.io' \
-            'https://api.pokemontcg.io/v2/cards?q=name:"charizard"&pageSize=1' \
-            | tr -d '\r' | grep -iE '^(HTTP/|access-control-|content-type|retry-after|x-ratelimit)' \
-            || echo "NO ACCESS-CONTROL HEADERS — browsers will block this, whatever the page does"
+          echo "=== query forms ==="
+          probe 'bare, no params'
+          probe 'pageSize only'                  --data-urlencode 'pageSize=1'
+          probe 'name unquoted'                  --data-urlencode 'q=name:charizard'
+          probe 'name quoted'                    --data-urlencode 'q=name:"charizard"'
+          probe 'name quoted + pageSize'         --data-urlencode 'q=name:"charizard"' --data-urlencode 'pageSize=8'
+          probe 'name + orderBy releaseDate'     --data-urlencode 'q=name:"charizard"' --data-urlencode 'orderBy=-set.releaseDate'
+          probe 'name + orderBy name'            --data-urlencode 'q=name:"charizard"' --data-urlencode 'orderBy=name'
+          probe 'name + set.name'                --data-urlencode 'q=name:"charizard" set.name:"Base Set"'
+          probe 'name + number'                  --data-urlencode 'q=name:"charizard" number:"4"'
+          probe 'name + set.name + number'       --data-urlencode 'q=name:"charizard" set.name:"Base Set" number:"4"'
+          probe 'exactly what the app sends'     --data-urlencode 'q=name:"charizard" set.name:"Base Set" number:"4"' --data-urlencode 'pageSize=8' --data-urlencode 'orderBy=-set.releaseDate'
 
-      - name: Preflight check
+      - name: Do successful responses allow browser calls?
         run: |
-          echo "=== OPTIONS preflight ==="
-          curl -sS -D - -o /dev/null -X OPTIONS \
+          echo "=== headers on a form that works ==="
+          curl -sS -D - -o /dev/null --get \
             -H 'Origin: https://michaelgold222.github.io' \
-            -H 'Access-Control-Request-Method: GET' \
-            'https://api.pokemontcg.io/v2/cards' | tr -d '\r' | head -20 || true
+            --data-urlencode 'q=name:"charizard"' --data-urlencode 'pageSize=1' \
+            'https://api.pokemontcg.io/v2/cards' \
+            | tr -d '\r' | grep -iE '^(HTTP/|access-control-|content-type)' || echo "none matched"
