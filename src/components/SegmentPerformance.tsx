@@ -7,7 +7,7 @@ import type { PortfolioStats } from '../lib/types'
 /** Return against cost is a polarity question, so the color job is diverging. */
 export function SegmentPerformance({ stats }: { stats: PortfolioStats }) {
   const data = stats.segments
-    .filter((s) => s.costBasis > 0)
+    .filter((s) => s.valuedCostBasis > 0)
     .map((s) => ({
       name: SEGMENT_LABELS[s.segment],
       roi: s.roi ?? 0,
@@ -15,12 +15,12 @@ export function SegmentPerformance({ stats }: { stats: PortfolioStats }) {
       pos: (s.roi ?? 0) >= 0 ? (s.roi ?? 0) : null,
       neg: (s.roi ?? 0) < 0 ? (s.roi ?? 0) : null,
       unrealized: s.unrealized,
-      cost: s.costBasis,
+      cost: s.valuedCostBasis,
       value: s.marketValue,
     }))
 
   const table = {
-    columns: ['Segment', 'Cost basis', 'Market value', 'Unrealized', 'Return'],
+    columns: ['Segment', 'Cost of valued', 'Market value', 'Unrealized', 'Return'],
     rows: data.map((d) => [d.name, money(d.cost), money(d.value), money(d.unrealized), pct(d.roi)]) as (string | number)[][],
   }
 
@@ -29,11 +29,11 @@ export function SegmentPerformance({ stats }: { stats: PortfolioStats }) {
       title="Return by segment"
       subtitle="Unrealized gain against cost basis"
       table={table}
-      footnote="Segments holding positions we could not value will understate their return."
+      footnote="Return is measured only over positions that could be valued, so an unpriced position never reads as a loss."
     >
       {data.length === 0 ? (
         <div className="h-64 grid place-items-center text-sm muted text-center px-6">
-          Add a cost basis column to your sheet to see returns.
+          No segment has both a cost basis and a valued position yet.
         </div>
       ) : (
         <div className="h-64">
@@ -54,7 +54,7 @@ export function SegmentPerformance({ stats }: { stats: PortfolioStats }) {
                       rows={[
                         { label: 'Return', value: pct(payload[0].payload.roi) },
                         { label: 'Unrealized', value: money(payload[0].payload.unrealized) },
-                        { label: 'Cost basis', value: money(payload[0].payload.cost) },
+                        { label: 'Cost of valued', value: money(payload[0].payload.cost) },
                         { label: 'Market value', value: money(payload[0].payload.value) },
                       ]}
                     />

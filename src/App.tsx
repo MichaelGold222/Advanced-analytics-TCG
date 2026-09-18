@@ -4,6 +4,7 @@ import { DataPanel } from './components/DataPanel'
 import { HoldingsTable } from './components/HoldingsTable'
 import { SegmentAllocation } from './components/SegmentAllocation'
 import { SegmentPerformance } from './components/SegmentPerformance'
+import { PriceCoverage } from './components/PriceCoverage'
 import { StatTile } from './components/StatTile'
 import { TopHoldings, type HoldingBar } from './components/TopHoldings'
 import { UploadZone } from './components/UploadZone'
@@ -171,23 +172,40 @@ export default function App() {
           <div className="space-y-4">
             <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
               <StatTile
-                hero label="Market value" value={money(stats.marketValue, { compact: stats.marketValue >= 100_000 })}
+                hero label="Market value"
+                value={stats.roi == null && stats.marketValue === 0 ? '—' : money(stats.marketValue, { compact: stats.marketValue >= 100_000 })}
                 delta={stats.roi == null ? undefined : {
                   value: `${money(stats.unrealized)} (${pct(stats.roi)})`,
                   direction: stats.unrealized > 0 ? 'up' : stats.unrealized < 0 ? 'down' : 'flat',
                 }}
                 sub={stats.unvalued > 0 ? `${stats.unvalued} position${stats.unvalued === 1 ? '' : 's'} not valued` : undefined}
               />
-              <StatTile label="Cost basis" value={money(stats.costBasis, { compact: stats.costBasis >= 100_000 })} sub={`${stats.items} positions · ${stats.units} units`} />
               <StatTile
-                label="Unrealized" value={money(stats.unrealized, { compact: Math.abs(stats.unrealized) >= 100_000 })}
+                label="Cost basis" value={money(stats.costBasis, { compact: stats.costBasis >= 100_000 })}
+                sub={
+                  stats.unvalued > 0 && stats.valuedCostBasis !== stats.costBasis
+                    ? `${stats.items} positions · ${money(stats.valuedCostBasis, { compact: true })} of it valued`
+                    : `${stats.items} positions · ${stats.units} units`
+                }
+              />
+              <StatTile
+                label="Unrealized"
+                value={stats.roi == null ? '—' : money(stats.unrealized, { compact: Math.abs(stats.unrealized) >= 100_000 })}
                 delta={stats.roi == null ? undefined : { value: pct(stats.roi), direction: stats.unrealized > 0 ? 'up' : stats.unrealized < 0 ? 'down' : 'flat' }}
+                sub={stats.roi == null ? 'Nothing valued yet, so there is no return to measure.' : stats.unvalued > 0 ? 'Measured over valued positions only' : undefined}
               />
               <StatTile
                 label="Largest position" value={stats.topPosition ? money(stats.topPosition.value, { compact: true }) : '—'}
                 sub={stats.topPosition ? `${stats.topPosition.name} — ${(stats.topPosition.weight * 100).toFixed(1)}% of the book` : undefined}
               />
             </div>
+
+            <PriceCoverage
+              holdings={holdings} watchlist={watchlist}
+              holdingAnalyses={holdingAnalyses} watchAnalyses={watchAnalyses}
+              lastRefresh={store.lastRefresh} refresh={store.refresh}
+              onRefresh={() => void store.refreshPrices()} onGoToData={() => setTab('data')}
+            />
 
             <div className="grid gap-4 lg:grid-cols-2">
               <SegmentAllocation stats={stats} />

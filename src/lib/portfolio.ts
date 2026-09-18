@@ -40,11 +40,15 @@ export function computePortfolioStats(
 ): PortfolioStats {
   const bySegment = new Map<Segment, SegmentStats>()
   for (const s of SEGMENTS) {
-    bySegment.set(s, { segment: s, items: 0, units: 0, marketValue: 0, costBasis: 0, unrealized: 0, roi: null, weight: 0 })
+    bySegment.set(s, {
+      segment: s, items: 0, units: 0, marketValue: 0, costBasis: 0,
+      valuedCostBasis: 0, unrealized: 0, roi: null, weight: 0,
+    })
   }
 
   let marketValue = 0
   let costBasis = 0
+  let valuedCostBasis = 0
   let units = 0
   let unvalued = 0
   const positionValues: { name: string; value: number }[] = []
@@ -65,14 +69,16 @@ export function computePortfolioStats(
       unvalued += 1
     } else {
       seg.marketValue += positionValue
+      seg.valuedCostBasis += positionCost
       marketValue += positionValue
+      valuedCostBasis += positionCost
       positionValues.push({ name: h.name, value: positionValue })
     }
   }
 
   for (const seg of bySegment.values()) {
-    seg.unrealized = seg.marketValue - seg.costBasis
-    seg.roi = seg.costBasis > 0 ? seg.unrealized / seg.costBasis : null
+    seg.unrealized = seg.marketValue - seg.valuedCostBasis
+    seg.roi = seg.valuedCostBasis > 0 ? seg.unrealized / seg.valuedCostBasis : null
     seg.weight = marketValue > 0 ? seg.marketValue / marketValue : 0
   }
 
@@ -85,8 +91,9 @@ export function computePortfolioStats(
   return {
     marketValue,
     costBasis,
-    unrealized: marketValue - costBasis,
-    roi: costBasis > 0 ? (marketValue - costBasis) / costBasis : null,
+    valuedCostBasis,
+    unrealized: marketValue - valuedCostBasis,
+    roi: valuedCostBasis > 0 ? (marketValue - valuedCostBasis) / valuedCostBasis : null,
     items: holdings.length,
     units,
     segments: SEGMENTS.map((s) => bySegment.get(s)!),

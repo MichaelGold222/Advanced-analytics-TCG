@@ -1,6 +1,6 @@
 import { Fragment, useMemo, useState } from 'react'
 import { ChevronDown, ChevronRight, Plus, Trash2 } from 'lucide-react'
-import { ConfidenceChip } from './ConfidenceChip'
+import { PriceCell } from './PriceCell'
 import { RangeMeter } from './RangeMeter'
 import { SegmentPicker } from './SegmentPicker'
 import { UploadZone } from './UploadZone'
@@ -114,10 +114,7 @@ export function WatchlistPanel({ watchlist, analyses, onAdd, onRemove, onOverrid
                           onChange={(e) => onUpdate(w.id, { askingPrice: e.target.value ? Number(e.target.value) : undefined })}
                         />
                       </td>
-                      <td className="num tabular font-medium">
-                        {money(a?.fmv.fmv)}
-                        <div className="mt-1"><ConfidenceChip level={a?.fmv.confidence ?? 'none'} /></div>
-                      </td>
+                      <td className="num"><PriceCell analysis={a} /></td>
                       <td>
                         <RangeMeter
                           low={a?.range.low ?? null} high={a?.range.high ?? null}

@@ -247,7 +247,10 @@ export function analyzeItem(series: PriceSeries, askingPrice?: number | null, no
   const reference = askingPrice ?? null
   const range = compute52WeekRange(series, reference ?? fmv.fmv, now)
   const entry = computeEntry(fmv, range, series, reference, now)
-  return { key: series.key, fmv, range, entry, referencePrice: reference }
+  return {
+    key: series.key, fmv, range, entry, referencePrice: reference,
+    quote: series.quote, quoteExcluded: series.quoteExcluded,
+  }
 }
 
 /** Assemble one item's series from uploaded history, stored snapshots and a live quote. */
@@ -278,7 +281,7 @@ export function buildSeries(
     seen.add(sig)
     return true
   })
-  return { key, points: deduped, quote }
+  return { key, points: deduped, quote, quoteExcluded: !!quote && !!opts.graded }
 }
 
 /** Note appended for a graded item whose only market reference is a raw quote. */

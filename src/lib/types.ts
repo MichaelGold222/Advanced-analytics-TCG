@@ -82,6 +82,12 @@ export interface PriceSeries {
   points: PricePoint[]
   /** Provider's current quote, when we have one. */
   quote?: PriceQuote
+  /**
+   * True when a quote exists but was kept out of the blend because it prices a
+   * raw card and this item is graded. The number is still worth showing as
+   * context — withholding it entirely just looks like the lookup failed.
+   */
+  quoteExcluded?: boolean
 }
 
 export interface PriceQuote {
@@ -149,6 +155,10 @@ export interface ItemAnalysis {
   range: RangeResult
   entry: EntryResult
   referencePrice: number | null
+  /** The provider's live quote, whether or not it fed the valuation. */
+  quote?: PriceQuote
+  /** See `PriceSeries.quoteExcluded`. */
+  quoteExcluded?: boolean
 }
 
 export interface SegmentStats {
@@ -156,7 +166,14 @@ export interface SegmentStats {
   items: number
   units: number
   marketValue: number
+  /** Cost of every position, valued or not. */
   costBasis: number
+  /**
+   * Cost of only the positions we could value. Return is measured against
+   * this: counting an unpriced position's cost against a market value it
+   * never contributed to would report a loss that did not happen.
+   */
+  valuedCostBasis: number
   unrealized: number
   roi: number | null
   /** Share of total portfolio market value, 0-1. */
@@ -165,7 +182,10 @@ export interface SegmentStats {
 
 export interface PortfolioStats {
   marketValue: number
+  /** Cost of every position, valued or not. */
   costBasis: number
+  /** Cost of only the positions we could value; the basis for return. */
+  valuedCostBasis: number
   unrealized: number
   roi: number | null
   items: number

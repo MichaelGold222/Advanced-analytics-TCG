@@ -67,6 +67,36 @@ describe('computePortfolioStats', () => {
     expect(stats.concentration).toBeLessThanOrEqual(1)
   })
 
+  it('measures return only over positions it could value', () => {
+    // The unpriced $50 position must not drag the return down: it contributed
+    // no market value, so counting its cost as a loss invents one.
+    const valuedCost = 4 * 100 + 4000
+    expect(stats.valuedCostBasis).toBeCloseTo(valuedCost, 2)
+    expect(stats.unrealized).toBeCloseTo(stats.marketValue - valuedCost, 2)
+    expect(stats.roi).toBeCloseTo((stats.marketValue - valuedCost) / valuedCost, 6)
+    expect(stats.roi!).toBeGreaterThan(0)
+  })
+
+  it('still reports the full cost basis, including unvalued positions', () => {
+    expect(stats.costBasis).toBeGreaterThan(stats.valuedCostBasis)
+  })
+
+  it('reports no return at all when nothing could be valued', () => {
+    // Previously this produced a -100% loss on a portfolio that had simply
+    // never had its prices fetched.
+    const items = [
+      holding({ name: 'Charizard', segment: 'vintage', costBasis: 4200 }),
+      holding({ name: 'Booster Box', segment: 'sealed', costBasis: 118, quantity: 6 }),
+    ]
+    const s = computePortfolioStats(items, analyzeHoldings(items, new Map(), NOW))
+    expect(s.marketValue).toBe(0)
+    expect(s.roi).toBeNull()
+    expect(s.unrealized).toBe(0)
+    expect(s.costBasis).toBeCloseTo(4200 + 6 * 118, 2)
+    expect(s.unvalued).toBe(2)
+    for (const seg of s.segments) expect(seg.roi).toBeNull()
+  })
+
   it('reports no return when there is no cost basis to measure against', () => {
     const free = holding({ name: 'Gift', segment: 'modern', costBasis: 0 })
     const s = computePortfolioStats([free], analyzeHoldings([free], new Map(), NOW))

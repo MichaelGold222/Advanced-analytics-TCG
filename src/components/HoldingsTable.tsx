@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 import { Trash2 } from 'lucide-react'
-import { ConfidenceChip } from './ConfidenceChip'
+import { PriceCell } from './PriceCell'
 import { SegmentPicker } from './SegmentPicker'
 import { money, pct } from '../lib/format'
 import { classify } from '../lib/classify'
@@ -80,12 +80,11 @@ export function HoldingsTable({ holdings, analyses, onOverride, onRemove }: Prop
               <th className="num">Market value</th>
               <th className="num">Unrealized</th>
               <th className="num">Return</th>
-              <th>Valuation</th>
               <th aria-label="Actions" />
             </tr>
           </thead>
           <tbody>
-            {rows.map(({ h, a, fmv, value, unrealized, roi }) => {
+            {rows.map(({ h, a, value, unrealized, roi }) => {
               const inferred = classify({ ...h, override: null }).segment
               return (
                 <tr key={h.id}>
@@ -101,16 +100,13 @@ export function HoldingsTable({ holdings, analyses, onOverride, onRemove }: Prop
                   </td>
                   <td className="num tabular">{h.quantity}</td>
                   <td className="num tabular">{money(h.costBasis)}</td>
-                  <td className="num tabular">{money(fmv)}</td>
+                  <td className="num"><PriceCell analysis={a} /></td>
                   <td className="num tabular font-medium">{money(value)}</td>
                   <td className="num tabular" style={{ color: unrealized == null ? undefined : unrealized >= 0 ? 'var(--delta-up)' : 'var(--delta-down)' }}>
                     {unrealized == null ? '—' : money(unrealized)}
                   </td>
                   <td className="num tabular" style={{ color: roi == null ? undefined : roi >= 0 ? 'var(--delta-up)' : 'var(--delta-down)' }}>
                     {pct(roi)}
-                  </td>
-                  <td>
-                    <ConfidenceChip level={a?.fmv.confidence ?? 'none'} detail={a?.fmv.rationale.join(' ')} />
                   </td>
                   <td>
                     <button type="button" className="btn px-2 py-1" onClick={() => onRemove(h.id)} aria-label={`Remove ${h.name}`} title="Remove">
