@@ -4,7 +4,9 @@
 # page opened from a file does not and may not, which is why the standalone
 # .html cannot fetch live prices however it is opened.
 #
-# One-time setup: repository Settings → Pages → Source → "GitHub Actions".
+# Pages is enabled automatically by the configure step. If that is refused
+# (organisation policy, or a plan without Pages for private repositories),
+# enable it by hand: Settings → Pages → Source → "GitHub Actions".
 name: Deploy dashboard
 
 on:
@@ -34,6 +36,10 @@ jobs:
       - run: npm test
       - run: npm run build
       - uses: actions/configure-pages@v5
+        # Turns Pages on for the repository if it is not already, so no manual
+        # settings change is needed. Requires the `pages: write` permission above.
+        with:
+          enablement: true
       - uses: actions/upload-pages-artifact@v3
         with:
           path: dist
