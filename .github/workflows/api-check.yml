@@ -46,15 +46,7 @@ jobs:
           curl -sS --get -H 'Origin: https://michaelgold222.github.io' \
             --data-urlencode 'q=name:"charizard" set.name:"Base Set"' --data-urlencode 'pageSize=1' \
             'https://api.pokemontcg.io/v2/cards' -o /tmp/p.json -w 'HTTP %{http_code}\n' || true
-          echo "price-related keys present:"
-          grep -oE '"(psa|bgs|cgc|graded|grade)[a-zA-Z0-9]*"' /tmp/p.json | sort -u || echo "  none — raw prices only"
-          echo "tcgplayer price variants offered:"
-          python3 -c "
-import json,sys
-try:
-    d=json.load(open('/tmp/p.json'))
-    c=d['data'][0]
-    print(' ', list((c.get('tcgplayer') or {}).get('prices',{}).keys()) or 'none')
-except Exception as e:
-    print('  could not parse:', e)
-"
+          echo "grade-related keys anywhere in the record:"
+          grep -oiE '"(psa|bgs|cgc|sgc|graded|grade)[a-z0-9]*"' /tmp/p.json | sort -u || echo "  none - raw prices only"
+          echo "price variants offered:"
+          grep -oE '"(normal|holofoil|reverseHolofoil|1stEdition[A-Za-z]*|unlimited[A-Za-z]*)"' /tmp/p.json | sort -u || echo "  none"
