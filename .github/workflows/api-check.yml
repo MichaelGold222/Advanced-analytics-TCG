@@ -1,0 +1,43 @@
+# Diagnostic: is the price API reachable, and does it permit browser calls?
+#
+# A browser only sends a cross-origin response to the page if the server
+# returns an Access-Control-Allow-Origin header. Without it the request
+# succeeds at the network level and the browser discards the result, which
+# page code sees as an ordinary failure with no explanation. This checks both
+# facts directly, from a machine with normal internet access.
+#
+# Run from the Actions tab → "Price API check" → Run workflow.
+name: Price API check
+
+on: workflow_dispatch
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Does the API answer at all?
+        run: |
+          echo "=== GET /v2/cards (status + headers) ==="
+          curl -sS -D - -o /tmp/body.json -w '\nHTTP %{http_code} in %{time_total}s\n' \
+            'https://api.pokemontcg.io/v2/cards?q=name:"charizard"&pageSize=1' || echo "REQUEST FAILED"
+          echo
+          echo "=== first 400 bytes of body ==="
+          head -c 400 /tmp/body.json || true
+          echo
+
+      - name: Does it allow browser (cross-origin) calls?
+        run: |
+          echo "=== response headers with an Origin, as a browser sends ==="
+          curl -sS -D - -o /dev/null \
+            -H 'Origin: https://michaelgold222.github.io' \
+            'https://api.pokemontcg.io/v2/cards?q=name:"charizard"&pageSize=1' \
+            | tr -d '\r' | grep -iE '^(HTTP/|access-control-|content-type|retry-after|x-ratelimit)' \
+            || echo "NO ACCESS-CONTROL HEADERS — browsers will block this, whatever the page does"
+
+      - name: Preflight check
+        run: |
+          echo "=== OPTIONS preflight ==="
+          curl -sS -D - -o /dev/null -X OPTIONS \
+            -H 'Origin: https://michaelgold222.github.io' \
+            -H 'Access-Control-Request-Method: GET' \
+            'https://api.pokemontcg.io/v2/cards' | tr -d '\r' | head -20 || true
