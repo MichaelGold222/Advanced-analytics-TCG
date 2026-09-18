@@ -22,6 +22,32 @@ export interface PriceProvider {
   coversSealed: boolean
   needsKey: boolean
   lookup(query: PriceLookup, signal?: AbortSignal): Promise<PriceQuote | null>
+  /** One minimal request, to tell "cannot reach the API" from "no match". */
+  test(signal?: AbortSignal): Promise<ConnectionResult>
+}
+
+export type ConnectionStatus = 'ok' | 'blocked' | 'rate_limited' | 'http_error'
+
+export interface ConnectionResult {
+  status: ConnectionStatus
+  message: string
+}
+
+/**
+ * A blocked request and a failed one are indistinguishable to `fetch`: both
+ * arrive as a bare TypeError, because the browser withholds the reason from
+ * page code. Naming the likely cause is the only useful thing to do with it.
+ */
+export class PriceNetworkError extends Error {
+  readonly blocked = true
+  readonly provider: string
+  constructor(provider: string) {
+    super(
+      `Could not reach ${provider}. The page was stopped from making the request — either this page is not allowed to call outside services, or the network is down.`,
+    )
+    this.provider = provider
+    this.name = 'PriceNetworkError'
+  }
 }
 
 /** Escape a value for the Lucene-style query syntax the API uses. */
@@ -55,58 +81,122 @@ export const pokemonTcgIo: PriceProvider = {
   coversSealed: false,
   needsKey: false,
 
-  async lookup(query, signal) {
-    const parts = [`name:${q(query.name)}`]
-    if (query.set) parts.push(`set.name:${q(query.set)}`)
-    if (query.number) parts.push(`number:${q(String(query.number).replace(/^0+/, ''))}`)
-
-    const url = new URL('https://api.pokemontcg.io/v2/cards')
-    url.searchParams.set('q', parts.join(' '))
-    url.searchParams.set('pageSize', '8')
-    url.searchParams.set('orderBy', '-set.releaseDate')
-
-    const key = getApiKey()
-    const res = await fetch(url, {
-      signal,
-      headers: key ? { 'X-Api-Key': key } : undefined,
-    })
-    if (!res.ok) {
-      throw new Error(`${this.label} returned ${res.status}${res.status === 429 ? ' (rate limited — add a free API key in Settings)' : ''}`)
-    }
-    const body = (await res.json()) as { data?: unknown[] }
-    const cards = (body.data ?? []) as {
-      name: string
-      number?: string
-      set?: { name?: string }
-      tcgplayer?: { url?: string; updatedAt?: string; prices?: TcgPlayerPrices }
-      cardmarket?: { url?: string; updatedAt?: string; prices?: { averageSellPrice?: number; lowPrice?: number; trendPrice?: number } }
-    }[]
-    if (cards.length === 0) return null
-
-    // Prefer a card that actually carries prices over a closer name match with none.
-    const card = cards.find((c) => pickVariant(c.tcgplayer?.prices)) ?? cards[0]
-    const tp = pickVariant(card.tcgplayer?.prices)
-    if (tp) {
+  async test(signal) {
+    try {
+      const res = await fetch(cardsUrl('name:"pikachu"', 1), {
+        signal,
+        headers: apiKeyHeaders(),
+      })
+      if (res.status === 429) {
+        return { status: 'rate_limited' as const, message: 'Reached the price API, but it is rate limiting this browser. Add a free API key below, or wait a minute.' }
+      }
+      if (!res.ok) {
+        return { status: 'http_error' as const, message: `Reached the price API, but it answered ${res.status}. That is a problem on their end; try again later.` }
+      }
+      await res.json()
+      return { status: 'ok' as const, message: 'Connected to the price API. Lookups should work — anything still unpriced is a name that did not match, a graded card, or sealed product.' }
+    } catch (err) {
+      if ((err as Error)?.name === 'AbortError') throw err
       return {
-        low: tp.low, mid: tp.mid, high: tp.high, market: tp.market, directLow: tp.directLow,
-        updatedAt: normalizeDate(card.tcgplayer?.updatedAt),
-        currency: 'USD',
-        provider: `${this.id} · TCGplayer ${tp.variant}`,
-        url: card.tcgplayer?.url,
+        status: 'blocked' as const,
+        message: new PriceNetworkError(this.label).message,
       }
     }
-    const cm = card.cardmarket?.prices
-    if (cm?.averageSellPrice != null || cm?.trendPrice != null) {
-      return {
-        low: cm.lowPrice, market: cm.trendPrice ?? cm.averageSellPrice, mid: cm.averageSellPrice,
-        updatedAt: normalizeDate(card.cardmarket?.updatedAt),
-        currency: 'EUR',
-        provider: `${this.id} · Cardmarket`,
-        url: card.cardmarket?.url,
-      }
-    }
-    return null
   },
+
+  async lookup(query, signal) {
+    // Narrow first, then widen. ANDing name, set and number means one slightly
+    // wrong set name returns nothing at all, which is indistinguishable from
+    // the card not existing — and collection exports get set names wrong
+    // constantly ("Base" for "Base Set", "SWSH Black Star" for "SWSH Promos").
+    const name = `name:${q(query.name)}`
+    const set = query.set ? `set.name:${q(query.set)}` : null
+    const number = query.number ? `number:${q(String(query.number).replace(/^0+/, ''))}` : null
+
+    const attempts = [
+      [name, set, number],
+      [name, set],
+      [name, number],
+      [name],
+    ]
+      .map((parts) => parts.filter(Boolean).join(' '))
+      .filter((query, i, all) => query && all.indexOf(query) === i)
+
+    let cards: RawCard[] = []
+    for (const attempt of attempts) {
+      cards = await fetchCards(attempt, this.label, signal)
+      if (cards.length > 0) break
+    }
+    if (cards.length === 0) return null
+    return toQuote(cards, this.id)
+  },
+
+}
+
+async function fetchCards(query: string, label: string, signal?: AbortSignal): Promise<RawCard[]> {
+  let res: Response
+  try {
+    res = await fetch(cardsUrl(query, 8), { signal, headers: apiKeyHeaders() })
+  } catch (err) {
+    if ((err as Error)?.name === 'AbortError') throw err
+    throw new PriceNetworkError(label)
+  }
+  if (!res.ok) {
+    throw new Error(
+      res.status === 429
+        ? 'Rate limited by the price API — add a free API key in Data & settings.'
+        : `Price API returned ${res.status}.`,
+    )
+  }
+  const body = (await res.json()) as { data?: unknown[] }
+  return (body.data ?? []) as RawCard[]
+}
+
+interface RawCard {
+  name: string
+  number?: string
+  set?: { name?: string }
+  tcgplayer?: { url?: string; updatedAt?: string; prices?: TcgPlayerPrices }
+  cardmarket?: { url?: string; updatedAt?: string; prices?: { averageSellPrice?: number; lowPrice?: number; trendPrice?: number } }
+}
+
+function cardsUrl(query: string, pageSize: number): string {
+  const url = new URL('https://api.pokemontcg.io/v2/cards')
+  url.searchParams.set('q', query)
+  url.searchParams.set('pageSize', String(pageSize))
+  url.searchParams.set('orderBy', '-set.releaseDate')
+  return url.toString()
+}
+
+function apiKeyHeaders(): Record<string, string> | undefined {
+  const key = getApiKey()
+  return key ? { 'X-Api-Key': key } : undefined
+}
+
+function toQuote(cards: RawCard[], providerId: string): PriceQuote | null {
+  // Prefer a card that actually carries prices over a closer name match with none.
+  const card = cards.find((c) => pickVariant(c.tcgplayer?.prices)) ?? cards[0]
+  const tp = pickVariant(card.tcgplayer?.prices)
+  if (tp) {
+    return {
+      low: tp.low, mid: tp.mid, high: tp.high, market: tp.market, directLow: tp.directLow,
+      updatedAt: normalizeDate(card.tcgplayer?.updatedAt),
+      currency: 'USD',
+      provider: `${providerId} · TCGplayer ${tp.variant}`,
+      url: card.tcgplayer?.url,
+    }
+  }
+  const cm = card.cardmarket?.prices
+  if (cm?.averageSellPrice != null || cm?.trendPrice != null) {
+    return {
+      low: cm.lowPrice, market: cm.trendPrice ?? cm.averageSellPrice, mid: cm.averageSellPrice,
+      updatedAt: normalizeDate(card.cardmarket?.updatedAt),
+      currency: 'EUR',
+      provider: `${providerId} · Cardmarket`,
+      url: card.cardmarket?.url,
+    }
+  }
+  return null
 }
 
 /** The API reports "YYYY/MM/DD"; normalize so Date.parse agrees. */
@@ -148,6 +238,8 @@ export interface RefreshOutcome {
   errors: { key: string; name: string; message: string }[]
   skipped: { key: string; name: string; reason: string }[]
   attempted: number
+  /** Set when the page could not reach the provider at all. */
+  blocked: string | null
 }
 
 /**
@@ -163,6 +255,7 @@ export async function refreshQuotes(
   const quotes = new Map<string, PriceQuote>()
   const errors: RefreshOutcome['errors'] = []
   const skipped: RefreshOutcome['skipped'] = []
+  let blocked: string | null = null
 
   const live = targets.filter((t) => {
     if (t.skipReason) {
@@ -176,7 +269,9 @@ export async function refreshQuotes(
   let done = 0
   async function worker() {
     while (cursor < live.length) {
-      if (opts.signal?.aborted) return
+      // A blocked page will block every request; stop rather than grinding
+      // through the whole collection to collect the same failure N times.
+      if (opts.signal?.aborted || blocked) return
       const target = live[cursor++]
       try {
         const quote = await provider.lookup(target.query, opts.signal)
@@ -184,6 +279,10 @@ export async function refreshQuotes(
         else errors.push({ key: target.key, name: target.query.name, message: 'No match found' })
       } catch (err) {
         if (opts.signal?.aborted) return
+        if (err instanceof PriceNetworkError) {
+          blocked = err.message
+          return
+        }
         errors.push({
           key: target.key,
           name: target.query.name,
@@ -195,5 +294,5 @@ export async function refreshQuotes(
   }
 
   await Promise.all(Array.from({ length: Math.min(concurrency, live.length) }, worker))
-  return { quotes, errors, skipped, attempted: live.length }
+  return { quotes, errors, skipped, attempted: live.length, blocked }
 }

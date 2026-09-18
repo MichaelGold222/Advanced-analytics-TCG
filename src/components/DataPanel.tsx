@@ -1,7 +1,7 @@
 import { useState } from 'react'
-import { Download, FileSpreadsheet, KeyRound, Trash2 } from 'lucide-react'
+import { Download, FileSpreadsheet, KeyRound, Plug, Trash2 } from 'lucide-react'
 import { UploadZone } from './UploadZone'
-import { getApiKey, setApiKey } from '../lib/pricing'
+import { getApiKey, pokemonTcgIo, setApiKey, type ConnectionResult } from '../lib/pricing'
 import { relativeTime } from '../lib/format'
 import type { ImportLogEntry, RefreshState } from '../lib/store'
 
@@ -18,6 +18,20 @@ export function DataPanel({ importLog, refresh, onImport, onTemplate, onExport, 
   const [key, setKey] = useState(getApiKey())
   const [saved, setSaved] = useState(false)
   const [confirmClear, setConfirmClear] = useState(false)
+  const [testing, setTesting] = useState(false)
+  const [test, setTest] = useState<ConnectionResult | null>(null)
+
+  async function runTest() {
+    setTesting(true)
+    setTest(null)
+    try {
+      setTest(await pokemonTcgIo.test())
+    } catch (err) {
+      setTest({ status: 'blocked', message: err instanceof Error ? err.message : String(err) })
+    } finally {
+      setTesting(false)
+    }
+  }
 
   return (
     <div className="space-y-4">
@@ -56,6 +70,30 @@ export function DataPanel({ importLog, refresh, onImport, onTemplate, onExport, 
               {saved ? 'Saved' : 'Save'}
             </button>
           </div>
+
+          <h3 className="text-sm font-semibold mt-5 mb-2">Connection</h3>
+          <p className="text-xs secondary leading-relaxed mb-2">
+            Makes one small request, so you can tell “this page cannot reach the price API” apart from
+            “that card name did not match”.
+          </p>
+          <button type="button" className="btn" onClick={() => void runTest()} disabled={testing}>
+            <Plug className="size-4" aria-hidden /> {testing ? 'Testing…' : 'Test connection'}
+          </button>
+          {test && (
+            <p
+              className="text-xs mt-2 leading-relaxed"
+              role="status"
+              style={{ color: test.status === 'ok' ? 'var(--delta-up)' : 'var(--serious)' }}
+            >
+              {test.status === 'ok' ? '\u2713 ' : '\u26a0 '}{test.message}
+              {test.status === 'blocked' && (
+                <>
+                  {' '}Download the app as a single .html file and open that copy — a downloaded page is not
+                  subject to whatever is blocking this one.
+                </>
+              )}
+            </p>
+          )}
 
           <h3 className="text-sm font-semibold mt-5 mb-2">Last price refresh</h3>
           <p className="text-xs secondary">

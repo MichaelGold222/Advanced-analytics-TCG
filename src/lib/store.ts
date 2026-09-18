@@ -273,12 +273,19 @@ export const useStore = create<AppState>((setState, getState) => ({
         snapshots[key] = withoutToday.sort((a, b) => a.date.localeCompare(b.date))
       }
 
+      const priced = outcome.quotes.size
       setState({
         quotes, snapshots, lastRefresh: new Date().toISOString(),
         refresh: {
           running: false, done: outcome.attempted, total: outcome.attempted,
           lastRun: new Date().toISOString(), errors: outcome.errors, skipped: outcome.skipped,
         },
+        // A refresh that priced nothing must say so where it will be seen.
+        error: outcome.blocked
+          ? outcome.blocked
+          : priced === 0 && outcome.attempted > 0
+            ? `Priced none of the ${outcome.attempted} items looked up. Every name came back without a match — check the spelling of a card and its set, or use Test connection in Data & settings.`
+            : null,
       })
       scheduleSave(getState())
     } catch (err) {
