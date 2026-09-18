@@ -41,9 +41,19 @@ Price lookups go from the page straight to the Pokémon TCG API. Some hosts
 forbid a page from calling an outside service at all, and a browser reports that
 exactly like being offline, so no client-side change can work around it.
 
+**A page opened straight from a file can never fetch live prices.** Double-clicking
+the standalone .html gives the page no origin, and browsers do not let a page with
+no origin call an outside service. Imports, valuations from your own comps and the
+whole dashboard still work — only the live lookup is unavailable. The app detects
+this and says so.
+
 **Data & settings → Test connection** makes one small request and says which of
-"cannot reach the API", "rate limited", "server error" or "working" applies.
-If it cannot reach the API:
+"opened from a file", "cannot reach the API", "rate limited", "server error" or
+"working" applies.
+
+For live prices, serve the app over http. Either host it — the included
+`.github/workflows/pages.yml` publishes it to GitHub Pages, needing only
+Settings → Pages → Source → "GitHub Actions" once — or run it yourself:
 
 ```bash
 npm run serve      # http://localhost:4300
