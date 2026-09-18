@@ -21,6 +21,20 @@ npm run build    # production bundle in dist/
 `npm run build` emits a static site. Any static host works; `base: './'` is already
 set so it also runs from a subdirectory or off the filesystem.
 
+```bash
+npm run build:single   # dist/pokemon-portfolio-analytics.html
+```
+
+`build:single` inlines the whole app — scripts, styles, every chunk — into one
+self-contained .html. Double-click it and it runs: no server, no install, nothing
+to resolve. It is the easiest way to hand the app to someone, and the easiest way
+to keep a working copy that does not depend on a checkout.
+
+Generated files (the template, the analysis export) normally download straight from
+the browser. A host that mediates downloads — the claude.ai Artifact viewer, where a
+plain download link silently does nothing — is detected at runtime and the save is
+routed through it instead, so the same build works in both places.
+
 ## Importing your sheet
 
 Click **Download template** for a workbook with the expected shape, or just upload

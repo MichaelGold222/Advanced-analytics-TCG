@@ -1,5 +1,6 @@
 /** Generating spreadsheets: the starter template, and an export of the analysis. */
 import type { Row, SheetData } from 'write-excel-file/browser'
+import { saveFile, type SaveOutcome } from './save-file'
 import { SEGMENT_LABELS } from './types'
 import type { Holding, ItemAnalysis, WatchItem } from './types'
 
@@ -75,16 +76,18 @@ const README_ROWS: SheetData = [
   [{ value: 'Graded cards need graded comps: a TCGplayer-style quote prices a raw copy and is never blended into a slab’s value.', type: String }],
 ]
 
-export async function downloadTemplate(): Promise<void> {
+export async function downloadTemplate(): Promise<SaveOutcome> {
   const { default: writeXlsxFile } = await import('write-excel-file/browser')
-  await writeXlsxFile(
+  return saveFile(
+    writeXlsxFile(
     [
       { sheet: 'Portfolio', data: toRows(PORTFOLIO_COLUMNS, PORTFOLIO_EXAMPLES), columns: widths([28, 24, 12, 8, 12, 9, 12, 14, 13, 14, 26]) },
       { sheet: 'Watchlist', data: toRows(WATCHLIST_COLUMNS, WATCHLIST_EXAMPLES), columns: widths([28, 24, 12, 8, 12, 9, 13, 13, 26]) },
       { sheet: 'Price History', data: toRows(HISTORY_COLUMNS, HISTORY_EXAMPLES), columns: widths([28, 24, 12, 12, 12, 10, 9]) },
       { sheet: 'Read Me', data: README_ROWS, columns: widths([130]) },
-    ],
-  ).toFile('pokemon-portfolio-template.xlsx')
+    ]),
+    'pokemon-portfolio-template.xlsx',
+  )
 }
 
 function widths(ws: number[]) {
@@ -107,7 +110,7 @@ export async function exportAnalysis(
   watchlist: WatchItem[],
   analyses: Map<string, ItemAnalysis>,
   keyOf: (item: { name: string; set?: string; number?: string; grader?: string | null; grade?: number | null }) => string,
-): Promise<void> {
+): Promise<SaveOutcome> {
   const { default: writeXlsxFile } = await import('write-excel-file/browser')
   const holdingRows: SheetData = [
     header(['Card Name', 'Set', 'Number', 'Segment', 'Qty', 'Cost Basis', 'FMV / unit', 'Market Value', 'Unrealized', 'ROI', 'Confidence', '52w High', '52w Low', 'Why this segment']),
@@ -142,8 +145,11 @@ export async function exportAnalysis(
     ] as Row)
   }
 
-  await writeXlsxFile([
-    { sheet: 'Portfolio Analysis', data: holdingRows, columns: widths([28, 22, 10, 14, 6, 12, 12, 13, 12, 9, 11, 11, 11, 44]) },
-    { sheet: 'Watchlist Analysis', data: watchRows, columns: widths([28, 22, 10, 14, 11, 11, 11, 12, 12, 12, 13, 12, 7, 60]) },
-  ]).toFile(`pokemon-analytics-${new Date().toISOString().slice(0, 10)}.xlsx`)
+  return saveFile(
+    writeXlsxFile([
+      { sheet: 'Portfolio Analysis', data: holdingRows, columns: widths([28, 22, 10, 14, 6, 12, 12, 13, 12, 9, 11, 11, 11, 44]) },
+      { sheet: 'Watchlist Analysis', data: watchRows, columns: widths([28, 22, 10, 14, 11, 11, 11, 12, 12, 12, 13, 12, 7, 60]) },
+    ]),
+    `pokemon-analytics-${new Date().toISOString().slice(0, 10)}.xlsx`,
+  )
 }

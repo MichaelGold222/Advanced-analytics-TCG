@@ -81,10 +81,16 @@ export default function App() {
   const isEmpty = holdings.length === 0 && watchlist.length === 0
   const ThemeIcon = choice === 'light' ? Sun : choice === 'dark' ? Moon : Monitor
 
-  async function handleExport() {
-    const merged = new Map([...holdingAnalyses, ...watchAnalyses])
-    await exportAnalysis(holdings, watchlist, merged, itemKey)
+  /** Saves can fail in a viewer that mediates downloads; never fail silently. */
+  function runSave(save: () => Promise<unknown>) {
+    save().catch((err: unknown) => {
+      store.reportError(err instanceof Error ? err.message : String(err))
+    })
   }
+
+  const handleTemplate = () => runSave(downloadTemplate)
+  const handleExport = () =>
+    runSave(() => exportAnalysis(holdings, watchlist, new Map([...holdingAnalyses, ...watchAnalyses]), itemKey))
 
   return (
     <div className="min-h-screen">
@@ -157,7 +163,7 @@ export default function App() {
               onFile={(f) => store.importFile(f, 'portfolio')}
             />
             <div className="flex flex-wrap gap-2 mt-5 justify-center">
-              <button type="button" className="btn" onClick={() => void downloadTemplate()}>Download a template</button>
+              <button type="button" className="btn" onClick={handleTemplate}>Download a template</button>
               <button type="button" className="btn" onClick={() => setTab('watchlist')}>Or add a card you are watching</button>
             </div>
           </div>
@@ -208,7 +214,7 @@ export default function App() {
         ) : (
           <DataPanel
             importLog={store.importLog} refresh={store.refresh}
-            onImport={store.importFile} onExport={() => void handleExport()}
+            onImport={store.importFile} onTemplate={handleTemplate} onExport={handleExport}
             onClear={() => void store.clearAll()}
           />
         )}

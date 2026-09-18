@@ -64,6 +64,7 @@ interface AppState extends PersistedState {
   removeHolding(id: string): void
   refreshPrices(provider?: PriceProvider): Promise<void>
   clearAll(): Promise<void>
+  reportError(message: string): void
   dismissError(): void
 }
 
@@ -291,6 +292,10 @@ export const useStore = create<AppState>((setState, getState) => ({
   async clearAll() {
     setState({ ...EMPTY, hydrated: true, error: null, refresh: { running: false, done: 0, total: 0, lastRun: null, errors: [], skipped: [] } })
     await del(DB_KEY).catch(() => {})
+  },
+
+  reportError(message) {
+    setState({ error: message })
   },
 
   dismissError() {

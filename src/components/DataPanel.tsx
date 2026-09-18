@@ -2,7 +2,6 @@ import { useState } from 'react'
 import { Download, FileSpreadsheet, KeyRound, Trash2 } from 'lucide-react'
 import { UploadZone } from './UploadZone'
 import { getApiKey, setApiKey } from '../lib/pricing'
-import { downloadTemplate } from '../lib/workbook-out'
 import { relativeTime } from '../lib/format'
 import type { ImportLogEntry, RefreshState } from '../lib/store'
 
@@ -10,11 +9,12 @@ interface Props {
   importLog: ImportLogEntry[]
   refresh: RefreshState
   onImport: (file: File, kind: 'portfolio' | 'watchlist') => Promise<void>
+  onTemplate: () => void
   onExport: () => void
   onClear: () => void
 }
 
-export function DataPanel({ importLog, refresh, onImport, onExport, onClear }: Props) {
+export function DataPanel({ importLog, refresh, onImport, onTemplate, onExport, onClear }: Props) {
   const [key, setKey] = useState(getApiKey())
   const [saved, setSaved] = useState(false)
   const [confirmClear, setConfirmClear] = useState(false)
@@ -29,7 +29,7 @@ export function DataPanel({ importLog, refresh, onImport, onExport, onClear }: P
             <UploadZone compact label="Upload watchlist" hint="What you are considering buying, with an asking price where you have one." onFile={(f) => onImport(f, 'watchlist')} />
           </div>
           <div className="flex flex-wrap gap-2 mt-4">
-            <button type="button" className="btn" onClick={() => void downloadTemplate()}>
+            <button type="button" className="btn" onClick={onTemplate}>
               <FileSpreadsheet className="size-4" aria-hidden /> Download template
             </button>
             <button type="button" className="btn" onClick={onExport}>
