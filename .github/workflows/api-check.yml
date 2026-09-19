@@ -1,9 +1,9 @@
-# Diagnostic: what does automatic eBay sold-comp data actually require?
+# Diagnostic: what does Card Hedge AI's API actually offer?
 #
-# eBay sold listings are the ground truth for graded slabs. This establishes
-# which endpoint carries them, what authentication it needs, and whether a
-# browser can call it at all — which decides whether the dashboard can do this
-# alone or needs something server-side holding a credential.
+# The question that decides whether it can drive this dashboard: does it serve
+# individual completed sales (date + price, per grade), or only an aggregate
+# estimate? The valuation here is a median of the last five real sales, so an
+# aggregate alone cannot feed it.
 #
 # Run from the Actions tab → "Price API check" → Run workflow.
 name: Price API check
@@ -14,44 +14,41 @@ jobs:
   check:
     runs-on: ubuntu-latest
     steps:
-      - name: Marketplace Insights - the sold-items endpoint
+      - name: Read the API services page
         run: |
-          echo "=== item_sales/search, no token ==="
-          curl -sS -o /tmp/mi.json -w 'HTTP %{http_code}\n' \
-            'https://api.ebay.com/buy/marketplace_insights/v1_beta/item_sales/search?q=charizard%20psa%2010&limit=1' || true
-          head -c 400 /tmp/mi.json; echo
+          curl -sSL -o /tmp/api.html -w 'HTTP %{http_code}\n' \
+            -H 'User-Agent: Mozilla/5.0' 'https://ai.cardhedger.com/api-services' || true
+          echo "=== page text ==="
+          sed -e 's/<script[^>]*>.*<\/script>//g' -e 's/<style[^>]*>.*<\/style>//g' \
+              -e 's/<[^>]*>/ /g' /tmp/api.html \
+            | tr -s ' \n' ' \n' | grep -viE '^\s*$' | head -120
 
-      - name: Can a browser call eBay at all?
+      - name: Look for endpoint, auth and pricing mentions
         run: |
-          for path in \
-            'buy/marketplace_insights/v1_beta/item_sales/search' \
-            'buy/browse/v1/item_summary/search'; do
-            echo "=== CORS preflight: $path ==="
-            curl -sS -D - -o /dev/null -X OPTIONS \
-              -H 'Origin: https://michaelgold222.github.io' \
-              -H 'Access-Control-Request-Method: GET' \
-              -H 'Access-Control-Request-Headers: authorization' \
-              "https://api.ebay.com/$path" | tr -d '\r' \
-              | grep -iE '^(HTTP/|access-control-)' || echo "  no access-control headers -> a browser cannot call this"
-            echo
+          echo "=== URLs and keywords in the page source ==="
+          grep -oiE 'https?://[a-z0-9./_-]*(api|docs|developer)[a-z0-9./_-]*' /tmp/api.html | sort -u | head -20
+          echo
+          for kw in 'sales history' 'sold' 'comps' 'api key' 'bearer' 'oauth' \
+                    'rate limit' 'per month' 'pricing' 'endpoint' 'json' 'population'; do
+            n=$(grep -oic "$kw" /tmp/api.html | head -1)
+            printf '%-16s %s mentions\n' "$kw" "${n:-0}"
           done
 
-      - name: Is the OAuth token endpoint browser-callable?
-        run: |
-          echo "=== oauth2/token preflight ==="
-          curl -sS -D - -o /dev/null -X OPTIONS \
-            -H 'Origin: https://michaelgold222.github.io' \
-            -H 'Access-Control-Request-Method: POST' \
-            'https://api.ebay.com/identity/v1/oauth2/token' | tr -d '\r' \
-            | grep -iE '^(HTTP/|access-control-)' || echo "  no access-control headers"
-
-      - name: Any open aggregator carrying eBay solds?
+      - name: Probe likely API hosts
         run: |
           probe() {
-            printf '%-46s -> HTTP %s\n' "$1" \
-              "$(curl -sS -m 12 -o /tmp/a.json -w '%{http_code}' "$2" 2>/dev/null || echo 'unreachable')"
-            head -c 160 /tmp/a.json 2>/dev/null; echo; echo
+            printf '%-44s -> HTTP %s\n' "$1" \
+              "$(curl -sSL -m 12 -o /tmp/p.json -w '%{http_code}' -H 'User-Agent: Mozilla/5.0' "$2" 2>/dev/null || echo unreachable)"
+            head -c 200 /tmp/p.json 2>/dev/null; echo; echo
           }
-          probe 'cardladder public'  'https://api.cardladder.com/v1/search?q=charizard'
-          probe '130point'           'https://back.130point.com/sales/?query=charizard+psa+10'
-          probe 'tcgplayer api'      'https://api.tcgplayer.com/catalog/categories'
+          probe 'api.cardhedger.com'       'https://api.cardhedger.com/'
+          probe 'ai.cardhedger.com/api'    'https://ai.cardhedger.com/api'
+          probe 'docs'                     'https://ai.cardhedger.com/api-docs'
+
+      - name: Can a browser call it?
+        run: |
+          curl -sS -D - -o /dev/null -X OPTIONS \
+            -H 'Origin: https://michaelgold222.github.io' \
+            -H 'Access-Control-Request-Method: GET' \
+            'https://ai.cardhedger.com/api-services' | tr -d '\r' \
+            | grep -iE '^(HTTP/|access-control-)' || echo "no access-control headers on preflight"
