@@ -40,7 +40,7 @@ jobs:
                  | "\(.scraper_id // .id // "?")  \(.slug // .name // .url // "")  [\(.status // "")]"' \
             /tmp/tasks.json 2>/dev/null | head -30 || head -c 600 /tmp/tasks.json
           jq -r '(.tasks // .items // .data // .) | if type=="array" then .[] else . end
-                 | select((.slug // .name // "") | test("cardladder"; "i")) | .scraper_id // .id' \
+                 | select((.slug // .name // .url // "") | test("cardladder"; "i")) | .scraper_id // .id' \
             /tmp/tasks.json 2>/dev/null | head -1 > /tmp/sid || true
           echo "scraper id: $(cat /tmp/sid 2>/dev/null || echo 'not found')"
 
