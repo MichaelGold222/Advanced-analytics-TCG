@@ -243,8 +243,11 @@ describe('how the entry call reads', () => {
     const points = steady(100, 12, 3)
     const s = series(points)
     const fmv = computeFmv(s, NOW)
-    const range = compute52WeekRange(s, 90, NOW)
-    const text = computeEntry(fmv, range, s, 90, NOW).rationale.join(' ')
+    // Above the entry target but under FMV, which is the branch that phrases
+    // the gap; below the target it simply reports the target was met.
+    const asking = 97
+    const range = compute52WeekRange(s, asking, NOW)
+    const text = computeEntry(fmv, range, s, asking, NOW).rationale.join(' ')
     expect(text).toMatch(/below FMV/)
     expect(text).not.toMatch(/-\d+\.\d+% below/)
   })
