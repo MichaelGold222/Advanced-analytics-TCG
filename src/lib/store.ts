@@ -55,6 +55,9 @@ interface PersistedState {
   certLastFetched: string | null
 }
 
+/** Whether an upload replaces what is there or adds to it. */
+export type ImportMode = 'replace' | 'add'
+
 interface AppState extends PersistedState {
   hydrated: boolean
   refresh: RefreshState
@@ -67,7 +70,7 @@ interface AppState extends PersistedState {
 
   hydrate(): Promise<void>
   loadFeed(): Promise<void>
-  importFile(file: File, kind: 'portfolio' | 'watchlist'): Promise<void>
+  importFile(file: File, kind: 'portfolio' | 'watchlist', mode?: ImportMode): Promise<void>
   addWatchItem(item: Omit<WatchItem, 'id' | 'segment' | 'segmentReason'>): void
   removeWatchItem(id: string): void
   updateWatchItem(id: string, patch: Partial<WatchItem>): void
@@ -212,13 +215,18 @@ export const useStore = create<AppState>((setState, getState) => ({
     }
   },
 
-  async importFile(file, kind) {
+  async importFile(file, kind, mode = 'replace') {
     try {
       const result = await importWorkbook(file, kind)
       const state = getState()
 
-      const holdings = [...state.holdings]
-      const watchlist = [...state.watchlist]
+      // A collection sheet is the whole collection, so uploading it again is
+      // a correction, not an addition. Appending turned a re-upload into a
+      // duplicate of every position.
+      const keepHoldings = mode === 'add' || kind !== 'portfolio'
+      const keepWatchlist = mode === 'add' || kind !== 'watchlist'
+      const holdings = keepHoldings ? [...state.holdings] : []
+      const watchlist = keepWatchlist ? [...state.watchlist] : []
       let imported = 0
       const sheets: string[] = []
       const mapped: Record<string, string> = {}

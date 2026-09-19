@@ -209,3 +209,49 @@ describe('refreshPrices', () => {
     expect(useStore.getState().snapshots[holdingKey(RAW)]).toHaveLength(1)
   })
 })
+
+describe('re-uploading a sheet', () => {
+  const file = (name: string, csv: string) =>
+    new File([csv], name, { type: 'text/csv' })
+  const SHEET = 'Card Name,Set,Condition,Investment\nCharizard,Base Set,PSA 10,12000\nBlastoise,Base Set,PSA 9,1450\n'
+
+  beforeEach(() => {
+    useStore.setState({ holdings: [], watchlist: [], importLog: [] })
+  })
+
+  it('replaces the collection rather than duplicating it', async () => {
+    // A collection sheet is the whole collection, so uploading a corrected
+    // copy is a correction. Appending turned that into 2x every position.
+    await useStore.getState().importFile(file('collection.csv', SHEET), 'portfolio')
+    expect(useStore.getState().holdings).toHaveLength(2)
+
+    await useStore.getState().importFile(file('collection.csv', SHEET), 'portfolio')
+    expect(useStore.getState().holdings).toHaveLength(2)
+  })
+
+  it('picks up a corrected cost on the second upload', async () => {
+    await useStore.getState().importFile(
+      file('collection.csv', 'Card Name,Set,Condition\nCharizard,Base Set,PSA 10\n'), 'portfolio')
+    expect(useStore.getState().holdings[0].costBasis).toBe(0)
+
+    await useStore.getState().importFile(file('collection.csv', SHEET), 'portfolio')
+    expect(useStore.getState().holdings[0].costBasis).toBe(12000)
+  })
+
+  it('combines sheets when asked to add', async () => {
+    await useStore.getState().importFile(file('vintage.csv', SHEET), 'portfolio')
+    await useStore.getState().importFile(
+      file('modern.csv', 'Card Name,Set,Condition,Investment\nCharizard ex,Obsidian Flames,PSA 10,255\n'),
+      'portfolio', 'add')
+    expect(useStore.getState().holdings).toHaveLength(3)
+  })
+
+  it('leaves the watchlist alone when the portfolio is replaced', async () => {
+    await useStore.getState().importFile(
+      file('watch.csv', 'Card Name,Set,Condition,Asking Price\nUmbreon VMAX,Evolving Skies,PSA 10,1650\n'),
+      'watchlist')
+    await useStore.getState().importFile(file('collection.csv', SHEET), 'portfolio')
+    expect(useStore.getState().watchlist).toHaveLength(1)
+    expect(useStore.getState().holdings).toHaveLength(2)
+  })
+})

@@ -9,7 +9,7 @@ import { relativeTime } from '../lib/format'
 import { getParseKey, setParseKey } from '../lib/providers/cardladder-client'
 import { estimateFetch } from '../lib/providers/cardladder'
 import type { UsageInfo } from '../lib/providers/cardladder-client'
-import type { ImportLogEntry, RefreshState } from '../lib/store'
+import type { ImportLogEntry, ImportMode, RefreshState } from '../lib/store'
 
 interface Props {
   importLog: ImportLogEntry[]
@@ -19,7 +19,7 @@ interface Props {
   certCount: number
   usage: UsageInfo | null
   onRefreshGraded: () => void
-  onImport: (file: File, kind: 'portfolio' | 'watchlist') => Promise<void>
+  onImport: (file: File, kind: 'portfolio' | 'watchlist', mode?: ImportMode) => Promise<void>
   onTemplate: () => void
   onExport: () => void
   onClear: () => void
@@ -38,6 +38,7 @@ export function DataPanel({
   const [baseSaved, setBaseSaved] = useState(false)
   const [parseKey, setParseKeyField] = useState(getParseKey())
   const [parseSaved, setParseSaved] = useState(false)
+  const [addMode, setAddMode] = useState(false)
 
   async function runTest() {
     setTesting(true)
@@ -57,9 +58,19 @@ export function DataPanel({
         <section className="card p-4">
           <h2 className="text-sm font-semibold mb-3">Import</h2>
           <div className="space-y-3">
-            <UploadZone compact label="Upload portfolio" hint="Sheets named Portfolio, Watchlist and Price History are each routed to the right place. Everything else is read as holdings." onFile={(f) => onImport(f, 'portfolio')} />
-            <UploadZone compact label="Upload watchlist" hint="What you are considering buying, with an asking price where you have one." onFile={(f) => onImport(f, 'watchlist')} />
+            <UploadZone compact label="Upload portfolio" hint="Sheets named Portfolio, Watchlist and Price History are each routed to the right place. Everything else is read as holdings." onFile={(f) => onImport(f, 'portfolio', addMode ? 'add' : 'replace')} />
+            <UploadZone compact label="Upload watchlist" hint="What you are considering buying, with an asking price where you have one." onFile={(f) => onImport(f, 'watchlist', addMode ? 'add' : 'replace')} />
           </div>
+          <label className="flex items-start gap-2 mt-3 text-xs secondary leading-relaxed cursor-pointer">
+            <input
+              type="checkbox" className="mt-0.5" checked={addMode}
+              onChange={(e) => setAddMode(e.target.checked)}
+            />
+            <span>
+              <span className="font-medium">Add to what is already here</span> instead of replacing it. Leave this
+              off to re-upload a corrected sheet; turn it on to combine separate sheets into one portfolio.
+            </span>
+          </label>
           <div className="flex flex-wrap gap-2 mt-4">
             <button type="button" className="btn" onClick={onTemplate}>
               <FileSpreadsheet className="size-4" aria-hidden /> Download template
