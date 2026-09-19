@@ -252,3 +252,38 @@ describe('how the entry call reads', () => {
     expect(text).not.toMatch(/-\d+\.\d+% below/)
   })
 })
+
+describe('why an item has no value', () => {
+  const series = (points: { date: string; price: number; source?: 'sale' | 'snapshot' }[], graded = false) => ({
+    key: 'k',
+    points: points.map((p) => ({ ...p, source: p.source ?? ('sale' as const) })),
+    quoteExcluded: graded,
+  })
+  const NOW = new Date('2026-09-19T00:00:00Z')
+
+  it('says nothing was found when nothing was found', () => {
+    const r = computeFmv(series([]), NOW)
+    expect(r.fmv).toBeNull()
+    expect(r.rationale.join(' ')).toMatch(/no sales on record/i)
+  })
+
+  it('points a graded card at its sold comps rather than a price refresh', () => {
+    expect(computeFmv(series([], true), NOW).rationale.join(' ')).toMatch(/certificate/i)
+  })
+
+  it('distinguishes sales that exist but are all too old', () => {
+    // The blank cell used to look identical to having found nothing at all.
+    const r = computeFmv(series([
+      { date: '2024-01-10', price: 19000 },
+      { date: '2024-03-02', price: 21000 },
+    ]), NOW)
+    expect(r.fmv).toBeNull()
+    const said = r.rationale.join(' ')
+    expect(said).toMatch(/2 sales on record/i)
+    expect(said).toMatch(/2024-03-02/)
+    expect(said).toMatch(/last 365 days/i)
+    // And it still says what the card last went for.
+    expect(said).toMatch(/\$21,000/)
+    expect(r.stalenessDays).toBeGreaterThan(365)
+  })
+})

@@ -65,13 +65,49 @@ export function pointsInWindow(points: PricePoint[], now = new Date(), windowDay
     .sort((a, b) => a.date.localeCompare(b.date))
 }
 
-export function computeFmv(series: PriceSeries, now = new Date()): FmvResult {
-  const empty: FmvResult = {
-    fmv: null, confidence: 'none', agreement: 0, stalenessDays: null,
-    sampleSize: 0, contributors: [], rationale: ['No price data for this item yet.'],
+/**
+ * Why there is no value, specifically.
+ *
+ * "No price data" covers two different situations that need different
+ * responses: nothing was ever found for this card, or sales were found but
+ * every one of them is older than the valuation window. Reporting them
+ * identically leaves a blank cell and no way to act on it.
+ */
+function noValue(series: PriceSeries, now: Date): FmvResult {
+  const base = {
+    fmv: null, confidence: 'none' as const, agreement: 0,
+    sampleSize: 0, contributors: [],
   }
+  const priced = series.points.filter((p) => p.price > 0)
+  if (priced.length === 0) {
+    return {
+      ...base,
+      stalenessDays: null,
+      rationale: [
+        'No sales on record for this item yet.',
+        series.quoteExcluded
+          ? 'It is a graded slab, so it is priced from sales of that exact certificate — fetch its sold comps, or import them.'
+          : 'Import sold comps for it, or run a price refresh.',
+      ],
+    }
+  }
+
+  const newest = priced.reduce((a, b) => (a.date >= b.date ? a : b))
+  const age = daysAgo(newest.date, now)
+  return {
+    ...base,
+    stalenessDays: age,
+    rationale: [
+      `${priced.length} sale${priced.length === 1 ? '' : 's'} on record, but the most recent is from ${newest.date}, ${age} days ago.`,
+      `Valuation uses the last ${WINDOW_DAYS} days only, so nothing here is recent enough to price from.`,
+      `For reference, that last sale was ${newest.price.toLocaleString(undefined, { style: 'currency', currency: 'USD', maximumFractionDigits: 0 })}.`,
+    ],
+  }
+}
+
+export function computeFmv(series: PriceSeries, now = new Date()): FmvResult {
   const windowed = pointsInWindow(series.points, now)
-  if (windowed.length === 0) return empty
+  if (windowed.length === 0) return noValue(series, now)
 
   return medianOfRecentSales(windowed, now) ?? weightedBlend(windowed, now)
 }

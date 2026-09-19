@@ -39,10 +39,19 @@ export function PriceCell({ analysis }: { analysis?: ItemAnalysis }) {
   if (raw != null) {
     return <div className="tabular font-medium">{money(raw)}</div>
   }
+  // A blank cell with no reason is the least useful thing here: it looks
+  // identical whether nothing was fetched, nothing was found, or everything
+  // found was too old to count.
+  const why = analysis?.fmv.rationale ?? []
   return (
     <>
       <div className="muted">—</div>
-      <div className="mt-1"><ConfidenceChip level="none" /></div>
+      <div className="mt-1"><ConfidenceChip level="none" detail={why.join(' ')} /></div>
+      {why.length > 0 && (
+        <div className="text-[11px] mt-0.5 leading-tight muted max-w-[22rem]" title={why.join(' ')}>
+          {why[0]}
+        </div>
+      )}
     </>
   )
 }
