@@ -1,50 +1,94 @@
-# Diagnostic: how does Parse expose a generated API's endpoints?
+# Discover exactly what the Card Ladder API returns, using the account key.
 #
-# Its platform spec is reachable, but the guessed call paths 404. This lists
-# every path the spec declares plus its auth scheme, so the real pattern for
-# calling "cardladder-com-api / search_cards" comes from the spec rather than
-# from guesswork.
+# From Parse's platform spec: auth is an X-API-Key header, endpoints execute
+# at GET /scraper/{scraper_id}/{endpoint_name}, and each API publishes its own
+# OpenAPI document at /v1/apis/{scraper_id}/openapi.json.
 #
+# This finds the scraper id, reads that API's schema, and makes one real call,
+# so the provider is written against observed fields rather than guessed ones.
+#
+# Needs a repository secret named PARSE_API_KEY.
 # Run from the Actions tab → "Price API check" → Run workflow.
 name: Price API check
 
 on: workflow_dispatch
 
+env:
+  BASE: https://api.parse.bot
+
 jobs:
   check:
     runs-on: ubuntu-latest
     steps:
-      - name: Capture the spec
+      - name: Is the key present?
         run: |
-          for u in 'https://api.parse.bot/openapi.json' 'https://docs.parse.bot/openapi.json'; do
-            code=$(curl -sSL -m 20 -o /tmp/s.json -w '%{http_code}' "$u" 2>/dev/null || echo err)
-            printf '%-40s -> %s (%s bytes)\n' "$u" "$code" "$(wc -c < /tmp/s.json)"
-            if jq -e '.paths' /tmp/s.json >/dev/null 2>&1; then cp /tmp/s.json /tmp/spec.json; echo "  ^ valid OpenAPI"; fi
-          done
+          if [ -z "${{ secrets.PARSE_API_KEY }}" ]; then
+            echo "PARSE_API_KEY is not set."
+            echo "Add it: repo Settings -> Secrets and variables -> Actions -> New repository secret."
+            exit 1
+          fi
+          echo "Key is present (value never printed)."
 
-      - name: Every path, with its summary
+      - name: Find the Card Ladder API and its scraper id
+        env:
+          KEY: ${{ secrets.PARSE_API_KEY }}
         run: |
-          [ -s /tmp/spec.json ] || { echo "no spec"; exit 0; }
-          jq -r '.servers // [] | .[] | "server: \(.url)"' /tmp/spec.json
+          curl -sSL -m 30 -H "X-API-Key: $KEY" "$BASE/dispatch/tasks?limit=100" -o /tmp/tasks.json \
+            -w 'HTTP %{http_code}\n'
+          echo "=== APIs on this account ==="
+          jq -r '(.tasks // .items // .data // .) | if type=="array" then .[] else . end
+                 | "\(.scraper_id // .id // "?")  \(.slug // .name // .url // "")  [\(.status // "")]"' \
+            /tmp/tasks.json 2>/dev/null | head -30 || head -c 600 /tmp/tasks.json
+          jq -r '(.tasks // .items // .data // .) | if type=="array" then .[] else . end
+                 | select((.slug // .name // "") | test("cardladder"; "i")) | .scraper_id // .id' \
+            /tmp/tasks.json 2>/dev/null | head -1 > /tmp/sid || true
+          echo "scraper id: $(cat /tmp/sid 2>/dev/null || echo 'not found')"
+
+      - name: Read that API's own schema
+        env:
+          KEY: ${{ secrets.PARSE_API_KEY }}
+        run: |
+          SID=$(cat /tmp/sid 2>/dev/null)
+          [ -n "$SID" ] || { echo "no scraper id; stopping"; exit 0; }
+          curl -sSL -m 30 -H "X-API-Key: $KEY" "$BASE/v1/apis/$SID/openapi.json" -o /tmp/api.json \
+            -w 'HTTP %{http_code}\n'
+          echo "=== endpoints ==="
+          jq -r '.paths | to_entries[] | .key as $p | (.value | to_entries[] | "\(.key|ascii_upcase) \($p) — \(.value.summary // "")")' /tmp/api.json 2>/dev/null | head -30
           echo
-          jq -r '.paths | to_entries[] | .key as $p | (.value | to_entries[] | "\(.key|ascii_upcase) \($p)  — \(.value.summary // "")")' /tmp/spec.json
+          echo "=== parameters of the sales and cert endpoints ==="
+          jq -r '.paths | to_entries[] | select(.key | test("sales|cert"; "i")) | .key as $p
+                 | (.value | to_entries[] | "\($p): " + ((.value.parameters // []) | map("\(.name)\(if .required then "*" else "" end)") | join(", ")))' \
+            /tmp/api.json 2>/dev/null | head -20
 
-      - name: Auth scheme
+      - name: One real call, printed
+        env:
+          KEY: ${{ secrets.PARSE_API_KEY }}
         run: |
-          [ -s /tmp/spec.json ] || exit 0
-          echo "=== securitySchemes ==="
-          jq -r '.components.securitySchemes // {} | to_entries[] | "\(.key): type=\(.value.type) in=\(.value.in // "-") name=\(.value.name // "-") scheme=\(.value.scheme // "-")"' /tmp/spec.json
+          SID=$(cat /tmp/sid 2>/dev/null)
+          [ -n "$SID" ] || exit 0
+          echo "=== search_cards: charizard ==="
+          curl -sSL -m 45 -H "X-API-Key: $KEY" \
+            --get --data-urlencode 'query=Charizard Base Set' --data-urlencode 'limit=3' \
+            "$BASE/scraper/$SID/search_cards" -o /tmp/s.json -w 'HTTP %{http_code}\n'
+          jq '.' /tmp/s.json 2>/dev/null | head -60 || head -c 1200 /tmp/s.json
           echo
-          echo "=== anything mentioning slug, api_id or endpoint in a path ==="
-          jq -r '.paths | keys[]' /tmp/spec.json | grep -iE 'slug|api|endpoint|call|run|invoke|\{' || echo "  none matched"
+          echo "=== top-level keys, and whether any card id came back ==="
+          jq -r 'if type=="object" then (keys|join(", ")) else "array of \(length)" end' /tmp/s.json 2>/dev/null || true
+          jq -r '.. | objects | select(has("id")) | .id' /tmp/s.json 2>/dev/null | head -3 > /tmp/cardid || true
+          echo "first card id: $(head -1 /tmp/cardid 2>/dev/null || echo none)"
 
-      - name: Try the documented shapes unauthenticated
+      - name: Do we get individual sales with dates?
+        env:
+          KEY: ${{ secrets.PARSE_API_KEY }}
         run: |
-          for u in 'https://api.parse.bot/api/cardladder-com-api/search_cards?query=charizard' \
-                   'https://api.parse.bot/apis/cardladder-com-api/search_cards?query=charizard' \
-                   'https://api.parse.bot/cardladder-com-api/endpoints/search_cards?query=charizard' \
-                   'https://cardladder-com-api.parse.bot/search_cards?query=charizard'; do
-            printf '%-72s -> ' "$u"
-            curl -sSL -m 20 -o /tmp/r.json -w '%{http_code}\n' "$u" 2>/dev/null || echo err
-            head -c 160 /tmp/r.json 2>/dev/null; echo
-          done
+          SID=$(cat /tmp/sid 2>/dev/null); CID=$(head -1 /tmp/cardid 2>/dev/null)
+          [ -n "$SID" ] && [ -n "$CID" ] || { echo "need a card id first"; exit 0; }
+          echo "=== get_card_sales for card $CID ==="
+          curl -sSL -m 45 -H "X-API-Key: $KEY" \
+            --get --data-urlencode "card_id=$CID" \
+            "$BASE/scraper/$SID/get_card_sales" -o /tmp/sales.json -w 'HTTP %{http_code}\n'
+          jq '.' /tmp/sales.json 2>/dev/null | head -70 || head -c 1500 /tmp/sales.json
+          echo
+          echo "=== field names that look like a sale record ==="
+          jq -r '[.. | objects | keys[]] | unique | .[]' /tmp/sales.json 2>/dev/null \
+            | grep -iE 'date|price|sold|grade|amount|auction|source' | head -20 || echo "  none"
