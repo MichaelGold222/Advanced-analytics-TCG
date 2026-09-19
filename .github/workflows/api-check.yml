@@ -1,13 +1,9 @@
-# Discover exactly what the Card Ladder API returns, using the account key.
+# Diagnostic: can the dashboard call Parse from the browser?
 #
-# From Parse's platform spec: auth is an X-API-Key header, endpoints execute
-# at GET /scraper/{scraper_id}/{endpoint_name}, and each API publishes its own
-# OpenAPI document at /v1/apis/{scraper_id}/openapi.json.
+# If it can, the whole server-side path becomes unnecessary: the user pastes
+# their own key into the app, uploads a sheet with cert numbers, and prices
+# arrive with no secrets, no workflow and no repository involvement.
 #
-# This finds the scraper id, reads that API's schema, and makes one real call,
-# so the provider is written against observed fields rather than guessed ones.
-#
-# Needs a repository secret named PARSE_API_KEY.
 # Run from the Actions tab → "Price API check" → Run workflow.
 name: Price API check
 
@@ -15,110 +11,38 @@ on: workflow_dispatch
 
 env:
   BASE: https://api.parse.bot
+  ORIGIN: https://michaelgold222.github.io
 
 jobs:
   check:
     runs-on: ubuntu-latest
     steps:
-      - name: Is the key present?
+      - name: Preflight on the endpoints the dashboard would call
         run: |
-          if [ -z "${{ secrets.PARSE_API_KEY }}" ]; then
-            echo "PARSE_API_KEY is not set."
-            echo "Add it: repo Settings -> Secrets and variables -> Actions -> New repository secret."
-            exit 1
-          fi
-          echo "Key is present (value never printed)."
-
-      - name: Find the Card Ladder API and its scraper id
-        env:
-          KEY: ${{ secrets.PARSE_API_KEY }}
-        run: |
-          curl -sSL -m 30 -H "X-API-Key: $KEY" "$BASE/dispatch/tasks?limit=100" -o /tmp/tasks.json \
-            -w 'HTTP %{http_code}\n'
-          echo "=== every field on the task record ==="
-          jq -r '(.tasks // .items // .data // .) | if type=="array" then .[0] else . end' /tmp/tasks.json 2>/dev/null | head -60
-
-          TASK=$(jq -r '(.tasks // .items // .data // .) | if type=="array" then .[] else . end
-                        | select((.slug // .name // .url // "") | test("cardladder"; "i")) | .id' \
-                 /tmp/tasks.json 2>/dev/null | head -1)
-          echo "task id: ${TASK:-none}"
-          [ -n "$TASK" ] || exit 0
-
-          echo
-          echo "=== task detail, where the scraper id should live ==="
-          curl -sSL -m 30 -H "X-API-Key: $KEY" "$BASE/dispatch/tasks/$TASK" -o /tmp/task.json \
-            -w 'HTTP %{http_code}\n'
-          jq -r 'paths(scalars) as $p | "\($p | join(".")) = \(getpath($p) | tostring | .[0:70])"' /tmp/task.json 2>/dev/null \
-            | grep -iE 'id|slug|endpoint|status|url' | head -40
-
-          # The scraper id is its own field; the task id is not interchangeable.
-          jq -r '.result_scraper_id // .scraper_id // empty' /tmp/task.json 2>/dev/null | head -1 > /tmp/sid
-          echo "scraper id: $(cat /tmp/sid 2>/dev/null || echo 'not found')"
-
-          echo
-          echo "=== endpoint names this API exposes ==="
-          jq -r '[.. | objects | select(has("name")) | .name] | unique | .[]' /tmp/task.json 2>/dev/null | head -20 || true
-
-      - name: Read that API's own schema
-        env:
-          KEY: ${{ secrets.PARSE_API_KEY }}
-        run: |
-          SID=$(cat /tmp/sid 2>/dev/null)
-          [ -n "$SID" ] || { echo "no scraper id; stopping"; exit 0; }
-          curl -sSL -m 30 -H "X-API-Key: $KEY" "$BASE/v1/apis/$SID/openapi.json" -o /tmp/api.json \
-            -w 'HTTP %{http_code}\n'
-          echo "=== endpoints ==="
-          jq -r '.paths | to_entries[] | .key as $p | (.value | to_entries[] | "\(.key|ascii_upcase) \($p) — \(.value.summary // "")")' /tmp/api.json 2>/dev/null | head -30
-          echo
-          echo "=== parameters of the sales and cert endpoints ==="
-          jq -r '.paths | to_entries[] | select(.key | test("sales|cert"; "i")) | .key as $p
-                 | (.value | to_entries[] | "\($p): " + ((.value.parameters // []) | map("\(.name)\(if .required then "*" else "" end)") | join(", ")))' \
-            /tmp/api.json 2>/dev/null | head -20
-
-      - name: search_cards, using Card Ladder's own set label
-        env:
-          KEY: ${{ secrets.PARSE_API_KEY }}
-        run: |
-          SID=$(cat /tmp/sid); [ -n "$SID" ] || exit 0
-          # Card Ladder labels the 1999 Base Set "Pokemon Game", not "Base Set".
-          for q in 'Charizard Pokemon Game PSA 9' 'Charizard Pokemon Game' 'Charizard'; do
-            printf '\n=== query: %s ===\n' "$q"
-            curl -sSL -m 60 -H "X-API-Key: $KEY" \
-              --get --data-urlencode "query=$q" --data-urlencode 'limit=3' \
-              "$BASE/scraper/$SID/search_cards" -o /tmp/s.json -w 'HTTP %{http_code}\n'
-            jq -r '.data.total_hits // 0' /tmp/s.json 2>/dev/null | sed 's/^/hits: /'
-            jq -r '.data.cards[0] // empty' /tmp/s.json 2>/dev/null | head -25
-            jq -r '.data.cards[0].id // empty' /tmp/s.json 2>/dev/null > /tmp/cardid
-            [ -s /tmp/cardid ] && break
+          for p in '/dispatch/tasks' '/scraper/x/get_cert_values_bulk'; do
+            printf '\n=== OPTIONS %s ===\n' "$p"
+            curl -sS -m 20 -D - -o /dev/null -X OPTIONS \
+              -H "Origin: $ORIGIN" \
+              -H 'Access-Control-Request-Method: POST' \
+              -H 'Access-Control-Request-Headers: x-api-key,content-type' \
+              "$BASE$p" | tr -d '\r' \
+              | grep -iE '^(HTTP/|access-control-)' || echo '  no access-control headers'
           done
-          echo "card id: $(cat /tmp/cardid 2>/dev/null || echo none)"
 
-      - name: get_card_sales_detail — the per-transaction records
+      - name: Does a real response carry the header?
         env:
           KEY: ${{ secrets.PARSE_API_KEY }}
         run: |
-          SID=$(cat /tmp/sid); CID=$(cat /tmp/cardid 2>/dev/null)
-          [ -n "$CID" ] || { echo "no card id"; exit 0; }
-          curl -sSL -m 60 -H "X-API-Key: $KEY" \
-            --get --data-urlencode "card_id=$CID" --data-urlencode 'limit=5' \
-            "$BASE/scraper/$SID/get_card_sales_detail" -o /tmp/sd.json -w 'HTTP %{http_code}\n'
-          echo "=== one full sale record ==="
-          jq -r '[.. | arrays | select(length>0)][0][0] // empty' /tmp/sd.json 2>/dev/null
-          echo
-          echo "=== total_sales and record count ==="
-          jq -r '.data.total_sales // "?"' /tmp/sd.json 2>/dev/null
-          jq -r '[.. | arrays | select(length>0)] | map(length) | max // 0' /tmp/sd.json 2>/dev/null
+          [ -n "$KEY" ] || { echo "no key"; exit 0; }
+          echo "=== GET /dispatch/tasks with an Origin ==="
+          curl -sS -m 30 -D - -o /dev/null \
+            -H "X-API-Key: $KEY" -H "Origin: $ORIGIN" \
+            "$BASE/dispatch/tasks?limit=1" | tr -d '\r' \
+            | grep -iE '^(HTTP/|access-control-|vary)' || echo '  no access-control headers on the response'
 
-      - name: get_cert_values_bulk — the bulk path for a graded collection
-        env:
-          KEY: ${{ secrets.PARSE_API_KEY }}
+      - name: Verdict
         run: |
-          SID=$(cat /tmp/sid); [ -n "$SID" ] || exit 0
-          # 93083876 is the PSA cert the endpoint documentation itself cites.
-          curl -sSL -m 90 -H "X-API-Key: $KEY" -H 'Content-Type: application/json' \
-            -d '{"certs":[{"cert_number":"93083876","grading_company":"PSA"}]}' \
-            "$BASE/scraper/$SID/get_cert_values_bulk" -o /tmp/cb.json -w 'HTTP %{http_code}\n'
-          jq '.' /tmp/cb.json 2>/dev/null | head -60 || head -c 1500 /tmp/cb.json
           echo
-          echo "=== field names present ==="
-          jq -r '[.. | objects | keys[]] | unique | join(", ")' /tmp/cb.json 2>/dev/null || true
+          echo "A browser needs Access-Control-Allow-Origin on BOTH the preflight"
+          echo "and the response. Without it the dashboard cannot call Parse"
+          echo "directly, whoever holds the key."
