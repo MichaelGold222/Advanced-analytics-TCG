@@ -152,7 +152,7 @@ describe('fetchCertPrices', () => {
   it('does nothing, and charges nothing, for an empty list', async () => {
     const calls = stubParse()
     expect(await fetchCertPrices([], { key: 'k' }))
-      .toEqual({ prices: [], unmatched: [], usage: null, partialError: null })
+      .toEqual({ prices: [], unmatched: [], failed: [], usage: null, partialError: null })
     expect(calls).toHaveLength(0)
   })
 
@@ -183,25 +183,31 @@ describe('fetchCertPrices', () => {
     }
   })
 
-  it('keeps the slabs it did price when one call fails', async () => {
-    let n = 0
-    vi.stubGlobal('fetch', async (url: string, init?: RequestInit) => {
-      const body = init?.body ? JSON.parse(String(init.body)) : undefined
-      const make = (status: number, payload: unknown) =>
-        ({ ok: status >= 200 && status < 300, status, headers: { get: () => null }, json: async () => payload }) as unknown as Response
-      if (String(url).includes('/dispatch/tasks/')) return make(200, { result_scraper_id: 's' })
-      if (String(url).includes('/dispatch/tasks')) return make(200, { tasks: [{ id: 't', url: 'https://cardladder.com/' }] })
-      // The second batch fails; the first and third must survive it.
-      if (++n === 2) return make(500, {})
-      return make(200, bulkBody((body as { certs: { cert_number: string }[] }).certs))
-    })
-    const many = Array.from({ length: 75 }, (_, i) => ({ cert_number: String(i), grading_company: 'PSA' as const }))
-    const { prices, unmatched, partialError } = await fetchCertPrices(many, { key: 'k' })
-    // One call's worth is lost; every other slab survives it.
-    expect(prices.length + unmatched.length).toBe(75)
-    expect(prices.length).toBeGreaterThan(0)
-    expect(unmatched.length).toBeGreaterThan(0)
-    expect(partialError).toMatch(new RegExp(`Priced ${prices.length} of 75`))
+  it('says plainly when the key is refused', async () => {
+    stubParse({ bulkStatus: 401 })
+    await expect(fetchCertPrices(certs, { key: 'bad' })).rejects.toThrow(/key was refused/i)
+  })
+
+  it('says plainly when credits run out', async () => {
+    stubParse({ bulkStatus: 429, headers: { 'X-Credits-Remaining': '0' } })
+    await expect(fetchCertPrices(certs, { key: 'k' })).rejects.toThrow(/out of credits/i)
+  })
+
+  it('waits out a spent burst instead of calling it an empty balance', async () => {
+    // A 429 with no credit header is a rate limit. Number(null) is 0, so this
+    // is exactly the case that would otherwise be misread as no credits left.
+    vi.useFakeTimers()
+    try {
+      const calls = stubParse({ bulkStatus: 429, headers: { 'Retry-After': '1' } })
+      const run = fetchCertPrices(certs, { key: 'k' }).catch((e: Error) => e)
+      await vi.advanceTimersByTimeAsync(10_000)
+      const err = await run
+      expect((err as Error).message).toMatch(/rate limited/i)
+      // It retried rather than giving up on the first refusal.
+      expect(calls.filter((c) => c.url.includes('get_cert_values_bulk')).length).toBeGreaterThan(1)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('distinguishes an unreachable API from a refusal', async () => {
@@ -209,5 +215,83 @@ describe('fetchCertPrices', () => {
     const err = await fetchCertPrices(certs, { key: 'k' }).catch((e) => e)
     expect(err).toBeInstanceOf(ParseError)
     expect((err as ParseError).status).toBe(0)
+  })
+})
+
+describe('a server that is having a bad moment', () => {
+  const twoCerts = [
+    { cert_number: '111', grading_company: 'PSA' as const },
+    { cert_number: '222', grading_company: 'PSA' as const },
+  ]
+
+  /** Fails the bulk call `failTimes` times, then answers normally. */
+  function flaky(failTimes: number, status = 503) {
+    let seen = 0
+    const make = (code: number, payload: unknown) =>
+      ({ ok: code >= 200 && code < 300, status: code, headers: { get: () => null }, json: async () => payload }) as unknown as Response
+    vi.stubGlobal('fetch', async (url: string, init?: RequestInit) => {
+      if (String(url).includes('/dispatch/tasks/')) return make(200, { result_scraper_id: 's' })
+      if (String(url).includes('/dispatch/tasks')) return make(200, { tasks: [{ id: 't', url: 'https://cardladder.com/' }] })
+      if (seen++ < failTimes) return make(status, {})
+      const body = init?.body ? JSON.parse(String(init.body)) : { certs: [] }
+      return make(200, bulkBody(body.certs))
+    })
+  }
+
+  it('retries a 503 instead of losing the slabs in that call', async () => {
+    vi.useFakeTimers()
+    try {
+      flaky(2)
+      const run = fetchCertPrices(twoCerts, { key: 'k' })
+      await vi.advanceTimersByTimeAsync(30_000)
+      const { prices, failed } = await run
+      expect(prices).toHaveLength(2)
+      expect(failed).toEqual([])
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('does not call a cert unmatched because the server never answered', async () => {
+    // "No match" tells someone to check their certificate numbers. A 503 is
+    // not a verdict on the numbers.
+    vi.useFakeTimers()
+    try {
+      flaky(99)
+      const run = fetchCertPrices(twoCerts, { key: 'k' }).catch((e: Error) => e)
+      await vi.advanceTimersByTimeAsync(60_000)
+      const out = await run
+      expect(out).toBeInstanceOf(ParseError)
+      expect((out as ParseError).status).toBe(503)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('keeps what it priced and says the rest will be retried', async () => {
+    vi.useFakeTimers()
+    try {
+      // First batch answers; the second fails every attempt.
+      let n = 0
+      const make = (code: number, payload: unknown) =>
+        ({ ok: code >= 200 && code < 300, status: code, headers: { get: () => null }, json: async () => payload }) as unknown as Response
+      vi.stubGlobal('fetch', async (url: string, init?: RequestInit) => {
+        if (String(url).includes('/dispatch/tasks/')) return make(200, { result_scraper_id: 's' })
+        if (String(url).includes('/dispatch/tasks')) return make(200, { tasks: [{ id: 't', url: 'https://cardladder.com/' }] })
+        const body = init?.body ? JSON.parse(String(init.body)) : { certs: [] }
+        if (++n > 1) return make(503, {})
+        return make(200, bulkBody(body.certs))
+      })
+      const many = Array.from({ length: 40 }, (_, i) => ({ cert_number: String(i), grading_company: 'PSA' as const }))
+      const run = fetchCertPrices(many, { key: 'k' })
+      await vi.advanceTimersByTimeAsync(120_000)
+      const { prices, failed, unmatched, partialError } = await run
+      expect(prices.length).toBeGreaterThan(0)
+      expect(failed.length).toBeGreaterThan(0)
+      expect(unmatched).toEqual([])
+      expect(partialError).toMatch(/could not be reached and will be retried/i)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })

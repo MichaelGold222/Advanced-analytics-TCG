@@ -66,7 +66,7 @@ interface AppState extends PersistedState {
   feed: PriceFeed | null
   /** Credit counters Parse returned on the last graded fetch. */
   usage: UsageInfo | null
-  gradedRefresh: { running: boolean; done: number; total: number; unmatched: string[]; startedAt: number | null }
+  gradedRefresh: { running: boolean; done: number; total: number; unmatched: string[]; failed: string[]; startedAt: number | null }
 
   hydrate(): Promise<void>
   loadFeed(): Promise<void>
@@ -126,7 +126,7 @@ export const useStore = create<AppState>((setState, getState) => ({
   error: null,
   feed: null,
   usage: null,
-  gradedRefresh: { running: false, done: 0, total: 0, unmatched: [], startedAt: null },
+  gradedRefresh: { running: false, done: 0, total: 0, unmatched: [], failed: [], startedAt: null },
 
   /**
    * Price graded slabs from Card Ladder, by certificate number.
@@ -158,9 +158,9 @@ export const useStore = create<AppState>((setState, getState) => ({
       return
     }
 
-    setState({ gradedRefresh: { running: true, done: 0, total: list.length, unmatched: [], startedAt: Date.now() } })
+    setState({ gradedRefresh: { running: true, done: 0, total: list.length, unmatched: [], failed: [], startedAt: Date.now() } })
     try {
-      const { prices, unmatched, usage, partialError } = await fetchCertPrices(list, {
+      const { prices, unmatched, failed, usage, partialError } = await fetchCertPrices(list, {
         key,
         onProgress: (done, total) => setState({ gradedRefresh: { ...getState().gradedRefresh, done, total } }),
       })
@@ -173,7 +173,7 @@ export const useStore = create<AppState>((setState, getState) => ({
         certSales,
         certLastFetched: new Date().toISOString(),
         usage,
-        gradedRefresh: { running: false, done: list.length, total: list.length, unmatched, startedAt: null },
+        gradedRefresh: { running: false, done: list.length, total: list.length, unmatched, failed, startedAt: null },
         error: priced === 0
           ? `Looked up ${list.length} certificate${list.length === 1 ? '' : 's'} and none came back with sales. Check the numbers against the slab labels.`
           : partialError,

@@ -14,7 +14,7 @@ import type { ImportLogEntry, ImportMode, RefreshState } from '../lib/store'
 interface Props {
   importLog: ImportLogEntry[]
   refresh: RefreshState
-  gradedRefresh: { running: boolean; done: number; total: number; unmatched: string[]; startedAt: number | null }
+  gradedRefresh: { running: boolean; done: number; total: number; unmatched: string[]; failed: string[]; startedAt: number | null }
   certLastFetched: string | null
   certCount: number
   usage: UsageInfo | null
@@ -146,6 +146,13 @@ export function DataPanel({
               {usage.creditsCharged != null && `${usage.creditsCharged} credit${usage.creditsCharged === 1 ? '' : 's'} charged`}
               {usage.creditsRemaining != null && `${usage.creditsCharged != null ? ' · ' : ''}${usage.creditsRemaining.toLocaleString()} remaining`}
               {usage.creditsLimit != null && ` of ${usage.creditsLimit.toLocaleString()}`}
+            </p>
+          )}
+          {gradedRefresh.failed.length > 0 && (
+            <p className="text-xs mt-2 leading-relaxed" style={{ color: 'var(--serious)' }}>
+              {gradedRefresh.failed.length} slab{gradedRefresh.failed.length === 1 ? '' : 's'} could not be
+              reached — Card Ladder was unavailable, which says nothing about those certificate numbers.
+              Press fetch again to pick them up.
             </p>
           )}
           {gradedRefresh.unmatched.length > 0 && (

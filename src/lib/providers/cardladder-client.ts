@@ -162,10 +162,33 @@ export async function resolveScraperId(key: string, signal?: AbortSignal): Promi
 
 export interface CertFetchResult {
   prices: CertPrices[]
+  /** Certs the upstream answered for but had no sales for. */
   unmatched: string[]
+  /** Certs never answered for, because the call failed. Worth retrying. */
+  failed: string[]
   usage: UsageInfo | null
   /** Set when some batches failed but others returned; the fetch is partial. */
   partialError: string | null
+}
+
+/**
+ * Errors worth trying again.
+ *
+ * A 5xx is the upstream having a bad moment, not a verdict on the request —
+ * treating it as final loses a whole batch of slabs to a blip. 0 is a network
+ * failure, which browsers report without a status.
+ *
+ * 429 is deliberately absent: a spent burst arrives as RateLimited and is
+ * waited out on the server's own timing, while a 429 that reaches here is an
+ * empty credit balance, which no amount of retrying will refill.
+ */
+function isTransient(status: number): boolean {
+  return status === 0 || status === 408 || status === 425 || status >= 500
+}
+
+/** Backoff between attempts, with jitter so eight workers do not retry in lockstep. */
+function backoffMs(attempt: number): number {
+  return [1000, 3000, 7000][attempt] ?? 7000 + Math.random() * 2000
 }
 
 /**
@@ -183,12 +206,13 @@ export async function fetchCertPrices(
   certs: CertRequest[],
   opts: { key: string; signal?: AbortSignal; onProgress?: (done: number, total: number) => void },
 ): Promise<CertFetchResult> {
-  if (certs.length === 0) return { prices: [], unmatched: [], usage: null, partialError: null }
+  if (certs.length === 0) return { prices: [], unmatched: [], failed: [], usage: null, partialError: null }
 
   const scraperId = await resolveScraperId(opts.key, opts.signal)
   const batches = batchCerts(certs)
   const prices: CertPrices[] = []
   const unmatched: string[] = []
+  const failed: string[] = []
   let usage: UsageInfo | null = null
   let done = 0
   const failures: ParseError[] = []
@@ -225,15 +249,17 @@ export async function fetchCertPrices(
       if (i >= batches.length) return
       const batch = batches[i]
       try {
-        // A spent burst refills in well under a minute, so wait it out rather
-        // than dropping the slabs in this batch on the floor.
+        // A spent burst, a 5xx or a dropped connection are all momentary, so
+        // wait them out rather than dropping the slabs in this batch.
         for (let attempt = 0; ; attempt++) {
           try {
             await runOne(batch)
             break
           } catch (err) {
-            if (!(err instanceof RateLimited) || attempt >= 3) throw err
-            await sleep(err.retryAfterMs)
+            if ((err as Error)?.name === 'AbortError' || attempt >= 3) throw err
+            if (err instanceof RateLimited) await sleep(err.retryAfterMs)
+            else if (err instanceof ParseError && isTransient(err.status)) await sleep(backoffMs(attempt))
+            else throw err
           }
         }
       } catch (err) {
@@ -244,7 +270,9 @@ export async function fetchCertPrices(
         failures.push(pe)
         // A bad key or an empty balance will not fix itself on the next call.
         if (pe.status === 401 || pe.status === 403 || pe.status === 429) fatal = true
-        else for (const c of batch) unmatched.push(c.cert_number)
+        // These were never answered for. Calling them unmatched would blame
+        // the certificate numbers for the server's bad moment.
+        for (const c of batch) failed.push(c.cert_number)
       }
       done += batch.length
       opts.onProgress?.(Math.min(done, certs.length), certs.length)
@@ -257,12 +285,16 @@ export async function fetchCertPrices(
   const failure = failures[0]
   if (failure && prices.length === 0) throw failure
 
+  const short = certs.length - prices.length - unmatched.length
   return {
     prices,
     unmatched,
+    failed,
     usage,
     partialError: failure
-      ? `${failure.message} Priced ${prices.length} of ${certs.length} before stopping.`
+      ? `${failure.message} Priced ${prices.length} of ${certs.length}${
+          short > 0 ? `; ${short} could not be reached and will be retried next time you refresh` : ''
+        }.`
       : null,
   }
 }
