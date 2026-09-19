@@ -1,9 +1,8 @@
-# Diagnostic: what does Card Hedge AI's API actually offer?
+# Diagnostic: can Card Hedge's API drive this dashboard?
 #
-# The question that decides whether it can drive this dashboard: does it serve
-# individual completed sales (date + price, per grade), or only an aggregate
-# estimate? The valuation here is a median of the last five real sales, so an
-# aggregate alone cannot feed it.
+# Decisive question: does it return individual completed sales (date + price,
+# per grade), or only an aggregate estimate? The valuation here is a median of
+# the last five real sales, so an aggregate alone cannot feed it.
 #
 # Run from the Actions tab → "Price API check" → Run workflow.
 name: Price API check
@@ -14,41 +13,44 @@ jobs:
   check:
     runs-on: ubuntu-latest
     steps:
-      - name: Read the API services page
+      - name: Read the API documentation page
         run: |
-          curl -sSL -o /tmp/api.html -w 'HTTP %{http_code}\n' \
-            -H 'User-Agent: Mozilla/5.0' 'https://ai.cardhedger.com/api-services' || true
-          echo "=== page text ==="
-          sed -e 's/<script[^>]*>.*<\/script>//g' -e 's/<style[^>]*>.*<\/style>//g' \
-              -e 's/<[^>]*>/ /g' /tmp/api.html \
-            | tr -s ' \n' ' \n' | grep -viE '^\s*$' | head -120
+          curl -sSL -o /tmp/docs.html -H 'User-Agent: Mozilla/5.0' 'https://api.cardhedger.com/' || true
+          echo "=== readable text ==="
+          sed -e ':a' -e 'N' -e '$!ba' -e 's/<script[^>]*>[^<]*<\/script>/ /g' /tmp/docs.html \
+            | sed -e 's/<[^>]*>/\n/g' \
+            | sed -e 's/&amp;/\&/g' -e 's/&lt;/</g' -e 's/&gt;/>/g' -e 's/&quot;/"/g' -e 's/&#39;/'"'"'/g' \
+            | grep -vE '^[[:space:]]*$' | head -150
 
-      - name: Look for endpoint, auth and pricing mentions
+      - name: What does the search endpoint say without a key?
         run: |
-          echo "=== URLs and keywords in the page source ==="
-          grep -oiE 'https?://[a-z0-9./_-]*(api|docs|developer)[a-z0-9./_-]*' /tmp/api.html | sort -u | head -20
-          echo
-          for kw in 'sales history' 'sold' 'comps' 'api key' 'bearer' 'oauth' \
-                    'rate limit' 'per month' 'pricing' 'endpoint' 'json' 'population'; do
-            n=$(grep -oic "$kw" /tmp/api.html | head -1)
-            printf '%-16s %s mentions\n' "$kw" "${n:-0}"
+          for url in \
+            'https://cardhedge-api.com/v1/cards/search?q=charizard' \
+            'https://cardhedge-api.com/v1/' \
+            'https://cardhedge-api.com/'; do
+            printf '\n=== %s ===\n' "$url"
+            curl -sSL -m 15 -o /tmp/r.json -w 'HTTP %{http_code}\n' \
+              -H 'User-Agent: Mozilla/5.0' "$url" || echo unreachable
+            head -c 400 /tmp/r.json; echo
           done
 
-      - name: Probe likely API hosts
+      - name: Hunt for a sales-history endpoint
         run: |
-          probe() {
-            printf '%-44s -> HTTP %s\n' "$1" \
-              "$(curl -sSL -m 12 -o /tmp/p.json -w '%{http_code}' -H 'User-Agent: Mozilla/5.0' "$2" 2>/dev/null || echo unreachable)"
-            head -c 200 /tmp/p.json 2>/dev/null; echo; echo
-          }
-          probe 'api.cardhedger.com'       'https://api.cardhedger.com/'
-          probe 'ai.cardhedger.com/api'    'https://ai.cardhedger.com/api'
-          probe 'docs'                     'https://ai.cardhedger.com/api-docs'
+          echo "=== endpoint paths mentioned in the docs ==="
+          grep -oiE '/v[0-9]+/[a-z0-9/_{}-]+' /tmp/docs.html | sort -u | head -40
+          echo
+          echo "=== keyword counts in the docs ==="
+          for kw in 'sales history' 'sales_history' 'recent sales' 'last sale' \
+                    'sold' 'transaction' 'psa' 'grade' 'population' 'price'; do
+            printf '%-16s %s\n' "$kw" "$(grep -oic "$kw" /tmp/docs.html || echo 0)"
+          done
 
-      - name: Can a browser call it?
+      - name: Can a browser call the API host directly?
         run: |
           curl -sS -D - -o /dev/null -X OPTIONS \
             -H 'Origin: https://michaelgold222.github.io' \
             -H 'Access-Control-Request-Method: GET' \
-            'https://ai.cardhedger.com/api-services' | tr -d '\r' \
-            | grep -iE '^(HTTP/|access-control-)' || echo "no access-control headers on preflight"
+            -H 'Access-Control-Request-Headers: authorization' \
+            'https://cardhedge-api.com/v1/cards/search' | tr -d '\r' \
+            | grep -iE '^(HTTP/|access-control-)' \
+            || echo "no access-control headers -> needs a server to relay, like eBay"
