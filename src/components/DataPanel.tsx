@@ -77,7 +77,7 @@ export function DataPanel({
           <p className="text-xs secondary leading-relaxed mb-3">
             Prices PSA, BGS, CGC and SGC slabs from their own completed sales, matched by certificate
             number. Paste your key from <span className="font-medium">parse.bot/settings</span>; it stays in
-            this browser and is sent only to Parse. One lookup covers 200 slabs.
+            this browser and is sent only to Parse.
           </p>
           <div className="flex gap-2">
             <input
@@ -151,13 +151,21 @@ export function DataPanel({
         </section>
 
         <section className="card p-4">
-          <h2 className="text-sm font-semibold mb-1 flex items-center gap-2">
-            <KeyRound className="size-4" aria-hidden /> Ungraded singles (optional)
-          </h2>
+          <details>
+            <summary className="text-sm font-semibold flex items-center gap-2 cursor-pointer list-none">
+              <KeyRound className="size-4" aria-hidden /> Ungraded singles
+              <span className="text-xs font-normal muted">— optional, raw cards only</span>
+            </summary>
+            <div className="mt-3">
           <p className="text-xs secondary leading-relaxed mb-3">
-            Lookups use the free Pokémon TCG API, which works without a key but is rate limited.
-            A free key at <span className="font-medium">dev.pokemontcg.io</span> raises the limit. It is stored in this browser only
-            and sent to that API alone.
+            Nothing here is needed for graded slabs or sealed product. It prices <strong>raw</strong> singles
+            from the free Pokémon TCG API, which fails roughly half its requests — so treat anything it
+            returns as a rough reference, not a valuation. Graded cards are priced from their own sold comps
+            in the section above.
+          </p>
+          <p className="text-xs secondary leading-relaxed mb-3">
+            A free key from <span className="font-medium">dev.pokemontcg.io</span> raises the rate limit. It is
+            stored in this browser only and sent to that API alone.
           </p>
           <div className="flex gap-2">
             <input
@@ -176,8 +184,8 @@ export function DataPanel({
             >
               <strong>Live prices will not work here.</strong> This page was opened straight from a file, and
               browsers do not let a page opened that way call an outside service. Everything else works —
-              imports, valuations from your own comps, the whole dashboard. For live prices, serve the app over
-              http (<code>npm run serve</code>) or point it at your own address below.
+              imports, valuations from your own comps, the whole dashboard. For live prices, open the hosted
+              copy of this page instead of the downloaded file.
             </p>
           )}
 
@@ -198,8 +206,8 @@ export function DataPanel({
               {test.status === 'ok' ? '\u2713 ' : '\u26a0 '}{test.message}
               {test.status === 'blocked' && !isFileOrigin() && (
                 <>
-                  {' '}Serving the app yourself avoids this: <code>npm run serve</code> proxies price requests
-                  through its own origin, so there is no outside call left to block.
+                  {' '}This affects raw singles only — graded slabs are priced through Card Ladder, which is
+                  reached separately and is unaffected.
                 </>
               )}
             </p>
@@ -207,8 +215,8 @@ export function DataPanel({
 
           <h3 className="text-sm font-semibold mt-5 mb-2">Price API address</h3>
           <p className="text-xs secondary leading-relaxed mb-2">
-            Leave blank to call the Pokémon TCG API directly. Set it to your own proxy or mirror when this page
-            is not allowed to reach it — <code>npm run serve</code> sets this for you automatically.
+            Leave this blank. It exists so that anyone running their own mirror or proxy of the Pokémon TCG
+            API can point the raw-singles lookup at it instead.
           </p>
           <div className="flex gap-2">
             <input
@@ -245,7 +253,12 @@ export function DataPanel({
             </details>
           )}
 
-          <h3 className="text-sm font-semibold mt-5 mb-2">Reset</h3>
+            </div>
+          </details>
+        </section>
+
+        <section className="card p-4">
+          <h3 className="text-sm font-semibold mb-2">Reset</h3>
           <p className="text-xs secondary mb-2">Deletes every holding, watch item and captured price snapshot from this browser. It cannot be undone.</p>
           {confirmClear ? (
             <div className="flex gap-2">
