@@ -245,13 +245,15 @@ export default function App() {
           <div className="space-y-4">
             <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
               <StatTile
-                hero label="Market value"
+                hero label="Portfolio value"
                 value={stats.roi == null && stats.marketValue === 0 ? '—' : money(stats.marketValue, { compact: stats.marketValue >= 100_000 })}
                 delta={stats.roi == null ? undefined : {
                   value: `${money(stats.unrealized)} (${pct(stats.roi)})`,
                   direction: stats.unrealized > 0 ? 'up' : stats.unrealized < 0 ? 'down' : 'flat',
                 }}
-                sub={stats.unvalued > 0 ? `${stats.unvalued} position${stats.unvalued === 1 ? '' : 's'} not valued` : undefined}
+                sub={stats.unvalued > 0
+                  ? `Valued at last sold · ${stats.unvalued} position${stats.unvalued === 1 ? '' : 's'} not valued`
+                  : 'Valued at what each card last sold for'}
               />
               <StatTile
                 label="Return"

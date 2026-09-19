@@ -75,13 +75,13 @@ export function HoldingsTable({ holdings, analyses, onOverride, onRemove }: Prop
               <th>Item</th>
               <th>Segment</th>
               <th className="num">Invested</th>
-              <th className="num" title="Median of the last 5 completed comps across every venue">Market value</th>
+              <th className="num" title="Median of the last 5 completed comps across every venue. A steadier estimate than any one sale, shown for reference.">Median of 5</th>
               <th className="num" title="The most recent completed sale of this exact card at this grade">Last sold</th>
               <th className="num" title="Lowest this card has traded in the last 6 months">6-mo low</th>
               <th className="num" title="Highest this card has traded in the last 6 months">6-mo high</th>
               <th className="num" title="Highest this card has traded in the last 12 months">Yearly high</th>
-              <th className="num">Unrealized</th>
-              <th className="num">Return</th>
+              <th className="num" title="Last sold minus what you paid">Unrealized</th>
+              <th className="num" title="Unrealized gain over what you paid">Return</th>
               <th aria-label="Actions" />
             </tr>
           </thead>
@@ -125,6 +125,13 @@ export function HoldingsTable({ holdings, analyses, onOverride, onRemove }: Prop
         </table>
         {rows.length === 0 && <p className="p-8 text-center text-sm muted">No positions match those filters.</p>}
       </div>
+      {rows.length > 0 && (
+        <p className="text-xs muted leading-relaxed px-4 pb-4">
+          Unrealized and return are measured against <strong>Last sold</strong> — what the card actually went
+          for — so they compare a price paid with a price achieved. <strong>Median of 5</strong> sits beside it
+          as the steadier estimate; where nothing has sold inside the year, it stands in.
+        </p>
+      )}
     </section>
   )
 }

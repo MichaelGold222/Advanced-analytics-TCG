@@ -157,14 +157,12 @@ describe('what drives market value', () => {
     referencePrice: null,
   })
 
-  it('uses the median of recent comps, not the single last sale', () => {
-    // One sale can be an outlier; the median of five is what the portfolio is
-    // measured on.
-    expect(unitValue(analysis(4200, 9900))).toBe(4200)
+  it('uses the last sale, because gain is measured against a real transaction', () => {
+    expect(unitValue(analysis(4200, 9900))).toBe(9900)
   })
 
-  it('falls back to the last sale when there are too few comps to median', () => {
-    expect(unitValue(analysis(null, 9900))).toBe(9900)
+  it('falls back to the median when nothing has sold inside the window', () => {
+    expect(unitValue(analysis(4200, null))).toBe(4200)
   })
 
   it('leaves a position unvalued when there is neither', () => {

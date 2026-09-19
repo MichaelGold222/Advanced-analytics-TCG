@@ -16,19 +16,19 @@ export function holdingKey(h: Pick<Holding, 'name' | 'set' | 'number' | 'grader'
  * rather than falling back to cost basis, which would invent a 0% return.
  */
 /**
- * What one of these is worth.
+ * What one of these is worth, for the purpose of gain.
  *
- * The median of the last five completed comps, which is resistant to a single
- * unusual result in a way that one sale is not. Where there are too few comps
- * to take a median, the last sale stands in rather than leaving the position
- * unvalued.
+ * The last price it actually changed hands for. A median of recent comps is
+ * the steadier estimate and is shown per card, but unrealized gain is the
+ * difference between what was paid and what the thing goes for — so it is
+ * measured against a real transaction, not an average of several.
  *
- * Market value, unrealized and return all run through here, so the whole
- * portfolio is measured the same way. The last sale is carried separately and
- * shown beside it — see `ItemAnalysis.lastSale`.
+ * Portfolio value, unrealized and return all run through here, so the totals
+ * and the per-position figures agree. Where nothing has sold inside the window
+ * the median stands in rather than leaving the position unvalued.
  */
 export function unitValue(analysis?: ItemAnalysis): number | null {
-  return analysis?.fmv.fmv ?? analysis?.lastSale?.price ?? null
+  return analysis?.lastSale?.price ?? analysis?.fmv.fmv ?? null
 }
 
 export function analyzeHoldings(
