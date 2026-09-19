@@ -4,9 +4,14 @@ import tailwindcss from '@tailwindcss/vite'
 
 const SINGLE_FILE = process.env.SINGLE_FILE === '1'
 
+// Stamped into the page so a stale copy can be told from a current one
+// without guessing — the usual answer to "did my reload take?".
+const BUILD_STAMP = new Date().toISOString().slice(0, 16).replace('T', ' ')
+
 export default defineConfig({
   plugins: [react(), tailwindcss()],
   base: './',
+  define: { __BUILD_STAMP__: JSON.stringify(BUILD_STAMP) },
   build: {
     // SINGLE_FILE collapses everything into one bundle so `npm run build:single`
     // can inline it into a standalone .html with no assets to resolve. The

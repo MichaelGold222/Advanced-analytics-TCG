@@ -262,6 +262,7 @@ export default function App() {
       <footer className="max-w-[1400px] mx-auto px-4 py-6 text-xs muted leading-relaxed">
         Estimates, not appraisals. Every value carries a confidence level — treat a low-confidence
         number as a starting point for your own research, not a price.
+        <span className="block mt-1 tabular">Build {__BUILD_STAMP__} UTC</span>
       </footer>
     </div>
   )
