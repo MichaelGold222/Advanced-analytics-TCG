@@ -1,8 +1,9 @@
-# Diagnostic: read Parse's REST contract from its own documentation.
+# Diagnostic: how does Parse expose a generated API's endpoints?
 #
-# Parse (parse.bot) fronts the Card Ladder API this project wants. Nothing is
-# written against it until its real URL pattern, auth header and response
-# shape are read from the docs rather than guessed.
+# Its platform spec is reachable, but the guessed call paths 404. This lists
+# every path the spec declares plus its auth scheme, so the real pattern for
+# calling "cardladder-com-api / search_cards" comes from the spec rather than
+# from guesswork.
 #
 # Run from the Actions tab → "Price API check" → Run workflow.
 name: Price API check
@@ -13,42 +14,37 @@ jobs:
   check:
     runs-on: ubuntu-latest
     steps:
-      - name: Plain-text documentation, if published
+      - name: Capture the spec
         run: |
-          for u in 'https://docs.parse.bot/llms-full.txt' \
-                   'https://docs.parse.bot/llms.txt' \
-                   'https://docs.parse.bot/openapi.json' \
-                   'https://api.parse.bot/openapi.json'; do
-            code=$(curl -sSL -m 20 -o /tmp/d.txt -w '%{http_code}' "$u" 2>/dev/null || echo err)
-            size=$(wc -c < /tmp/d.txt 2>/dev/null || echo 0)
-            printf '%-44s -> %s  (%s bytes)\n' "$u" "$code" "$size"
-            if [ "$code" = "200" ] && [ "$size" -gt 400 ]; then cp /tmp/d.txt /tmp/best.txt; echo "  ^ kept"; fi
+          for u in 'https://api.parse.bot/openapi.json' 'https://docs.parse.bot/openapi.json'; do
+            code=$(curl -sSL -m 20 -o /tmp/s.json -w '%{http_code}' "$u" 2>/dev/null || echo err)
+            printf '%-40s -> %s (%s bytes)\n' "$u" "$code" "$(wc -c < /tmp/s.json)"
+            if jq -e '.paths' /tmp/s.json >/dev/null 2>&1; then cp /tmp/s.json /tmp/spec.json; echo "  ^ valid OpenAPI"; fi
           done
 
-      - name: The parts that define the contract
+      - name: Every path, with its summary
         run: |
-          if [ ! -s /tmp/best.txt ]; then echo "nothing captured"; exit 0; fi
-          echo "=== lines mentioning the REST call shape ==="
-          grep -inE 'api\.parse\.bot|X-API-Key|curl |https://api|/v[0-9]+/|endpoint|base url|authorization' /tmp/best.txt \
-            | head -60
+          [ -s /tmp/spec.json ] || { echo "no spec"; exit 0; }
+          jq -r '.servers // [] | .[] | "server: \(.url)"' /tmp/spec.json
           echo
-          echo "=== first 120 lines ==="
-          head -120 /tmp/best.txt
+          jq -r '.paths | to_entries[] | .key as $p | (.value | to_entries[] | "\(.key|ascii_upcase) \($p)  — \(.value.summary // "")")' /tmp/spec.json
 
-      - name: Fall back to the rendered docs page
+      - name: Auth scheme
         run: |
-          if [ -s /tmp/best.txt ]; then echo "already have text"; exit 0; fi
-          curl -sSL -m 20 -o /tmp/docs.html -H 'User-Agent: Mozilla/5.0' 'https://docs.parse.bot' || true
-          tr '\n' ' ' < /tmp/docs.html \
-            | sed -e 's/<style[^>]*>[^<]*<\/style>/ /g' -e 's/<[^>]*>/\n/g' \
-            | grep -vE '^[[:space:]]*$' | head -100
+          [ -s /tmp/spec.json ] || exit 0
+          echo "=== securitySchemes ==="
+          jq -r '.components.securitySchemes // {} | to_entries[] | "\(.key): type=\(.value.type) in=\(.value.in // "-") name=\(.value.name // "-") scheme=\(.value.scheme // "-")"' /tmp/spec.json
+          echo
+          echo "=== anything mentioning slug, api_id or endpoint in a path ==="
+          jq -r '.paths | keys[]' /tmp/spec.json | grep -iE 'slug|api|endpoint|call|run|invoke|\{' || echo "  none matched"
 
-      - name: What does the API host say unauthenticated?
+      - name: Try the documented shapes unauthenticated
         run: |
-          for u in 'https://api.parse.bot/' \
-                   'https://api.parse.bot/cardladder-com-api/search_cards?query=charizard' \
-                   'https://api.parse.bot/v1/cardladder-com-api/search_cards?query=charizard'; do
-            printf '\n=== %s ===\n' "$u"
-            curl -sSL -m 20 -o /tmp/r.json -w 'HTTP %{http_code}\n' "$u" 2>/dev/null || echo err
-            head -c 300 /tmp/r.json 2>/dev/null; echo
+          for u in 'https://api.parse.bot/api/cardladder-com-api/search_cards?query=charizard' \
+                   'https://api.parse.bot/apis/cardladder-com-api/search_cards?query=charizard' \
+                   'https://api.parse.bot/cardladder-com-api/endpoints/search_cards?query=charizard' \
+                   'https://cardladder-com-api.parse.bot/search_cards?query=charizard'; do
+            printf '%-72s -> ' "$u"
+            curl -sSL -m 20 -o /tmp/r.json -w '%{http_code}\n' "$u" 2>/dev/null || echo err
+            head -c 160 /tmp/r.json 2>/dev/null; echo
           done
