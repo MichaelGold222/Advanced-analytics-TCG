@@ -190,9 +190,17 @@ describe('estimating the wait', () => {
 
 describe('planning the calls', () => {
   it('keeps a collection to a single wave', () => {
-    for (const n of [30, 90, 200, 400, 1200]) {
-      expect(Math.ceil(n / planBatchSize(n))).toBeLessThanOrEqual(FETCH_CONCURRENCY)
+    // As many calls as run at once, so the wait is one call's length.
+    for (const n of [30, 90, 200, 400, 600]) {
+      expect(Math.ceil(n / planBatchSize(n))).toBeLessThanOrEqual(TARGET_CALLS)
     }
+    expect(FETCH_CONCURRENCY).toBeGreaterThanOrEqual(TARGET_CALLS)
+  })
+
+  it('takes more calls past the point the endpoint ceiling forces them', () => {
+    // Three calls of 200 is 600 certs; beyond that the ceiling decides, not us.
+    expect(planBatchSize(1200)).toBe(MAX_CERTS_PER_CALL)
+    expect(Math.ceil(1200 / planBatchSize(1200))).toBe(6)
   })
 
   it('does not buy calls a small collection has no use for', () => {

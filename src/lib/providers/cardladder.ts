@@ -28,11 +28,12 @@ export const MAX_CERTS_PER_CALL = 200
 /**
  * Concurrent calls the client runs.
  *
- * The account allows a burst of 30 requests refilling at 5/min. Eight in
- * flight stays well inside that while cutting the wall clock eightfold, and
- * the client backs off and retries if a burst is spent anyway.
+ * A collection is split into three calls, so three is all that is ever needed
+ * to run them at once. Holding it there also keeps a degraded upstream, where
+ * a timed-out call is split and retried, from putting a crowd of requests in
+ * flight against an allowance of 5 a minute.
  */
-export const FETCH_CONCURRENCY = 8
+export const FETCH_CONCURRENCY = 3
 
 /**
  * Smallest call worth making.

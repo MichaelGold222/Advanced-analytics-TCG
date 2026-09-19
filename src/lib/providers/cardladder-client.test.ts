@@ -175,7 +175,7 @@ describe('fetchCertPrices', () => {
       const run = fetchCertPrices(certs, { key: 'k' }).catch((e: Error) => e)
       await vi.advanceTimersByTimeAsync(10_000)
       const err = await run
-      expect((err as Error).message).toMatch(/rate limited/i)
+      expect((err as Error).message).toMatch(/too many requests/i)
       // It retried rather than giving up on the first refusal.
       expect(calls.filter((c) => c.url.includes('get_cert_values_bulk')).length).toBeGreaterThan(1)
     } finally {
@@ -202,7 +202,7 @@ describe('fetchCertPrices', () => {
       const run = fetchCertPrices(certs, { key: 'k' }).catch((e: Error) => e)
       await vi.advanceTimersByTimeAsync(10_000)
       const err = await run
-      expect((err as Error).message).toMatch(/rate limited/i)
+      expect((err as Error).message).toMatch(/too many requests/i)
       // It retried rather than giving up on the first refusal.
       expect(calls.filter((c) => c.url.includes('get_cert_values_bulk')).length).toBeGreaterThan(1)
     } finally {
@@ -394,7 +394,7 @@ describe('telling the three kinds of 429 apart', () => {
       stub({ 'X-Credits-Remaining': '150', 'X-RateLimit-Daily-Remaining': '50', 'Retry-After': '1' })
       const run = fetchCertPrices(one, { key: 'k' }).catch((e: Error) => e)
       await vi.advanceTimersByTimeAsync(20_000)
-      expect((await run as Error).message).toMatch(/rate limited/i)
+      expect((await run as Error).message).toMatch(/too many requests/i)
     } finally {
       vi.useRealTimers()
     }
@@ -406,7 +406,7 @@ describe('telling the three kinds of 429 apart', () => {
       stub({ 'Retry-After': '1' })
       const run = fetchCertPrices(one, { key: 'k' }).catch((e: Error) => e)
       await vi.advanceTimersByTimeAsync(20_000)
-      expect((await run as Error).message).not.toMatch(/allowance/i)
+      expect((await run as Error).message).not.toMatch(/used up|resets in/i)
     } finally {
       vi.useRealTimers()
     }

@@ -89,7 +89,10 @@ function resetsIn(res: Response): string {
 export class RateLimited extends Error {
   readonly retryAfterMs: number
   constructor(retryAfterMs: number) {
-    super('Rate limited; waiting for the burst to refill.')
+    super(
+      'Too many requests in a short time. The allowance refills at about 5 a minute, '
+      + 'so waiting a minute and fetching again picks up where this left off.',
+    )
     this.retryAfterMs = retryAfterMs
     this.name = 'RateLimited'
   }
@@ -112,7 +115,7 @@ export class ParseError extends Error {
  * call holds a worker forever and the fetch looks frozen with no way to tell
  * it apart from ordinary slowness. A timeout is transient, so it is retried.
  */
-const CALL_TIMEOUT_MS = 90_000
+const CALL_TIMEOUT_MS = 75_000
 
 async function call(path: string, key: string, init: RequestInit = {}): Promise<Response> {
   const controller = new AbortController()
@@ -265,7 +268,6 @@ export async function fetchCertPrices(
   const failures: ParseError[] = []
   let fatal = false
 
-  let next = 0
   const runOne = async (batch: CertRequest[]) => {
     const res = await call(`/scraper/${scraperId}/get_cert_values_bulk`, opts.key, {
       method: 'POST',
@@ -290,43 +292,95 @@ export async function fetchCertPrices(
       }, { once: true })
     })
 
+  /**
+   * The work left, as a queue rather than a fixed list.
+   *
+   * A batch that times out can be split and put back, so the size adapts to
+   * how the upstream is behaving rather than being decided once at the start.
+   */
+  const queue: { certs: CertRequest[]; attempts: number }[] = batches.map((certs) => ({ certs, attempts: 0 }))
+
+  /** Below this, splitting further costs more requests than it saves. */
+  const SPLIT_FLOOR = 8
+
+  /**
+   * How many extra calls splitting may buy in total.
+   *
+   * Each split turns one request into two, and requests are the allowance that
+   * runs out first. Without a ceiling a badly degraded upstream would halve
+   * its way through a day's worth of them.
+   */
+  let splitsLeft = Math.max(2, Math.ceil(batches.length / 2))
+
   const worker = async () => {
     while (!fatal) {
-      const i = next++
-      if (i >= batches.length) return
-      const batch = batches[i]
+      const job = queue.shift()
+      if (!job) return
       try {
-        // A spent burst, a 5xx or a dropped connection are all momentary, so
-        // wait them out rather than dropping the slabs in this batch.
-        for (let attempt = 0; ; attempt++) {
-          try {
-            await runOne(batch)
-            break
-          } catch (err) {
-            if ((err as Error)?.name === 'AbortError' || attempt >= 3) throw err
-            if (err instanceof RateLimited) await sleep(err.retryAfterMs)
-            else if (err instanceof ParseError && isTransient(err.status)) await sleep(backoffMs(attempt))
-            else throw err
-          }
-        }
+        await runOne(job.certs)
+        done += job.certs.length
+        opts.onProgress?.(Math.min(done, certs.length), certs.length)
+        continue
       } catch (err) {
         if ((err as Error)?.name === 'AbortError') throw err
+
+        const giveUp = (pe: ParseError, stop: boolean) => {
+          failures.push(pe)
+          if (stop) fatal = true
+          for (const c of job.certs) failed.push(c.cert_number)
+          done += job.certs.length
+          opts.onProgress?.(Math.min(done, certs.length), certs.length)
+        }
+
+        // A spent burst refills on the server's own timing. Checked before
+        // anything else, because it shares its status with two situations that
+        // do not recover and must not be treated as one of them.
+        if (err instanceof RateLimited) {
+          if (job.attempts < 3) {
+            queue.push({ certs: job.certs, attempts: job.attempts + 1 })
+            await sleep(err.retryAfterMs)
+          } else {
+            giveUp(new ParseError(429, err.message), false)
+          }
+          continue
+        }
+
         const pe = err instanceof ParseError
           ? err
-          : new ParseError(err instanceof RateLimited ? 429 : 0, (err as Error)?.message ?? String(err))
-        failures.push(pe)
-        // A bad key or an empty balance will not fix itself on the next call.
-        if (pe.status === 401 || pe.status === 403 || pe.status === 429) fatal = true
-        // These were never answered for. Calling them unmatched would blame
-        // the certificate numbers for the server's bad moment.
-        for (const c of batch) failed.push(c.cert_number)
+          : new ParseError(0, (err as Error)?.message ?? String(err))
+
+        // A bad key, an empty balance or a spent day will not fix itself.
+        if (pe.status === 401 || pe.status === 403 || pe.status === 429) {
+          giveUp(pe, true)
+          continue
+        }
+
+        // A call that ran out of time is not a call that will not work: it is
+        // one asking for too much at once. Halving it and putting both back
+        // lets the size settle to whatever the upstream can manage, instead of
+        // timing out on the same oversized request until the attempts run out.
+        if (pe.status === 408 && job.certs.length > SPLIT_FLOOR && splitsLeft > 0) {
+          splitsLeft -= 1
+          const mid = Math.ceil(job.certs.length / 2)
+          queue.push(
+            { certs: job.certs.slice(0, mid), attempts: job.attempts },
+            { certs: job.certs.slice(mid), attempts: job.attempts },
+          )
+          continue
+        }
+
+        if (isTransient(pe.status) && job.attempts < 3) {
+          queue.push({ certs: job.certs, attempts: job.attempts + 1 })
+          await sleep(backoffMs(job.attempts))
+          continue
+        }
+
+        giveUp(pe, false)
       }
-      done += batch.length
-      opts.onProgress?.(Math.min(done, certs.length), certs.length)
     }
   }
 
-  await Promise.all(Array.from({ length: Math.min(FETCH_CONCURRENCY, batches.length) }, worker))
+  await Promise.all(Array.from({ length: Math.min(FETCH_CONCURRENCY, queue.length) }, worker))
 
   // Nothing came back at all: the failure is the result, not a footnote.
   const failure = failures[0]
