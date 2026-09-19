@@ -89,10 +89,30 @@ export default function App() {
    * Ladder, then ungraded singles from the free quote API. Graded goes first
    * because it is the accurate half and the one people are waiting on.
    */
+  /**
+   * Graded first: those are the valuations worth having. Singles follow only
+   * if anything is left that a raw-card quote can actually price.
+   */
   async function refreshEverything() {
-    const hasCerts = [...holdings, ...watchlist].some((i) => i.cert)
-    if (hasCerts && getParseKey()) await store.refreshGraded()
-    await store.refreshPrices()
+    const all = [...holdings, ...watchlist]
+    const graded = all.filter((i) => i.grade != null)
+    const hasCerts = all.some((i) => i.cert)
+
+    if (hasCerts && getParseKey()) {
+      await store.refreshGraded()
+    } else if (graded.length > 0) {
+      // Saying nothing here sends the refresh off to price slabs against a
+      // raw-card API, which discards the answer — minutes spent for nothing.
+      store.reportError(
+        getParseKey()
+          ? `${graded.length} graded card${graded.length === 1 ? '' : 's'} have no certificate number, so their sold comps cannot be looked up. Add a Cert Number column to your sheet.`
+          : 'Add your Card Ladder API key in Data & settings to price graded cards. Without it there is nothing to value them from.',
+      )
+    }
+
+    // Everything graded, and sealed product, is skipped by the singles pass.
+    const raw = all.filter((i) => i.grade == null && i.segment !== 'sealed')
+    if (raw.length > 0) await store.refreshPrices()
   }
   const ThemeIcon = choice === 'light' ? Sun : choice === 'dark' ? Moon : Monitor
 

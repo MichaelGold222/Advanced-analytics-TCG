@@ -335,10 +335,16 @@ export const useStore = create<AppState>((setState, getState) => ({
         key,
         query: { name: item.name, set: item.set, number: item.number, cert: item.cert },
         graded: item.grade != null,
+        // A raw-card quote is excluded from a slab's valuation, and its
+        // snapshot is dropped below — so looking one up spends a slow,
+        // frequently-failing request to produce something already discarded.
+        // For a collection of slabs that was the whole refresh.
         skipReason:
-          item.segment === 'sealed' && !provider.coversSealed
-            ? 'Sealed product — this provider prices singles only. Import your own sold comps to value it.'
-            : undefined,
+          item.grade != null
+            ? 'Graded slab — priced from its own sold comps by certificate number, not a raw-card quote.'
+            : item.segment === 'sealed' && !provider.coversSealed
+              ? 'Sealed product — this provider prices singles only. Import your own sold comps to value it.'
+              : undefined,
       })
     }
     state.holdings.forEach(add)

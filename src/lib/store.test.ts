@@ -164,23 +164,27 @@ describe('refreshPrices', () => {
     expect(useStore.getState().snapshots[holdingKey(SLAB)]).toBeUndefined()
   })
 
-  it('still keeps the quote for a graded card, to show as context', async () => {
+  it('does not look up a graded card at all', async () => {
+    // The answer is excluded from the valuation either way, so the lookup is a
+    // slow request spent on something already discarded. For a collection of
+    // slabs that was the entire refresh.
     useStore.setState({ holdings: [SLAB] })
     await useStore.getState().refreshPrices()
-    expect(useStore.getState().quotes[holdingKey(SLAB)]?.market).toBe(QUOTED_PRICE)
+    expect(useStore.getState().quotes[holdingKey(SLAB)]).toBeUndefined()
+    expect(useStore.getState().refresh.skipped).toHaveLength(1)
+    expect(useStore.getState().refresh.skipped[0].reason).toMatch(/certificate number/i)
   })
 
-  it('leaves a graded card unvalued after a refresh, not valued at raw price', async () => {
+  it('spends its requests on the raw cards a singles API can actually price', async () => {
     useStore.setState({ holdings: [SLAB, RAW] })
     await useStore.getState().refreshPrices()
+    // One of the two was looked up; the slab was skipped before any request.
+    expect(Object.keys(useStore.getState().quotes)).toEqual([holdingKey(RAW)])
+    expect(useStore.getState().refresh.skipped.map((s) => s.key)).toEqual([holdingKey(SLAB)])
+
     const series = selectSeries(useStore.getState())
-
-    const slab = series.get(holdingKey(SLAB))!
-    expect(slab.quoteExcluded).toBe(true)
-    expect(computeFmv(slab).fmv).toBeNull()
-
-    const raw = series.get(holdingKey(RAW))!
-    expect(computeFmv(raw).fmv).toBeGreaterThan(0)
+    expect(computeFmv(series.get(holdingKey(SLAB))!).fmv).toBeNull()
+    expect(computeFmv(series.get(holdingKey(RAW))!).fmv).toBeGreaterThan(0)
   })
 
   it('does not look up sealed product', async () => {
