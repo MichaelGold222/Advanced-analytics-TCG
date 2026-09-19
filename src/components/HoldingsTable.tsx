@@ -75,10 +75,9 @@ export function HoldingsTable({ holdings, analyses, onOverride, onRemove }: Prop
             <tr>
               <th>Item</th>
               <th>Segment</th>
-              <th className="num">Qty</th>
-              <th className="num">Cost / unit</th>
-              <th className="num">Investment</th>
-              <th className="num">FMV / unit</th>
+              <th className="num">Invested</th>
+              <th className="num">FMV</th>
+              <th className="num" title="Lowest this card has traded in the last 6 months">6-mo low</th>
               <th className="num" title="Highest this card has traded in the last 6 months">6-mo high</th>
               <th className="num" title="Highest this card has traded in the last 12 months">Yearly high</th>
               <th className="num">Market value</th>
@@ -102,10 +101,9 @@ export function HoldingsTable({ holdings, analyses, onOverride, onRemove }: Prop
                     <SegmentPicker value={h.segmentOverride ?? null} inferred={inferred} onChange={(s) => onOverride(h.id, s)} />
                     <div className="text-[11px] muted mt-1 max-w-52">{h.segmentReason}</div>
                   </td>
-                  <td className="num tabular">{h.quantity}</td>
-                  <td className="num tabular">{money(h.costBasis)}</td>
                   <td className="num tabular">{money(cost)}</td>
                   <td className="num"><PriceCell analysis={a} /></td>
+                  <td className="num"><LowCell range={a?.sixMonthRange} fmv={fmv} /></td>
                   <td className="num"><HighCell range={a?.sixMonthRange} fmv={fmv} /></td>
                   <td className="num"><HighCell range={a?.range} fmv={fmv} /></td>
                   <td className="num tabular font-medium">{money(value)}</td>
@@ -157,6 +155,30 @@ function HighCell({ range, fmv }: { range?: RangeResult; fmv: number | null }) {
         <div className="text-[11px] muted" title={`Only ${range.sampleSize} observation${range.sampleSize === 1 ? '' : 's'} across ${range.coverageDays} days, so this is the highest seen rather than a full-window high.`}>
           thin data
         </div>
+      )}
+    </>
+  )
+}
+
+/**
+ * The floor of the six-month window, and how far above it the card sits.
+ *
+ * The mirror of the high: together they say where in its recent band the card
+ * is trading, which a single number on its own cannot.
+ */
+function LowCell({ range, fmv }: { range?: RangeResult; fmv: number | null }) {
+  const low = range?.low ?? null
+  if (low == null) return <span className="muted">—</span>
+
+  const above = fmv != null && low > 0 ? (fmv - low) / low : null
+  return (
+    <>
+      <div className="tabular">{money(low)}</div>
+      {above != null && above > 0.001 && (
+        <div className="text-[11px] muted tabular">{plainPct(above, 1)} above</div>
+      )}
+      {above != null && above <= 0.001 && (
+        <div className="text-[11px] tabular" style={{ color: 'var(--delta-down)' }}>at low</div>
       )}
     </>
   )

@@ -344,3 +344,47 @@ describe('an Investment column holding the position total', () => {
     expect(items[0].quantity).toBe(6)
   })
 })
+
+describe('a sheet with no recognisable cost column', () => {
+  it('says so, and names what it ignored', () => {
+    // Importing at a cost of 0 makes every return meaningless, and the header
+    // is usually present and simply spelled unexpectedly.
+    const { items, issues } = rowsToHoldings({
+      name: 'Portfolio',
+      rows: [
+        ['Card Name', 'Set', 'Wat I Payd', 'Qty'],
+        ['Charizard', 'Base Set', 12000, 1],
+      ],
+    })
+    expect(items[0].costBasis).toBe(0)
+    const said = issues.map((i) => i.message).join(' ')
+    expect(said).toMatch(/no cost column was recognised/i)
+    expect(said).toMatch(/Wat I Payd/)
+  })
+
+  it('stays quiet when a cost column is present', () => {
+    const { issues } = rowsToHoldings({
+      name: 'Portfolio',
+      rows: [['Card Name', 'Cost', 'Qty'], ['Charizard', 12000, 1]],
+    })
+    expect(issues.filter((i) => /no cost column/i.test(i.message))).toHaveLength(0)
+  })
+
+  it('stays quiet when only a position total is present', () => {
+    const { issues } = rowsToHoldings({
+      name: 'Portfolio',
+      rows: [['Card Name', 'Investment', 'Qty'], ['Charizard', 12000, 1]],
+    })
+    expect(issues.filter((i) => /no cost column/i.test(i.message))).toHaveLength(0)
+  })
+
+  it.each([
+    ['Spent'], ['Basis'], ['Capital'], ['Total'], ['Purchase'], ['Entry Price'],
+  ])('recognises %s as a cost column', (header) => {
+    const { items } = rowsToHoldings({
+      name: 'Portfolio',
+      rows: [['Card Name', header, 'Qty'], ['Charizard', 500, 1]],
+    })
+    expect(items[0].costBasis).toBeGreaterThan(0)
+  })
+})

@@ -35,6 +35,7 @@ const FIELD_ALIASES = {
   costBasis: [
     'cost basis', 'purchase price', 'buy price', 'price paid', 'paid', 'cost',
     'acquisition price', 'my cost', 'cost per unit', 'cost unit', 'price per card',
+    'purchase', 'bought', 'basis', 'spent', 'buy in', 'entry price', 'price bought',
   ],
   /**
    * What the whole position cost, already multiplied out — as opposed to
@@ -43,7 +44,7 @@ const FIELD_ALIASES = {
    */
   investment: [
     'total investment', 'amount invested', 'total cost', 'total paid', 'total spent',
-    'investment', 'invested', 'book value', 'total basis',
+    'investment', 'invested', 'book value', 'total basis', 'capital', 'total',
   ],
   purchaseDate: ['purchase date', 'date acquired', 'date bought', 'acquired', 'buy date', 'date'],
   userPrice: [
@@ -280,6 +281,21 @@ export function rowsToHoldings(sheet: RawSheet): ImportResult<Holding> {
         ;(priceHistory[key] ??= []).push({ date, price, source: 'user' })
       }
     }
+  }
+
+  // No cost column means every return reads as if the collection were free.
+  // The header is usually there and simply spelled in a way we did not expect,
+  // so name what was ignored: that is the column they need to point at.
+  if (map.costBasis == null && map.investment == null && items.length > 0) {
+    const claimed = new Set(Object.values(map))
+    const ignored = headers.filter((h, i) => h && !claimed.has(i) && !dateCols.some((d) => d.col === i))
+    issues.push({
+      row: headerRow + 1,
+      message: 'No cost column was recognised, so every position imported at a cost of 0 and its return '
+        + 'is meaningless. Rename the column to "Cost" for a per-card price, or "Investment" for a '
+        + 'position total.'
+        + (ignored.length > 0 ? ` Columns ignored on this sheet: ${ignored.join(', ')}.` : ''),
+    })
   }
 
   // A graded sheet with no cert column imports cleanly and then prices
