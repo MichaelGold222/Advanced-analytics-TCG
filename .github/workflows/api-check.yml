@@ -213,3 +213,50 @@ jobs:
               print('sample:', json.dumps(d)[:500])
           " || true
           done
+
+      - name: Can pictures be had in bulk?
+        env:
+          KEY: ${{ secrets.PARSE_API_KEY }}
+          CERT: ${{ inputs.cert }}
+          GRADER: ${{ inputs.grader }}
+        run: |
+          [ -n "$KEY" ] || exit 0
+          SCR=$(python3 -c "
+          import json
+          d = json.load(open('detail.json'))
+          print(d.get('result_scraper_id') or d.get('scraper_id') or '')
+          ")
+          [ -n "$SCR" ] || exit 0
+          python3 -c "
+          import json, os
+          certs = [c.strip() for c in os.environ['CERT'].replace(chr(10), ',').split(',') if c.strip()]
+          json.dump({'certs': [{'cert_number': c, 'grading_company': os.environ['GRADER']} for c in certs]},
+                    open('req.json', 'w'))
+          "
+          echo "=== POST search_by_certs_bulk ==="
+          code=$(curl -sS -m 300 -o blk.json -w '%{http_code}' -D blk.head \
+            -X POST -H "X-API-Key: $KEY" -H 'Content-Type: application/json' \
+            -d @req.json "$BASE/scraper/$SCR/search_by_certs_bulk")
+          echo "HTTP $code"
+          tr -d '\r' < blk.head | grep -iE '^x-credits-charged' || true
+          python3 -c "
+          import json, re
+          try:
+              d = json.load(open('blk.json'))
+          except Exception:
+              print('not JSON:', open('blk.json').read()[:200]); raise SystemExit
+          found = []
+          def walk(node, path=''):
+              if isinstance(node, dict):
+                  for k, v in node.items(): walk(v, path + '/' + str(k))
+              elif isinstance(node, list):
+                  for i, v in enumerate(node[:2]): walk(v, path + '[' + str(i) + ']')
+              elif isinstance(node, str) and re.search(r'image|photo|thumb', path, re.I):
+                  found.append((path, node[:120]))
+          walk(d)
+          print('top-level keys:', sorted(d) if isinstance(d, dict) else type(d))
+          for p, v in found[:8]:
+              print('  ', p, '=', v)
+          if not found:
+              print('no image fields; sample:', json.dumps(d)[:400])
+          " || true
