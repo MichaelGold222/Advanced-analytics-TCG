@@ -306,3 +306,85 @@ describe('retrying only the slabs that are missing', () => {
     expect(useStore.getState().certSales['111']).toHaveLength(1)
   })
 })
+
+describe('fetching the pictures', () => {
+  const slab = (cert: string) => holding({
+    name: `Card ${cert}`, condition: 'PSA 10', grader: 'PSA', grade: 10, cert,
+  })
+
+  function stubParse(opts: { priceStatus?: number } = {}) {
+    const calls: string[] = []
+    const store = new Map<string, string>([['aa-tcg.parseKey', 'k']])
+    vi.stubGlobal('localStorage', {
+      getItem: (k: string) => store.get(k) ?? null,
+      setItem: (k: string, v: string) => void store.set(k, v),
+      removeItem: (k: string) => void store.delete(k),
+    })
+    const make = (status: number, payload: unknown) =>
+      ({ ok: status >= 200 && status < 300, status, headers: { get: () => null }, json: async () => payload }) as unknown as Response
+    vi.stubGlobal('fetch', async (url: string, init?: RequestInit) => {
+      const u = String(url)
+      calls.push(u)
+      if (u.includes('/dispatch/tasks/')) return make(200, { result_scraper_id: 's' })
+      if (u.includes('/dispatch/tasks')) return make(200, { tasks: [{ id: 't', url: 'https://cardladder.com/' }] })
+      if (u.includes('get_cert_values_bulk')) {
+        if (opts.priceStatus && opts.priceStatus !== 200) return make(opts.priceStatus, {})
+        return make(200, { status: 'success', data: { results: [], errors: [], total: 0 } })
+      }
+      if (u.includes('search_by_certs_bulk')) {
+        const body = JSON.parse(String(init?.body ?? '{}')) as { certs: { cert_number: string }[] }
+        return make(200, {
+          status: 'success',
+          data: {
+            results: body.certs.map((c) => ({
+              cert_number: Number(c.cert_number),
+              image: `https://firebasestorage.googleapis.com/x/${c.cert_number}?alt=media`,
+              thumbnail: `https://i.ebayimg.com/images/g/${c.cert_number}/s-l400.webp`,
+            })),
+          },
+        })
+      }
+      return make(404, {})
+    })
+    return calls
+  }
+
+  beforeEach(() => {
+    useStore.setState({
+      holdings: [slab('111'), slab('222')], watchlist: [], certSales: {}, certImages: {},
+      gradedRefresh: { running: false, done: 0, total: 0, unmatched: [], failed: [], startedAt: null },
+    })
+  })
+
+  it('asks for pictures and keeps them', async () => {
+    const calls = stubParse()
+    await useStore.getState().refreshGraded()
+    expect(calls.some((c) => c.includes('search_by_certs_bulk'))).toBe(true)
+    expect(Object.keys(useStore.getState().certImages).sort()).toEqual(['111', '222'])
+    expect(useStore.getState().certImages['111'].thumbnail).toMatch(/ebayimg/)
+  })
+
+  it('still fetches them when the prices failed outright', async () => {
+    // One bad night at the upstream must not leave a collection with no photos.
+    // A 500 is retried with real backoff, so the clock is driven forward here.
+    vi.useFakeTimers()
+    try {
+      stubParse({ priceStatus: 500 })
+      const run = useStore.getState().refreshGraded()
+      await vi.advanceTimersByTimeAsync(60_000)
+      await run
+      expect(Object.keys(useStore.getState().certImages)).toHaveLength(2)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('does not ask again for a cert that already has one', async () => {
+    useStore.setState({ certImages: { '111': { image: null, thumbnail: 'https://x/a.webp' } } })
+    const calls = stubParse()
+    await useStore.getState().refreshGraded()
+    const asked = calls.filter((c) => c.includes('search_by_certs_bulk'))
+    expect(asked).toHaveLength(1)
+    expect(Object.keys(useStore.getState().certImages).sort()).toEqual(['111', '222'])
+  })
+})

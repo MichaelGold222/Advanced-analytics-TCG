@@ -29,7 +29,7 @@ jobs:
     steps:
       - name: Preflight on the endpoints the dashboard would call
         run: |
-          for p in '/dispatch/tasks' '/scraper/x/get_cert_values_bulk'; do
+          for p in '/dispatch/tasks' '/scraper/x/get_cert_values_bulk' '/scraper/x/search_by_certs_bulk'; do
             printf '\n=== OPTIONS %s ===\n' "$p"
             curl -sS -m 20 -D - -o /dev/null -X OPTIONS \
               -H "Origin: $ORIGIN" \
