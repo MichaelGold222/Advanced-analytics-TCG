@@ -1,12 +1,13 @@
 /** Core domain model for the portfolio analytics platform. */
 
-export type Segment = 'sealed' | 'vintage' | 'modern' | 'pikachu_promo'
+export type Segment = 'sealed' | 'vintage' | 'mid' | 'modern' | 'pikachu_promo'
 
-export const SEGMENTS: Segment[] = ['sealed', 'vintage', 'modern', 'pikachu_promo']
+export const SEGMENTS: Segment[] = ['sealed', 'vintage', 'mid', 'modern', 'pikachu_promo']
 
 export const SEGMENT_LABELS: Record<Segment, string> = {
   sealed: 'Sealed',
   vintage: 'Vintage',
+  mid: 'Mid-era',
   modern: 'Modern',
   pikachu_promo: 'Pikachu Promos',
 }

@@ -25,6 +25,7 @@
   --series-2: #eb6834; /* vintage */
   --series-3: #1baf7a; /* modern */
   --series-4: #eda100; /* pikachu promos */
+  --series-5: #7c4dd4; /* mid-era */
 
   --seq-100: #cde2fb;
   --seq-250: #86b6ef;
@@ -65,6 +66,7 @@
     --series-2: #d95926;
     --series-3: #199e70;
     --series-4: #c98500;
+    --series-5: #a480f2;
 
     --diverging-pos: #3987e5;
     --diverging-neg: #e66767;
@@ -93,6 +95,7 @@
   --series-2: #d95926;
   --series-3: #199e70;
   --series-4: #c98500;
+  --series-5: #a480f2;
 
   --diverging-pos: #3987e5;
   --diverging-neg: #e66767;

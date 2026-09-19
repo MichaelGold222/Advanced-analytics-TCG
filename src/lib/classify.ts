@@ -5,16 +5,28 @@
  *   1. an explicit override in the sheet
  *   2. sealed        - product form beats everything; a sealed Pikachu box is sealed
  *   3. pikachu promo - a Pikachu single with a promo marker
- *   4. vintage       - WotC era, released 2003 or earlier
- *   5. modern        - everything left over
+ *   4. vintage       - released before the mid era
+ *   5. mid-era       - 2007 to 2012 inclusive
+ *   6. modern        - everything left over
  *
  * Every decision returns the reason that drove it, so a surprising bucket is
  * always traceable back to the word that caused it.
  */
 import type { Segment } from './types'
 
-/** Last year of the WotC era: Skyridge shipped May 2003. */
-export const VINTAGE_CUTOFF_YEAR = 2003
+export type Era = 'vintage' | 'mid' | 'modern' | 'unknown'
+
+/**
+ * Era boundaries.
+ *
+ * The mid era runs 2007 to 2012 inclusive; anything before it is vintage and
+ * anything after is modern. That puts the vintage line at 2006 rather than at
+ * the end of the WotC era, so Diamond & Pearl through to the end of Black &
+ * White reads as its own period instead of being lumped in with current sets.
+ */
+export const MID_ERA_START_YEAR = 2007
+export const MID_ERA_END_YEAR = 2012
+export const VINTAGE_CUTOFF_YEAR = MID_ERA_START_YEAR - 1
 
 const SEALED_PATTERNS: [RegExp, string][] = [
   [/\bbooster box\b/, 'booster box'],
@@ -94,7 +106,7 @@ export interface ClassifyInput {
 export interface ClassifyResult {
   segment: Segment
   reason: string
-  flags: { sealed: boolean; promo: boolean; pikachu: boolean; era: 'vintage' | 'modern' | 'unknown' }
+  flags: { sealed: boolean; promo: boolean; pikachu: boolean; era: Era }
   /** Year we inferred from the set name, when the sheet did not give one. */
   inferredYear?: number
 }
@@ -107,6 +119,8 @@ export function parseSegment(raw: unknown): Segment | null {
   if (/pikachu/.test(v)) return 'pikachu_promo'
   if (/seal|box|product/.test(v)) return 'sealed'
   if (/vintage|wotc|old/.test(v)) return 'vintage'
+  // Checked before "modern" so "mid" is not swallowed by a looser match.
+  if (/\bmid\b|mid ?era|midera/.test(v)) return 'mid'
   if (/modern|new/.test(v)) return 'modern'
   return null
 }
@@ -136,8 +150,14 @@ export function classify(input: ClassifyInput): ClassifyResult {
   }
 
   const year = input.year ?? inferredYear ?? null
-  const era: 'vintage' | 'modern' | 'unknown' =
-    year == null ? 'unknown' : year <= VINTAGE_CUTOFF_YEAR ? 'vintage' : 'modern'
+  const era: Era =
+    year == null
+      ? 'unknown'
+      : year <= VINTAGE_CUTOFF_YEAR
+        ? 'vintage'
+        : year <= MID_ERA_END_YEAR
+          ? 'mid'
+          : 'modern'
 
   const flags = { sealed: !!sealedHit, promo: !!promoHit, pikachu: pikachuHit, era }
 
@@ -153,11 +173,19 @@ export function classify(input: ClassifyInput): ClassifyResult {
   if (era === 'vintage') {
     const why = vintageSetHit
       ? `WotC-era set "${vintageSetHit}" (${year})`
-      : `released ${year}, at or before ${VINTAGE_CUTOFF_YEAR}`
+      : `released ${year}, before ${MID_ERA_START_YEAR}`
     return { segment: 'vintage', reason: `Vintage: ${why}`, flags, inferredYear }
   }
+  if (era === 'mid') {
+    return {
+      segment: 'mid',
+      reason: `Mid-era: released ${year}, between ${MID_ERA_START_YEAR} and ${MID_ERA_END_YEAR}`,
+      flags,
+      inferredYear,
+    }
+  }
   if (era === 'modern') {
-    return { segment: 'modern', reason: `Modern: released ${year}`, flags, inferredYear }
+    return { segment: 'modern', reason: `Modern: released ${year}, after ${MID_ERA_END_YEAR}`, flags, inferredYear }
   }
   return {
     segment: 'modern',

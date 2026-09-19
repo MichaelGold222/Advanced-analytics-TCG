@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
-  LISTING_HAIRCUT, analyzeItem, buildSeries, compute52WeekRange, computeEntry, computeFmv,
+  LISTING_HAIRCUT, TREND_FLAT_BAND, analyzeItem, buildSeries, compute52WeekRange, computeEntry, computeFmv, computeTrend,
 } from './analytics'
 import type { PricePoint, PriceSeries } from './types'
 
@@ -285,5 +285,90 @@ describe('why an item has no value', () => {
     // And it still says what the card last went for.
     expect(said).toMatch(/\$21,000/)
     expect(r.stalenessDays).toBeGreaterThan(365)
+  })
+})
+
+describe('trend from the last five sales', () => {
+  const NOW = new Date('2026-09-19T00:00:00Z')
+  const from = (pairs: [string, number][]) => ({
+    key: 'k',
+    points: pairs.map(([date, price]) => ({ date, price, source: 'sale' as const })),
+  })
+
+  it('calls a steady climb up', () => {
+    const t = computeTrend(from([
+      ['2026-05-01', 1000], ['2026-06-01', 1100], ['2026-07-01', 1200],
+      ['2026-08-01', 1300], ['2026-09-01', 1400],
+    ]), NOW)
+    expect(t.direction).toBe('up')
+    expect(t.changePct).toBeGreaterThan(0.3)
+    expect(t.sampleSize).toBe(5)
+  })
+
+  it('calls a steady slide down', () => {
+    const t = computeTrend(from([
+      ['2026-05-01', 1400], ['2026-06-01', 1300], ['2026-07-01', 1200],
+      ['2026-08-01', 1100], ['2026-09-01', 1000],
+    ]), NOW)
+    expect(t.direction).toBe('down')
+    expect(t.changePct).toBeLessThan(-0.3)
+  })
+
+  it('calls small movement flat rather than a trend', () => {
+    const t = computeTrend(from([
+      ['2026-05-01', 1000], ['2026-06-01', 1010], ['2026-07-01', 995],
+      ['2026-08-01', 1005], ['2026-09-01', 1015],
+    ]), NOW)
+    expect(t.direction).toBe('flat')
+    expect(Math.abs(t.changePct!)).toBeLessThan(TREND_FLAT_BAND)
+  })
+
+  it('is not decided by a single outlier at one end', () => {
+    // First-to-last would read this as a collapse; four of the five sales are flat.
+    const t = computeTrend(from([
+      ['2026-05-01', 1000], ['2026-06-01', 1000], ['2026-07-01', 1000],
+      ['2026-08-01', 1000], ['2026-09-01', 700],
+    ]), NOW)
+    expect(t.changePct!).toBeGreaterThan(-0.3)
+  })
+
+  it('reads only the most recent five, like the valuation does', () => {
+    const t = computeTrend(from([
+      ['2026-01-01', 100], ['2026-02-01', 200], ['2026-05-01', 1000],
+      ['2026-06-01', 1000], ['2026-07-01', 1000], ['2026-08-01', 1000], ['2026-09-01', 1000],
+    ]), NOW)
+    expect(t.sampleSize).toBe(5)
+    expect(t.direction).toBe('flat')
+  })
+
+  it('says nothing rather than guessing from two sales', () => {
+    const t = computeTrend(from([['2026-08-01', 1000], ['2026-09-01', 2000]]), NOW)
+    expect(t.direction).toBe('unknown')
+    expect(t.changePct).toBeNull()
+  })
+
+  it('ignores sales older than the valuation window', () => {
+    const t = computeTrend(from([
+      ['2023-01-01', 100], ['2023-02-01', 200], ['2023-03-01', 300],
+    ]), NOW)
+    expect(t.direction).toBe('unknown')
+  })
+
+  it('does not divide by zero when every sale landed the same day', () => {
+    const t = computeTrend(from([
+      ['2026-09-01', 1000], ['2026-09-01', 1100], ['2026-09-01', 900],
+    ]), NOW)
+    expect(t.direction).toBe('flat')
+    expect(Number.isFinite(t.changePct!)).toBe(true)
+  })
+
+  it('expresses the move per month so different spans compare', () => {
+    const fast = computeTrend(from([
+      ['2026-09-01', 1000], ['2026-09-05', 1100], ['2026-09-10', 1200],
+    ]), NOW)
+    const slow = computeTrend(from([
+      ['2026-01-01', 1000], ['2026-05-01', 1100], ['2026-09-01', 1200],
+    ]), NOW)
+    expect(fast.perMonthPct!).toBeGreaterThan(slow.perMonthPct!)
   })
 })

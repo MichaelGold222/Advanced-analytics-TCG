@@ -6,15 +6,19 @@ import { SegmentAllocation } from './components/SegmentAllocation'
 import { SegmentPerformance } from './components/SegmentPerformance'
 import { PriceCoverage } from './components/PriceCoverage'
 import { StatTile } from './components/StatTile'
+import { TrendingSection, type TrendRow } from './components/TrendingSection'
+import { SegmentBreakdown } from './components/SegmentBreakdown'
 import { TopHoldings, type HoldingBar } from './components/TopHoldings'
 import { UploadZone } from './components/UploadZone'
 import { ValueTrend } from './components/ValueTrend'
 import { WatchlistPanel } from './components/WatchlistPanel'
 import { useTheme } from './hooks/useTheme'
-import { analyzeItem } from './lib/analytics'
-import { money, pct, relativeTime } from './lib/format'
+import { analyzeItem, computeTrend } from './lib/analytics'
+import { money, pct, plainPct, relativeTime, shortDate } from './lib/format'
 import { itemKey } from './lib/key'
-import { analyzeHoldings, buildValueTrend, computePortfolioStats, holdingKey, unitValue } from './lib/portfolio'
+import {
+  analyzeHoldings, buildValueTrend, computePortfolioHighs, computePortfolioStats, holdingKey, unitValue,
+} from './lib/portfolio'
 import { getParseKey } from './lib/providers/cardladder-client'
 import { selectSeries, useStore } from './lib/store'
 import { downloadTemplate, exportAnalysis } from './lib/workbook-out'
@@ -64,6 +68,24 @@ export default function App() {
 
   const stats = useMemo(() => computePortfolioStats(holdings, holdingAnalyses), [holdings, holdingAnalyses])
   const trend = useMemo(() => buildValueTrend(holdings, series), [holdings, series])
+  const highs = useMemo(
+    () => computePortfolioHighs(trend, stats.marketValue),
+    [trend, stats.marketValue],
+  )
+
+  const trendRows = useMemo<TrendRow[]>(() => holdings.flatMap((h) => {
+    const key = holdingKey(h)
+    const s = series.get(key)
+    if (!s) return []
+    const uv = unitValue(holdingAnalyses.get(key))
+    return [{
+      key: h.id,
+      name: h.name,
+      detail: [h.set, h.condition].filter(Boolean).join(' · ') || '—',
+      value: uv == null ? null : uv * h.quantity,
+      trend: computeTrend(s),
+    }]
+  }), [holdings, series, holdingAnalyses])
 
   const topHoldings = useMemo<HoldingBar[]>(() => {
     const byName = new Map<string, HoldingBar>()
@@ -219,6 +241,37 @@ export default function App() {
                 sub={stats.unvalued > 0 ? `${stats.unvalued} position${stats.unvalued === 1 ? '' : 's'} not valued` : undefined}
               />
               <StatTile
+                label="Yearly high"
+                value={highs.year ? money(highs.year.value, { compact: highs.year.value >= 100_000 }) : '—'}
+                delta={highs.year && highs.year.belowBy > 0
+                  ? { value: `${plainPct(highs.year.belowBy, 1)} below`, direction: 'down' }
+                  : highs.year
+                    ? { value: 'at its high', direction: 'up' }
+                    : undefined}
+                sub={highs.year ? `Peaked ${shortDate(highs.year.date)}` : 'Needs price history across the year.'}
+              />
+              <StatTile
+                label="6-month high"
+                value={highs.sixMonth ? money(highs.sixMonth.value, { compact: highs.sixMonth.value >= 100_000 }) : '—'}
+                delta={highs.sixMonth && highs.sixMonth.belowBy > 0
+                  ? { value: `${plainPct(highs.sixMonth.belowBy, 1)} below`, direction: 'down' }
+                  : highs.sixMonth
+                    ? { value: 'at its high', direction: 'up' }
+                    : undefined}
+                sub={highs.sixMonth ? `Peaked ${shortDate(highs.sixMonth.date)}` : 'Needs price history across six months.'}
+              />
+              <StatTile
+                label="Return"
+                value={stats.roi == null ? '—' : pct(stats.roi)}
+                delta={stats.roi == null ? undefined : {
+                  value: money(stats.unrealized, { compact: Math.abs(stats.unrealized) >= 100_000 }),
+                  direction: stats.unrealized > 0 ? 'up' : stats.unrealized < 0 ? 'down' : 'flat',
+                }}
+                sub={stats.roi == null
+                  ? 'Nothing valued yet, so there is no return to measure.'
+                  : stats.unvalued > 0 ? 'Measured over valued positions only' : 'Market value against what you put in'}
+              />
+              <StatTile
                 label="Cost basis" value={money(stats.costBasis, { compact: stats.costBasis >= 100_000 })}
                 sub={
                   stats.unvalued > 0 && stats.valuedCostBasis !== stats.costBasis
@@ -244,6 +297,10 @@ export default function App() {
               lastRefresh={store.lastRefresh} hasFeed={!!feed || !!store.certLastFetched} refresh={store.refresh}
               onRefresh={() => void refreshEverything()} onGoToData={() => setTab('data')}
             />
+
+            <SegmentBreakdown stats={stats} />
+
+            {trendRows.length > 0 && <TrendingSection rows={trendRows} />}
 
             <div className="grid gap-4 lg:grid-cols-2">
               <SegmentAllocation stats={stats} />

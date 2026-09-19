@@ -30,7 +30,31 @@ describe('segment classification', () => {
     expect(classify({ name: 'Lugia', set: 'Neo Genesis' }).segment).toBe('vintage')
     expect(classify({ name: 'Crystal Charizard', set: 'Skyridge' }).segment).toBe('vintage')
     expect(classify({ name: 'Some Card', year: 2003 }).segment).toBe('vintage')
-    expect(classify({ name: 'Some Card', year: 2004 }).segment).toBe('modern')
+  })
+
+  it('puts 2007 to 2012 in the mid era, with the years either side outside it', () => {
+    expect(classify({ name: 'Some Card', year: 2006 }).segment).toBe('vintage')
+    expect(classify({ name: 'Some Card', year: 2007 }).segment).toBe('mid')
+    expect(classify({ name: 'Some Card', year: 2010 }).segment).toBe('mid')
+    expect(classify({ name: 'Some Card', year: 2012 }).segment).toBe('mid')
+    expect(classify({ name: 'Some Card', year: 2013 }).segment).toBe('modern')
+  })
+
+  it('says which era a card landed in and why', () => {
+    expect(classify({ name: 'Some Card', year: 2009 }).reason).toMatch(/mid-era.*2007.*2012/i)
+    expect(classify({ name: 'Some Card', year: 2020 }).reason).toMatch(/after 2012/i)
+  })
+
+  it('reads a mid-era label in a Segment column', () => {
+    expect(classify({ name: 'Some Card', year: 2020, override: parseSegment('Mid Era') }).segment).toBe('mid')
+    expect(parseSegment('mid-era')).toBe('mid')
+    expect(parseSegment('midera')).toBe('mid')
+  })
+
+  it('still keeps sealed and Pikachu promos ahead of the era rule', () => {
+    // A 2010 booster box is sealed, not mid-era.
+    expect(classify({ name: 'HeartGold Booster Box', year: 2010 }).segment).toBe('sealed')
+    expect(classify({ name: 'Pikachu', set: 'HGSS Black Star Promos', year: 2010 }).segment).toBe('pikachu_promo')
   })
 
   it('infers the year from a vintage set name when the sheet omits it', () => {

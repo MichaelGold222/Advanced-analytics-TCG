@@ -151,3 +151,41 @@ export function buildValueTrend(
     return { date, marketValue, costBasis, bySegment }
   })
 }
+
+export interface PortfolioHigh {
+  value: number
+  date: string
+  /** How far the current total sits below that high, as a fraction. */
+  belowBy: number
+}
+
+export interface PortfolioHighs {
+  year: PortfolioHigh | null
+  sixMonth: PortfolioHigh | null
+}
+
+/**
+ * The highest the whole book has been worth, over a year and over six months.
+ *
+ * Read off the reconstructed value line rather than by summing each position's
+ * own high: those peaks fall on different days, and adding them together would
+ * report a total the portfolio was never actually worth.
+ */
+export function computePortfolioHighs(
+  trend: ValueSnapshot[],
+  current: number,
+  now = new Date(),
+): PortfolioHighs {
+  const highIn = (days: number): PortfolioHigh | null => {
+    const cutoff = toISODate(new Date(now.getTime() - days * 86_400_000))
+    const within = trend.filter((p) => p.date >= cutoff && p.marketValue > 0)
+    if (within.length === 0) return null
+    const peak = within.reduce((a, b) => (b.marketValue > a.marketValue ? b : a))
+    return {
+      value: peak.marketValue,
+      date: peak.date,
+      belowBy: peak.marketValue > 0 ? Math.max(0, (peak.marketValue - current) / peak.marketValue) : 0,
+    }
+  }
+  return { year: highIn(365), sixMonth: highIn(182) }
+}

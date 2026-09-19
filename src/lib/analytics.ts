@@ -10,7 +10,7 @@
  */
 import {
   annualizedVolatility, clamp, clamp01, daysAgo, daysBetween, mad, mean, median, percentile,
-  recencyWeight, rejectOutliers, toISODate,
+  recencyWeight, rejectOutliers, slope, toISODate,
 } from './stats'
 import type {
   Confidence, EntryResult, EntryVerdict, FmvResult, ItemAnalysis, PricePoint,
@@ -398,4 +398,94 @@ function pct(x: number): string {
 
 function money(x: number): string {
   return x.toLocaleString(undefined, { style: 'currency', currency: 'USD', maximumFractionDigits: 2 })
+}
+
+/** Movement smaller than this is noise in a five-sale sample, not a trend. */
+export const TREND_FLAT_BAND = 0.05
+
+export interface TrendResult {
+  direction: 'up' | 'down' | 'flat' | 'unknown'
+  /** Fitted change across the sampled span, as a fraction of the mean price. */
+  changePct: number | null
+  /** The same movement expressed per 30 days, so spans compare against each other. */
+  perMonthPct: number | null
+  sampleSize: number
+  spanDays: number | null
+  firstDate: string | null
+  lastDate: string | null
+  /** False when read from recorded prices because there were too few sales. */
+  fromSales: boolean
+  rationale: string
+}
+
+const UNKNOWN_TREND: TrendResult = {
+  direction: 'unknown', changePct: null, perMonthPct: null,
+  sampleSize: 0, spanDays: null, firstDate: null, lastDate: null, fromSales: false,
+  rationale: `Fewer than ${MIN_SALES_FOR_MEDIAN} recent sales, so there is no trend to read.`,
+}
+
+/**
+ * Which way the last few sales are pointing.
+ *
+ * Over the same sales the valuation uses, so the two never disagree about what
+ * the evidence is. A line is fitted through all of them rather than comparing
+ * the first to the last: with five sales a single outlier at either end would
+ * otherwise decide the direction on its own.
+ *
+ * The result is a fraction of the mean price, not of the first sale, so a low
+ * opening sale cannot inflate the move.
+ */
+export function computeTrend(series: PriceSeries, now = new Date()): TrendResult {
+  const windowed = pointsInWindow(series.points, now)
+  const newestFirst = (ps: PricePoint[]) => [...ps].sort((a, b) => b.date.localeCompare(a.date))
+
+  // Completed sales are the better evidence, but a sheet of recorded prices is
+  // still a record of which way something moved — reading direction only from
+  // sales would leave an imported price history with nothing to say.
+  const sold = newestFirst(windowed.filter((p) => p.source === 'sale'))
+  const fromSales = sold.length >= MIN_SALES_FOR_MEDIAN
+  const pool = fromSales ? sold : newestFirst(windowed.filter((p) => p.source !== 'listing'))
+
+  const sales = pool.slice(0, SALES_FOR_MEDIAN).sort((a, b) => a.date.localeCompare(b.date))
+
+  if (sales.length < MIN_SALES_FOR_MEDIAN) {
+    return { ...UNKNOWN_TREND, sampleSize: sales.length }
+  }
+  const observed = fromSales ? 'sales' : 'recorded prices'
+
+  const first = sales[0]
+  const last = sales[sales.length - 1]
+  const xs = sales.map((s) => daysBetween(first.date, s.date))
+  const ys = sales.map(effectivePrice)
+  const spanDays = xs[xs.length - 1]
+  const avg = mean(ys)
+
+  const base = {
+    sampleSize: sales.length, spanDays, fromSales,
+    firstDate: first.date, lastDate: last.date,
+  }
+
+  const m = spanDays > 0 ? slope(xs, ys) : null
+  if (m == null || !(avg > 0)) {
+    return {
+      ...base, direction: 'flat', changePct: 0, perMonthPct: 0,
+      rationale: `${sales.length} ${observed} all landed too close together in time to read a direction from.`,
+    }
+  }
+
+  const changePct = (m * spanDays) / avg
+  const perMonthPct = (m * 30) / avg
+  const direction = changePct >= TREND_FLAT_BAND ? 'up' : changePct <= -TREND_FLAT_BAND ? 'down' : 'flat'
+  const moved = `${changePct >= 0 ? 'up' : 'down'} ${Math.abs(changePct * 100).toFixed(1)}%`
+
+  return {
+    ...base,
+    direction,
+    changePct,
+    perMonthPct,
+    fromSales,
+    rationale: direction === 'flat'
+      ? `The last ${sales.length} ${observed} moved ${moved} across ${spanDays} days — inside the ${(TREND_FLAT_BAND * 100).toFixed(0)}% band that counts as flat for a sample this small.`
+      : `The last ${sales.length} ${observed} trend ${moved} across ${spanDays} days, about ${Math.abs(perMonthPct * 100).toFixed(1)}% a month.`,
+  }
 }
