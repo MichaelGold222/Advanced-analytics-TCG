@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import { Trash2 } from 'lucide-react'
+import { Pencil, Trash2 } from 'lucide-react'
 import { PriceCell } from './PriceCell'
 import { SegmentPicker } from './SegmentPicker'
 import { money, pct, plainPct } from '../lib/format'
@@ -19,6 +19,8 @@ interface Props {
 }
 
 export function HoldingsTable({ holdings, analyses, onOverride, onSetValue, onRemove }: Props) {
+  // Which row is being edited, if any. Opened from the pencil in that row.
+  const [editingId, setEditingId] = useState<string | null>(null)
   const [query, setQuery] = useState('')
   const [segment, setSegment] = useState<Segment | 'all'>('all')
   const [sort, setSort] = useState<SortKey>('value')
@@ -78,12 +80,7 @@ export function HoldingsTable({ holdings, analyses, onOverride, onSetValue, onRe
               <th>Segment</th>
               <th className="num">Invested</th>
               <th className="num" title="Median of the last 5 completed comps across every venue. A steadier estimate than any one sale, shown for reference.">Median of 5</th>
-              <th
-                className="num"
-                title="The most recent completed sale of this card. Click a figure to put your own number on it."
-              >
-                Last sold
-              </th>
+              <th className="num" title="The most recent completed sale of this exact card at this grade">Last sold</th>
               <th className="num" title="Lowest this card has traded in the last 6 months">6-mo low</th>
               <th className="num" title="Highest this card has traded in the last 6 months">6-mo high</th>
               <th className="num" title="Highest this card has traded in the last 12 months">Yearly high</th>
@@ -112,7 +109,9 @@ export function HoldingsTable({ holdings, analyses, onOverride, onSetValue, onRe
                   <td className="num">
                     <LastSoldCell
                       analysis={a} override={h.userPrice ?? null}
-                      onChange={(v) => onSetValue(h.id, v)}
+                      editing={editingId === h.id}
+                      onChange={(v) => { onSetValue(h.id, v); setEditingId(null) }}
+                      onCancel={() => setEditingId(null)}
                     />
                   </td>
                   <td className="num"><LowCell range={a?.sixMonthRange} fmv={fmv} /></td>
@@ -126,9 +125,19 @@ export function HoldingsTable({ holdings, analyses, onOverride, onSetValue, onRe
                     {pct(roi)}
                   </td>
                   <td>
-                    <button type="button" className="btn px-2 py-1" onClick={() => onRemove(h.id)} aria-label={`Remove ${h.name}`} title="Remove">
-                      <Trash2 className="size-3.5" aria-hidden />
-                    </button>
+                    <div className="flex gap-1">
+                      <button
+                        type="button" className="btn px-2 py-1"
+                        onClick={() => setEditingId(editingId === h.id ? null : h.id)}
+                        aria-label={`Set your own value for ${h.name}`}
+                        title="Set your own value for this card"
+                      >
+                        <Pencil className="size-3.5" aria-hidden />
+                      </button>
+                      <button type="button" className="btn px-2 py-1" onClick={() => onRemove(h.id)} aria-label={`Remove ${h.name}`} title="Remove">
+                        <Trash2 className="size-3.5" aria-hidden />
+                      </button>
+                    </div>
                   </td>
                 </tr>
               )
@@ -142,8 +151,8 @@ export function HoldingsTable({ holdings, analyses, onOverride, onSetValue, onRe
           Unrealized and return are measured against <strong>Last sold</strong> — what the card actually went
           for — so they compare a price paid with a price achieved. <strong>Median of 5</strong> sits beside it
           as the steadier estimate; where nothing has sold inside the year, it stands in.
-          Click any <strong>Last sold</strong> figure to put your own number on it, for when you know a sale
-          was not representative. Clear the box to hand the card back to the fetched price.
+          The pencil on a row sets your own figure for that card, for when you know a sale was not
+          representative. Clearing the box hands it back to the fetched price.
         </p>
       )}
     </section>
@@ -210,47 +219,56 @@ const VENUE_LABELS: Record<string, string> = {
 }
 
 /**
- * What the card last went for, and the place to say otherwise.
+ * What the card last went for.
  *
- * The figure everything else is measured against, so it is the figure worth
- * being able to correct — a lowball auction or a private sale you know about
- * should not have to be lived with. Clicking it turns it into a field; leaving
- * that field empty hands the card back to the fetched price.
+ * Plain text until the row's pencil opens it, so the common case — a figure
+ * you are only reading — stays a figure, and nothing in the table invites a
+ * click it does not need. Editing exists because this is what unrealized is
+ * measured against, and a lowball auction or a private sale you know about
+ * should not have to be lived with.
  *
  * Kept as text while being edited so a half-typed number is not parsed and
  * bounced back, and committed on blur or Enter.
  */
 function LastSoldCell({
-  analysis, override, onChange,
+  analysis, override, editing, onChange, onCancel,
 }: {
   analysis?: ItemAnalysis
   override: number | null
+  editing: boolean
   onChange: (v: number | null) => void
+  onCancel: () => void
 }) {
   const last = analysis?.lastSale
-  const [editing, setEditing] = useState(false)
   const [text, setText] = useState('')
+  const [wasEditing, setWasEditing] = useState(false)
 
-  const commit = () => {
-    setEditing(false)
-    const n = Number(text.replace(/[^0-9.-]/g, ''))
-    onChange(text.trim() === '' || !Number.isFinite(n) || n <= 0 ? null : n)
+  // Seed the field from whatever the card is currently worth when it opens.
+  if (editing && !wasEditing) {
+    setWasEditing(true)
+    setText(override == null ? '' : String(override))
+  } else if (!editing && wasEditing) {
+    setWasEditing(false)
   }
 
   if (editing) {
+    const commit = () => {
+      const n = Number(text.replace(/[^0-9.-]/g, ''))
+      onChange(text.trim() === '' || !Number.isFinite(n) || n <= 0 ? null : n)
+    }
     return (
       <input
         className="input tabular text-right w-24 px-2 py-1"
         inputMode="decimal"
         autoFocus
         placeholder="auto"
-        aria-label="Set your own value for this card"
+        aria-label="Your value for this card"
         value={text}
         onChange={(e) => setText(e.target.value)}
         onBlur={commit}
         onKeyDown={(e) => {
-          if (e.key === 'Enter') e.currentTarget.blur()
-          if (e.key === 'Escape') { setEditing(false) }
+          if (e.key === 'Enter') commit()
+          if (e.key === 'Escape') onCancel()
         }}
       />
     )
@@ -261,17 +279,11 @@ function LastSoldCell({
   const where = last?.venue ? VENUE_LABELS[last.venue] ?? last.venue : null
 
   return (
-    <button
-      type="button"
-      className="text-right w-full cursor-text"
-      title={override != null ? 'Your own figure. Click to change it, or clear it to use the fetched price.' : 'Click to put your own number on this card.'}
-      onClick={() => { setText(override == null ? '' : String(override)); setEditing(true) }}
-    >
+    <>
       {shown == null ? <span className="muted">—</span> : <div className="tabular">{money(shown)}</div>}
       <div className="text-[11px] muted">
         {override != null ? 'yours' : last ? [where, when].filter(Boolean).join(' · ') : 'no sales'}
       </div>
-    </button>
+    </>
   )
 }
-

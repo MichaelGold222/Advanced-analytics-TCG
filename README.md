@@ -53,9 +53,9 @@ Two numbers, because they answer different questions:
   steadier estimate. It is shown for reference, and stands in where nothing has
   sold inside the year so a position is never left unvalued.
 
-Click any **Last sold** figure to put your own number on it — for a lowball
-auction, or a private sale you know about, or a card that has not traded. It
-then reads "yours", and clearing the box hands the card back to the fetched
+The pencil at the end of a row sets your own figure for that card — for a
+lowball auction, a private sale you know about, or a card that has not traded.
+It then reads "yours", and clearing the box hands the card back to the fetched
 price. A **Market Value** column in your sheet sets the same thing.
 
 All three run through one function, so the per-position figures and the
