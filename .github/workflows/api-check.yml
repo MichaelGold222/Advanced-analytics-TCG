@@ -164,6 +164,7 @@ jobs:
         env:
           KEY: ${{ secrets.PARSE_API_KEY }}
           CERT: ${{ inputs.cert }}
+          GRADER: ${{ inputs.grader }}
         run: |
           [ -n "$KEY" ] || exit 0
           SCR=$(python3 -c "
@@ -177,7 +178,8 @@ jobs:
           print([c.strip() for c in os.environ['CERT'].replace(chr(10), ',').split(',') if c.strip()][0])
           ")
 
-          for ep in "get_cert_full_profile?cert_number=$ONE" "search_by_cert?cert_number=$ONE"; do
+          Q="cert_number=$ONE&grading_company=$GRADER"
+          for ep in "get_cert_full_profile?$Q" "search_by_cert?$Q"; do
             printf '\n=== GET %s ===\n' "${ep%%\?*}"
             code=$(curl -sS -m 120 -o prof.json -w '%{http_code}' \
               -H "X-API-Key: $KEY" "$BASE/scraper/$SCR/$ep")
