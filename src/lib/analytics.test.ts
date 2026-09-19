@@ -237,3 +237,15 @@ describe('analyzeItem', () => {
     expect(a.referencePrice).toBe(72)
   })
 })
+
+describe('how the entry call reads', () => {
+  it('states the gap to FMV without a double negative', () => {
+    const points = steady(100, 12, 3)
+    const s = series(points)
+    const fmv = computeFmv(s, NOW)
+    const range = compute52WeekRange(s, 90, NOW)
+    const text = computeEntry(fmv, range, s, 90, NOW).rationale.join(' ')
+    expect(text).toMatch(/below FMV/)
+    expect(text).not.toMatch(/-\d+\.\d+% below/)
+  })
+})

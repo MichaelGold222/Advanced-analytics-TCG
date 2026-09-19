@@ -10,6 +10,8 @@ interface Props {
   holdingAnalyses: Map<string, ItemAnalysis>
   watchAnalyses: Map<string, ItemAnalysis>
   lastRefresh: string | null
+  /** True when the site shipped a sold-comp feed. */
+  hasFeed: boolean
   refresh: RefreshState
   onRefresh: () => void
   onGoToData: () => void
@@ -22,7 +24,7 @@ interface Props {
  * each one is counted separately and named with the action that resolves it.
  */
 export function PriceCoverage({
-  holdings, watchlist, holdingAnalyses, watchAnalyses, lastRefresh, refresh, onRefresh, onGoToData,
+  holdings, watchlist, holdingAnalyses, watchAnalyses, lastRefresh, hasFeed, refresh, onRefresh, onGoToData,
 }: Props) {
   const items: { graded: boolean; sealed: boolean; a?: ItemAnalysis }[] = [
     ...holdings.map((h) => ({ graded: h.grade != null, sealed: h.segment === 'sealed', a: holdingAnalyses.get(holdingKey(h)) })),
@@ -39,9 +41,13 @@ export function PriceCoverage({
 
   const causes: { text: string; fix: string }[] = []
 
-  if (!lastRefresh && !refresh.running) {
+  // A refresh prices raw singles. Suggesting one is only useful when something
+  // unvalued is actually a raw single — not when the rest is sealed product,
+  // which that lookup has never been able to price.
+  const fixableByRefresh = unvalued.filter((i) => !i.sealed && !i.graded).length
+  if (!lastRefresh && !refresh.running && fixableByRefresh > 0) {
     causes.push({
-      text: `Prices have never been fetched in this browser.`,
+      text: `${fixableByRefresh} ungraded single${fixableByRefresh === 1 ? '' : 's'} ${fixableByRefresh === 1 ? 'has' : 'have'} no price yet.`,
       fix: 'Click Refresh prices above. If nothing changes, the network call is being blocked — see the note below.',
     })
   }
@@ -53,8 +59,10 @@ export function PriceCoverage({
   }
   if (gradedNoQuote > 0) {
     causes.push({
-      text: `${gradedNoQuote} graded ${gradedNoQuote === 1 ? 'card' : 'cards'} returned no quote at all.`,
-      fix: 'Usually a name or set that did not match. Check the exact set name, or add your own comps.',
+      text: `${gradedNoQuote} graded ${gradedNoQuote === 1 ? 'card has' : 'cards have'} no sold comps.`,
+      fix: hasFeed
+        ? 'Add their certificate numbers to your sheet and to the PORTFOLIO_CERTS secret, and the daily fetch will price them.'
+        : 'Graded cards are priced from sold comps. Import your own, or set up the automatic feed.',
     })
   }
   if (sealed > 0) {
@@ -97,8 +105,9 @@ export function PriceCoverage({
         <button type="button" className="btn" onClick={onGoToData}>Import comps or a template</button>
       </div>
       <p className="text-xs muted mt-3 leading-relaxed">
-        Price lookups go from your browser straight to the Pokémon TCG API. If every lookup fails, that page is
-        being blocked from reaching it — running the app from a downloaded copy of the .html file avoids that.
+        {hasFeed
+          ? 'Graded cards are priced from sold comps fetched daily and published with this site. Refreshing prices covers ungraded singles only, from your browser.'
+          : 'Price lookups go from your browser straight to the Pokémon TCG API. If every lookup fails, that page is being blocked from reaching it — running the app from a downloaded copy of the .html file avoids that.'}
       </p>
     </section>
   )

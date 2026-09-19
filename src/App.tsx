@@ -204,7 +204,7 @@ export default function App() {
             <PriceCoverage
               holdings={holdings} watchlist={watchlist}
               holdingAnalyses={holdingAnalyses} watchAnalyses={watchAnalyses}
-              lastRefresh={store.lastRefresh} refresh={store.refresh}
+              lastRefresh={store.lastRefresh} hasFeed={!!feed} refresh={store.refresh}
               onRefresh={() => void store.refreshPrices()} onGoToData={() => setTab('data')}
             />
 

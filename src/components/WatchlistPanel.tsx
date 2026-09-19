@@ -21,7 +21,7 @@ interface Props {
   onImport: (file: File) => Promise<void>
 }
 
-const EMPTY_FORM = { name: '', set: '', number: '', condition: '', askingPrice: '', targetPrice: '' }
+const EMPTY_FORM = { name: '', set: '', number: '', condition: '', cert: '', askingPrice: '', targetPrice: '' }
 
 export function WatchlistPanel({ watchlist, analyses, onAdd, onRemove, onOverride, onUpdate, onImport }: Props) {
   const [form, setForm] = useState(EMPTY_FORM)
@@ -43,6 +43,7 @@ export function WatchlistPanel({ watchlist, analyses, onAdd, onRemove, onOverrid
       set: form.set.trim() || undefined,
       number: form.number.trim() || undefined,
       condition: form.condition.trim() || undefined,
+      cert: form.cert.trim() || undefined,
       askingPrice: form.askingPrice ? Number(form.askingPrice) : undefined,
       targetPrice: form.targetPrice ? Number(form.targetPrice) : undefined,
       quantity: 1,
@@ -55,11 +56,13 @@ export function WatchlistPanel({ watchlist, analyses, onAdd, onRemove, onOverrid
     <div className="space-y-4">
       <section className="card p-4">
         <h2 className="text-sm font-semibold mb-3">Add something you are looking at</h2>
-        <form onSubmit={submit} className="grid gap-2 sm:grid-cols-2 lg:grid-cols-7">
+        <form onSubmit={submit} className="grid gap-2 sm:grid-cols-2 lg:grid-cols-8">
           <input className="input lg:col-span-2" placeholder="Card or product name *" required value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} aria-label="Name" />
           <input className="input" placeholder="Set" value={form.set} onChange={(e) => setForm({ ...form, set: e.target.value })} aria-label="Set" />
           <input className="input" placeholder="Number" value={form.number} onChange={(e) => setForm({ ...form, number: e.target.value })} aria-label="Card number" />
           <input className="input" placeholder="Condition / grade" value={form.condition} onChange={(e) => setForm({ ...form, condition: e.target.value })} aria-label="Condition" />
+          {/* A cert is what matches a slab to its own sold comps. */}
+          <input className="input" placeholder="Cert number" value={form.cert} onChange={(e) => setForm({ ...form, cert: e.target.value })} aria-label="Cert number" />
           <input className="input" type="number" step="0.01" min="0" placeholder="Asking $" value={form.askingPrice} onChange={(e) => setForm({ ...form, askingPrice: e.target.value })} aria-label="Asking price" />
           <button type="submit" className="btn btn-primary justify-center">
             <Plus className="size-4" aria-hidden /> Add

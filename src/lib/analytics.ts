@@ -271,7 +271,8 @@ export function computeEntry(
   rationale.push(
     reference <= entryPrice
       ? `Asking ${money(reference)} is at or below the ${money(entryPrice)} target.`
-      : `Asking ${money(reference)} is ${pct((reference - fmv) / fmv)} ${reference >= fmv ? 'above' : 'below'} FMV; the target is ${money(entryPrice)}.`,
+      // The direction is in the word, so the number stays unsigned.
+      : `Asking ${money(reference)} is ${pct(Math.abs((reference - fmv) / fmv)).replace('+', '')} ${reference >= fmv ? 'above' : 'below'} FMV; the target is ${money(entryPrice)}.`,
   )
 
   return { verdict, score, entryPrice, stretchEntry, requiredDiscount, volatility, momentum90d, rationale }
