@@ -1,22 +1,30 @@
-# Publishes the dashboard to GitHub Pages.
+# Fetch sold comps, build the dashboard, publish it.
 #
-# A page served over https has a normal origin and may call the price API. A
-# page opened from a file does not and may not, which is why the standalone
-# .html cannot fetch live prices however it is opened.
+# Runs daily so prices stay current without anyone touching anything.
 #
-# One-time setup, which only a repository admin can do: Settings → Pages →
-# Source → "GitHub Actions". The workflow token is not permitted to create the
-# Pages site itself ("Resource not accessible by integration"), so this step
-# cannot be automated away.
+# The fetch needs two secrets: PARSE_API_KEY and PORTFOLIO_CERTS, the latter
+# being lines like "PSA 12345678". The cert list is a secret rather than a file
+# because this repository is public and a collection sheet carries cost basis;
+# secrets are encrypted and never published. The feed that ships with the site
+# holds only certificate numbers and public sale prices.
+#
+# Without either secret the fetch is skipped and the dashboard still deploys:
+# a pricing hiccup must never take the site down.
+#
+# One-time setup, repository admin only: Settings → Pages → Source →
+# "GitHub Actions".
 name: Deploy dashboard
 
 on:
   push:
     branches: [claude/determined-gates-pl6w4q]
+  schedule:
+    # 06:20 UTC daily. Off the hour, since everything runs at :00.
+    - cron: '20 6 * * *'
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
   pages: write
   id-token: write
 
@@ -35,6 +43,38 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm test
+
+      - name: Fetch sold comps
+        id: prices
+        # Never block the deploy: a stale feed beats no dashboard.
+        continue-on-error: true
+        env:
+          PARSE_API_KEY: ${{ secrets.PARSE_API_KEY }}
+          PORTFOLIO_CERTS: ${{ secrets.PORTFOLIO_CERTS }}
+        run: |
+          if [ -z "$PARSE_API_KEY" ]; then
+            echo "No PARSE_API_KEY; keeping whatever feed is committed."
+            exit 0
+          fi
+          if [ -z "$PORTFOLIO_CERTS" ]; then
+            echo "No PORTFOLIO_CERTS; nothing to price."
+            echo "Add it as a repository secret: lines like 'PSA 12345678'."
+            exit 0
+          fi
+          npx tsx scripts/fetch-prices.ts
+
+      - name: Archive the feed, so the record outlives the subscription
+        continue-on-error: true
+        run: |
+          git config user.name  'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -- public/prices.json 2>/dev/null || exit 0
+          git diff --staged --quiet && { echo "feed unchanged"; exit 0; }
+          git commit -m 'Update sold-comp feed' \
+                     -m 'Written by the scheduled price fetch. Sales come from Card Ladder via Parse, keyed by certificate number.'
+          # A GITHUB_TOKEN push does not retrigger workflows, so this cannot loop.
+          git push origin HEAD:${GITHUB_REF_NAME}
+
       - run: npm run build
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3

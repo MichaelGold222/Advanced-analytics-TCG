@@ -11,7 +11,9 @@
     "test:watch": "vitest",
     "preview": "vite preview",
     "build:single": "SINGLE_FILE=1 vite build && node scripts/inline.mjs",
-    "serve": "npm run build && node scripts/serve.mjs"
+    "serve": "npm run build && node scripts/serve.mjs",
+    "typecheck": "tsc --noEmit -p tsconfig.app.json && tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.scripts.json",
+    "prices": "tsx scripts/fetch-prices.ts"
   },
   "dependencies": {
     "idb-keyval": "^6.3.0",
@@ -33,6 +35,7 @@
     "@vitejs/plugin-react": "^6.1.1",
     "oxlint": "^1.81.0",
     "tailwindcss": "^4.3.3",
+    "tsx": "^4.23.13",
     "typescript": "~6.0.2",
     "vite": "^8.3.0",
     "vitest": "^5.0.1"
