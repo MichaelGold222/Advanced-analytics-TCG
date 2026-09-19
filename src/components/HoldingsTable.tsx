@@ -91,7 +91,7 @@ export function HoldingsTable({ holdings, analyses, onOverride, onRemove }: Prop
                   <td>
                     <div className="font-medium">{h.name}</div>
                     <div className="text-xs muted">
-                      {[h.set, h.number && `#${h.number}`, h.condition, h.year].filter(Boolean).join(' · ') || '—'}
+                      {[h.set, h.number && `#${h.number}`, h.condition, h.year, h.cert && `cert ${h.cert}`].filter(Boolean).join(' · ') || '—'}
                     </div>
                   </td>
                   <td>

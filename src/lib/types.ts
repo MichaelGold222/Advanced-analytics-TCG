@@ -22,6 +22,11 @@ export interface Holding {
   condition?: string
   grader?: 'PSA' | 'BGS' | 'CGC' | 'SGC' | 'ACE' | 'TAG' | null
   grade?: number | null
+  /**
+   * The grader's certification number. Identifies one physical slab exactly,
+   * which lets a price source skip name matching entirely.
+   */
+  cert?: string
   quantity: number
   /** Per-unit acquisition cost. */
   costBasis: number
@@ -47,6 +52,7 @@ export interface WatchItem {
   condition?: string
   grader?: Holding['grader']
   grade?: number | null
+  cert?: string
   /** Price currently being asked, if the user is looking at a specific listing. */
   askingPrice?: number
   /** The user's own ceiling, if they set one. */

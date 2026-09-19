@@ -25,6 +25,7 @@ const FIELD_ALIASES = {
   year: ['release year', 'year', 'released'],
   condition: ['condition', 'grade label', 'grading', 'cond'],
   grader: ['grading company', 'grader', 'company', 'cert company'],
+  cert: ['cert number', 'certification number', 'cert no', 'cert', 'certification', 'serial number', 'slab id'],
   grade: ['grade', 'numeric grade'],
   quantity: ['quantity', 'qty', 'count', 'units', 'copies'],
   costBasis: [
@@ -138,6 +139,8 @@ function baseFields(row: Cell[], map: ColumnMap) {
   const number = toText(get('number'))
   const condition = toText(get('condition'))
   const { grader, grade } = parseGrade(condition, toText(get('grader')), get('grade'))
+  // Certs are digits; a spreadsheet may hold one as a number, losing nothing.
+  const cert = toText(get('cert'))?.replace(/\s+/g, '')
   const year = toYear(get('year'))
   const notes = toText(get('notes'))
   const override = parseSegment(get('segment'))
@@ -149,6 +152,7 @@ function baseFields(row: Cell[], map: ColumnMap) {
     condition,
     grader,
     grade,
+    cert,
     year: year ?? cls.inferredYear,
     notes,
     override,
@@ -195,6 +199,7 @@ export function rowsToHoldings(sheet: RawSheet): ImportResult<Holding> {
       condition: f.condition,
       grader: f.grader,
       grade: f.grade,
+      cert: f.cert,
       quantity: quantity > 0 ? quantity : 1,
       costBasis,
       purchaseDate: toDate(f.get('purchaseDate')),
@@ -259,6 +264,7 @@ export function rowsToWatchItems(sheet: RawSheet): ImportResult<WatchItem> {
       condition: f.condition,
       grader: f.grader,
       grade: f.grade,
+      cert: f.cert,
       // An "asking price" column wins; otherwise a generic price column is the ask.
       askingPrice: toNumber(f.get('askingPrice')) ?? toNumber(f.get('userPrice')),
       targetPrice: toNumber(f.get('targetPrice')),

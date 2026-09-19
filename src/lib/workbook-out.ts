@@ -11,26 +11,26 @@ function header(labels: string[]): Row {
 }
 
 const PORTFOLIO_COLUMNS = [
-  'Card Name', 'Set', 'Card Number', 'Year', 'Condition', 'Quantity',
+  'Card Name', 'Set', 'Card Number', 'Year', 'Condition', 'Cert Number', 'Quantity',
   'Cost Basis', 'Purchase Date', 'Market Value', 'Segment', 'Notes',
 ]
 
 const PORTFOLIO_EXAMPLES: (string | number | null)[][] = [
-  ['Charizard', 'Base Set', '4', 1999, 'PSA 9', 1, 4200, '2023-06-14', 5400, '', 'Shadowless'],
-  ['Pikachu', 'Wizards Black Star Promos', '4', 1999, 'PSA 10', 1, 900, '2024-02-02', 1250, '', 'Promo'],
-  ['Surging Sparks Booster Box', 'Surging Sparks', '', 2024, 'Sealed', 2, 118, '2024-11-08', 145, '', ''],
-  ['Moonbreon (Umbreon VMAX)', 'Evolving Skies', '215', 2021, 'CGC 9.5', 1, 1100, '2024-09-20', 980, '', 'Alt art'],
-  ['Pikachu VMAX', 'Vivid Voltage', '044', 2020, 'NM', 3, 22, '2023-03-11', 18, 'Modern', 'Not a promo'],
+  ['Charizard', 'Base Set', '4', 1999, 'PSA 9', '12345678', 1, 4200, '2023-06-14', 5400, '', 'Shadowless'],
+  ['Pikachu', 'Wizards Black Star Promos', '4', 1999, 'PSA 10', '87654321', 1, 900, '2024-02-02', 1250, '', 'Promo'],
+  ['Surging Sparks Booster Box', 'Surging Sparks', '', 2024, 'Sealed', '', 2, 118, '2024-11-08', 145, '', ''],
+  ['Moonbreon (Umbreon VMAX)', 'Evolving Skies', '215', 2021, 'CGC 9.5', '', 1, 1100, '2024-09-20', 980, '', 'Alt art'],
+  ['Pikachu VMAX', 'Vivid Voltage', '044', 2020, 'NM', '', 3, 22, '2023-03-11', 18, 'Modern', 'Not a promo'],
 ]
 
 const WATCHLIST_COLUMNS = [
-  'Card Name', 'Set', 'Card Number', 'Year', 'Condition', 'Quantity', 'Asking Price', 'Target Price', 'Notes',
+  'Card Name', 'Set', 'Card Number', 'Year', 'Condition', 'Cert Number', 'Quantity', 'Asking Price', 'Target Price', 'Notes',
 ]
 
 const WATCHLIST_EXAMPLES: (string | number | null)[][] = [
-  ['Blastoise', 'Base Set', '2', 1999, 'PSA 8', 1, 1400, 1200, 'Watching a live auction'],
-  ['Pikachu', 'SWSH Black Star Promos', 'SWSH284', 2022, 'PSA 10', 1, 260, 210, 'Trick or Trade'],
-  ['Prismatic Evolutions Elite Trainer Box', 'Prismatic Evolutions', '', 2025, 'Sealed', 4, 62, 50, ''],
+  ['Blastoise', 'Base Set', '2', 1999, 'PSA 8', '', 1, 1400, 1200, 'Watching a live auction'],
+  ['Pikachu', 'SWSH Black Star Promos', 'SWSH284', 2022, 'PSA 10', '', 1, 260, 210, 'Trick or Trade'],
+  ['Prismatic Evolutions Elite Trainer Box', 'Prismatic Evolutions', '', 2025, 'Sealed', '', 4, 62, 50, ''],
 ]
 
 const HISTORY_COLUMNS = ['Card Name', 'Set', 'Card Number', 'Condition', 'Date', 'Price', 'Volume']
@@ -81,8 +81,8 @@ export async function downloadTemplate(): Promise<SaveOutcome> {
   return saveFile(
     writeXlsxFile(
     [
-      { sheet: 'Portfolio', data: toRows(PORTFOLIO_COLUMNS, PORTFOLIO_EXAMPLES), columns: widths([28, 24, 12, 8, 12, 9, 12, 14, 13, 14, 26]) },
-      { sheet: 'Watchlist', data: toRows(WATCHLIST_COLUMNS, WATCHLIST_EXAMPLES), columns: widths([28, 24, 12, 8, 12, 9, 13, 13, 26]) },
+      { sheet: 'Portfolio', data: toRows(PORTFOLIO_COLUMNS, PORTFOLIO_EXAMPLES), columns: widths([28, 24, 12, 8, 12, 14, 9, 12, 14, 13, 14, 26]) },
+      { sheet: 'Watchlist', data: toRows(WATCHLIST_COLUMNS, WATCHLIST_EXAMPLES), columns: widths([28, 24, 12, 8, 12, 14, 9, 13, 13, 26]) },
       { sheet: 'Price History', data: toRows(HISTORY_COLUMNS, HISTORY_EXAMPLES), columns: widths([28, 24, 12, 12, 12, 10, 9]) },
       { sheet: 'Read Me', data: README_ROWS, columns: widths([130]) },
     ]),

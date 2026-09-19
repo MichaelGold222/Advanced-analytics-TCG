@@ -237,7 +237,7 @@ export const useStore = create<AppState>((setState, getState) => ({
       if (targets.has(key)) return
       targets.set(key, {
         key,
-        query: { name: item.name, set: item.set, number: item.number },
+        query: { name: item.name, set: item.set, number: item.number, cert: item.cert },
         graded: item.grade != null,
         skipReason:
           item.segment === 'sealed' && !provider.coversSealed

@@ -13,6 +13,12 @@ export interface PriceLookup {
   name: string
   set?: string
   number?: string
+  /**
+   * Grader certification number. A source that accepts one can identify the
+   * exact slab, which removes name matching — the least reliable step in any
+   * lookup — from the process entirely.
+   */
+  cert?: string
 }
 
 export interface PriceProvider {

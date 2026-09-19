@@ -104,7 +104,7 @@ export function WatchlistPanel({ watchlist, analyses, onAdd, onRemove, onOverrid
                       </td>
                       <td>
                         <div className="font-medium">{w.name}</div>
-                        <div className="text-xs muted">{[w.set, w.number && `#${w.number}`, w.condition].filter(Boolean).join(' · ') || '—'}</div>
+                        <div className="text-xs muted">{[w.set, w.number && `#${w.number}`, w.condition, w.cert && `cert ${w.cert}`].filter(Boolean).join(' · ') || '—'}</div>
                       </td>
                       <td><SegmentPicker value={w.segmentOverride ?? null} inferred={inferred} onChange={(s) => onOverride(w.id, s)} /></td>
                       <td className="num">

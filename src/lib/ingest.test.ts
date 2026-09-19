@@ -107,6 +107,39 @@ describe('reading holdings', () => {
     expect(r.items[0].year).toBe(1999)
   })
 
+  it('reads a certification number, however the column is labelled', () => {
+    for (const header of ['Cert Number', 'Cert #', 'Certification', 'Serial Number', 'cert']) {
+      const r = rowsToHoldings(sheet([
+        ['Card Name', 'Condition', header],
+        ['Charizard', 'PSA 9', '12345678'],
+      ]))
+      expect(r.items[0].cert, header).toBe('12345678')
+    }
+  })
+
+  it('reads a cert stored as a number, not text', () => {
+    const r = rowsToHoldings(sheet([
+      ['Card Name', 'Condition', 'Cert Number'],
+      ['Charizard', 'PSA 9', 12345678],
+    ]))
+    expect(r.items[0].cert).toBe('12345678')
+  })
+
+  it('leaves the cert unset when there is no such column', () => {
+    // Two columns: a single-column sheet has no detectable header row.
+    const r = rowsToHoldings(sheet([['Card Name', 'Set'], ['Charizard', 'Base Set']]))
+    expect(r.items[0].cert).toBeUndefined()
+  })
+
+  it('does not confuse a cert column with the card number', () => {
+    const r = rowsToHoldings(sheet([
+      ['Card Name', 'Card Number', 'Cert Number'],
+      ['Charizard', '4', '12345678'],
+    ]))
+    expect(r.items[0].number).toBe('4')
+    expect(r.items[0].cert).toBe('12345678')
+  })
+
   it('honours a Segment column as an override', () => {
     const r = rowsToHoldings(sheet([
       ['Card Name', 'Segment'],
