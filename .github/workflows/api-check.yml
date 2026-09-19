@@ -1,13 +1,23 @@
-# Diagnostic: can the dashboard call Parse from the browser?
+# Diagnostic: does the graded-price path actually work end to end?
 #
-# If it can, the whole server-side path becomes unnecessary: the user pastes
-# their own key into the app, uploads a sheet with cert numbers, and prices
-# arrive with no secrets, no workflow and no repository involvement.
+# Runs the same sequence the dashboard runs — resolve the callable scraper,
+# then price a cert — and prints what comes back, so a failure can be told
+# apart from an empty result.
 #
-# Run from the Actions tab → "Price API check" → Run workflow.
+# Run from the Actions tab -> "Price API check" -> Run workflow.
 name: Price API check
 
-on: workflow_dispatch
+on:
+  workflow_dispatch:
+    inputs:
+      cert:
+        description: A certificate number to price
+        required: false
+        default: '93083876'
+      grader:
+        description: PSA, BGS, CGC or SGC
+        required: false
+        default: PSA
 
 env:
   BASE: https://api.parse.bot
@@ -29,20 +39,110 @@ jobs:
               | grep -iE '^(HTTP/|access-control-)' || echo '  no access-control headers'
           done
 
-      - name: Does a real response carry the header?
+      - name: Walk the whole flow
         env:
           KEY: ${{ secrets.PARSE_API_KEY }}
+          CERT: ${{ inputs.cert }}
+          GRADER: ${{ inputs.grader }}
         run: |
-          [ -n "$KEY" ] || { echo "no key"; exit 0; }
-          echo "=== GET /dispatch/tasks with an Origin ==="
-          curl -sS -m 30 -D - -o /dev/null \
-            -H "X-API-Key: $KEY" -H "Origin: $ORIGIN" \
-            "$BASE/dispatch/tasks?limit=1" | tr -d '\r' \
-            | grep -iE '^(HTTP/|access-control-|vary)' || echo '  no access-control headers on the response'
+          if [ -z "$KEY" ]; then
+            echo "PARSE_API_KEY secret is not set; nothing to test."
+            exit 0
+          fi
 
-      - name: Verdict
-        run: |
+          echo "=== 1. list tasks ==="
+          code=$(curl -sS -m 30 -o tasks.json -w '%{http_code}' \
+            -H "X-API-Key: $KEY" -H "Origin: $ORIGIN" "$BASE/dispatch/tasks?limit=100")
+          echo "HTTP $code"
+          if [ "$code" != "200" ]; then
+            echo "--- body ---"; head -c 800 tasks.json; echo
+            echo "STOP: the key itself was refused or the endpoint moved."
+            exit 1
+          fi
+          python3 -c "
+          import json
+          d = json.load(open('tasks.json'))
+          tasks = d.get('tasks', d) if isinstance(d, dict) else d
+          print('tasks returned:', len(tasks))
+          for t in tasks[:20]:
+              print(' ', t.get('id'), '|', t.get('slug'), '|', t.get('name'), '|', t.get('status'))
+          "
+
           echo
-          echo "A browser needs Access-Control-Allow-Origin on BOTH the preflight"
-          echo "and the response. Without it the dashboard cannot call Parse"
-          echo "directly, whoever holds the key."
+          echo "=== 2. find the Card Ladder task ==="
+          TASK=$(python3 -c "
+          import json, re, sys
+          d = json.load(open('tasks.json'))
+          tasks = d.get('tasks', d) if isinstance(d, dict) else d
+          for t in tasks:
+              blob = ' '.join(str(t.get(k, '')) for k in ('slug', 'url', 'name'))
+              if re.search('cardladder', blob, re.I):
+                  print(t.get('id')); sys.exit()
+          ")
+          if [ -z "$TASK" ]; then
+            echo "STOP: no Card Ladder API on this Parse account."
+            exit 1
+          fi
+          echo "task id: $TASK"
+
+          echo
+          echo "=== 3. resolve the callable scraper ==="
+          curl -sS -m 30 -o detail.json -H "X-API-Key: $KEY" "$BASE/dispatch/tasks/$TASK"
+          python3 -c "
+          import json
+          d = json.load(open('detail.json'))
+          print('keys:', sorted(d)[:25])
+          print('status:', d.get('status'))
+          print('result_scraper_id:', d.get('result_scraper_id'))
+          print('scraper_id:', d.get('scraper_id'))
+          "
+          SCR=$(python3 -c "
+          import json
+          d = json.load(open('detail.json'))
+          print(d.get('result_scraper_id') or d.get('scraper_id') or '')
+          ")
+          if [ -z "$SCR" ]; then
+            echo "STOP: that API has not finished building."
+            exit 1
+          fi
+
+          echo
+          echo "=== 4. what endpoints does it expose? ==="
+          curl -sS -m 30 -o spec.json -H "X-API-Key: $KEY" "$BASE/v1/apis/$SCR/openapi.json" || true
+          python3 -c "
+          import json
+          try:
+              d = json.load(open('spec.json'))
+          except Exception as e:
+              print('could not read the spec:', e); raise SystemExit
+          for p, ops in sorted(d.get('paths', {}).items()):
+              print(' ', ','.join(sorted(ops)).upper(), p)
+          " || true
+
+          echo
+          echo "=== 5. price cert $CERT ($GRADER) ==="
+          code=$(curl -sS -m 90 -o bulk.json -w '%{http_code}' -D bulk.head \
+            -X POST -H "X-API-Key: $KEY" -H 'Content-Type: application/json' -H "Origin: $ORIGIN" \
+            -d "{\"certs\":[{\"cert_number\":\"$CERT\",\"grading_company\":\"$GRADER\"}]}" \
+            "$BASE/scraper/$SCR/get_cert_values_bulk")
+          echo "HTTP $code"
+          tr -d '\r' < bulk.head | grep -iE '^(x-credits|x-ratelimit|access-control-allow-origin)' || true
+          echo "--- body (first 1500 chars) ---"
+          head -c 1500 bulk.json; echo
+          python3 -c "
+          import json
+          try:
+              d = json.load(open('bulk.json'))
+          except Exception:
+              print('body was not JSON'); raise SystemExit
+          results = (d.get('data') or {}).get('results') if isinstance(d, dict) else None
+          if results is None:
+              print('no data.results key; top-level keys:', sorted(d) if isinstance(d, dict) else type(d))
+              raise SystemExit
+          print('results:', len(results))
+          for r in results:
+              sales = r.get('recent_sales') or []
+              print(' cert', r.get('cert_number'), '| last', r.get('last_sale_price'), '| sales', len(sales))
+              for s in sales[:5]:
+                  print('   ', s.get('date'), s.get('price'), s.get('type'))
+          " || true
