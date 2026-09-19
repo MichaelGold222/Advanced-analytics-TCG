@@ -1,0 +1,39 @@
+# Diagnostic: reproduce the dashboard's own graded fetch in a real browser.
+#
+# The API works from curl. This runs the built app in headless Chromium against
+# live Parse and reports exactly what the page sees — console errors, failed
+# requests, and the message the app puts on screen — so a CORS refusal, a
+# credit ceiling and a bad response are told apart.
+#
+# Run from the Actions tab -> "Browser check" -> Run workflow.
+name: Browser check
+
+on:
+  workflow_dispatch:
+    inputs:
+      certs:
+        description: Cert numbers to price, comma separated
+        required: false
+        default: '93083876'
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - run: npm run build
+
+      - name: Drive the page
+        env:
+          KEY: ${{ secrets.PARSE_API_KEY }}
+          CERTS: ${{ inputs.certs }}
+        run: |
+          [ -n "$KEY" ] || { echo "PARSE_API_KEY not set"; exit 0; }
+          npx vite preview --port 4173 --strictPort &
+          npx wait-on http://localhost:4173 -t 60000
+          node .github/scripts/browser-check.mjs

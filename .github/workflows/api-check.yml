@@ -146,3 +146,32 @@ jobs:
               for s in sales[:5]:
                   print('   ', s.get('date'), s.get('price'), s.get('type'))
           " || true
+
+      - name: How does it scale with batch size?
+        env:
+          KEY: ${{ secrets.PARSE_API_KEY }}
+        run: |
+          [ -n "$KEY" ] || exit 0
+          SCR=$(python3 -c "
+          import json
+          d = json.load(open('detail.json'))
+          print(d.get('result_scraper_id') or d.get('scraper_id') or '')
+          ")
+          [ -n "$SCR" ] || exit 0
+          echo "One real cert, padded with fillers, to see whether the endpoint"
+          echo "works per cert or answers the whole list at once."
+          for n in 1 4 12; do
+            python3 -c "
+          import json, sys
+          n = int(sys.argv[1])
+          certs = [{'cert_number': '93083876', 'grading_company': 'PSA'}]
+          certs += [{'cert_number': str(90000000 + i), 'grading_company': 'PSA'} for i in range(n - 1)]
+          json.dump({'certs': certs}, open('req.json', 'w'))
+          " "$n"
+            start=$(date +%s.%N)
+            code=$(curl -sS -m 300 -o out.json -w '%{http_code}' -D h.txt               -X POST -H "X-API-Key: $KEY" -H 'Content-Type: application/json'               -d @req.json "$BASE/scraper/$SCR/get_cert_values_bulk")
+            end=$(date +%s.%N)
+            charged=$(tr -d '\r' < h.txt | grep -i '^x-credits-charged' | cut -d' ' -f2)
+            remaining=$(tr -d '\r' < h.txt | grep -i '^x-credits-remaining' | cut -d' ' -f2)
+            printf 'certs=%-3s HTTP %s  %6.1fs  charged=%-4s remaining=%s\n'               "$n" "$code" "$(echo "$end - $start" | bc)" "${charged:-?}" "${remaining:-?}"
+          done
