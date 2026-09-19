@@ -75,38 +75,50 @@ jobs:
                  | (.value | to_entries[] | "\($p): " + ((.value.parameters // []) | map("\(.name)\(if .required then "*" else "" end)") | join(", ")))' \
             /tmp/api.json 2>/dev/null | head -20
 
-      - name: One real call, printed
+      - name: search_cards, using Card Ladder's own set label
         env:
           KEY: ${{ secrets.PARSE_API_KEY }}
         run: |
-          SID=$(cat /tmp/sid 2>/dev/null)
-          [ -n "$SID" ] || exit 0
-          echo "=== search_cards: charizard ==="
-          curl -sSL -m 45 -H "X-API-Key: $KEY" \
-            --get --data-urlencode 'query=Charizard Base Set' --data-urlencode 'limit=3' \
-            "$BASE/scraper/$SID/search_cards" -o /tmp/s.json -w 'HTTP %{http_code}\n'
-          jq '.' /tmp/s.json 2>/dev/null | head -60 || head -c 1200 /tmp/s.json
-          echo
-          echo "=== top-level keys, and whether any card id came back ==="
-          jq -r 'if type=="object" then (keys|join(", ")) else "array of \(length)" end' /tmp/s.json 2>/dev/null || true
-          jq -r '.. | objects | select(has("id")) | .id' /tmp/s.json 2>/dev/null | head -3 > /tmp/cardid || true
-          echo "first card id: $(head -1 /tmp/cardid 2>/dev/null || echo none)"
+          SID=$(cat /tmp/sid); [ -n "$SID" ] || exit 0
+          # Card Ladder labels the 1999 Base Set "Pokemon Game", not "Base Set".
+          for q in 'Charizard Pokemon Game PSA 9' 'Charizard Pokemon Game' 'Charizard'; do
+            printf '\n=== query: %s ===\n' "$q"
+            curl -sSL -m 60 -H "X-API-Key: $KEY" \
+              --get --data-urlencode "query=$q" --data-urlencode 'limit=3' \
+              "$BASE/scraper/$SID/search_cards" -o /tmp/s.json -w 'HTTP %{http_code}\n'
+            jq -r '.data.total_hits // 0' /tmp/s.json 2>/dev/null | sed 's/^/hits: /'
+            jq -r '.data.cards[0] // empty' /tmp/s.json 2>/dev/null | head -25
+            jq -r '.data.cards[0].id // empty' /tmp/s.json 2>/dev/null > /tmp/cardid
+            [ -s /tmp/cardid ] && break
+          done
+          echo "card id: $(cat /tmp/cardid 2>/dev/null || echo none)"
 
-      - name: Do we get individual sales with dates?
+      - name: get_card_sales_detail — the per-transaction records
         env:
           KEY: ${{ secrets.PARSE_API_KEY }}
         run: |
-          SID=$(cat /tmp/sid 2>/dev/null); CID=$(head -1 /tmp/cardid 2>/dev/null)
-          [ -n "$SID" ] && [ -n "$CID" ] || { echo "need a card id first"; exit 0; }
-          echo "=== get_card_sales for card $CID ==="
-          curl -sSL -m 45 -H "X-API-Key: $KEY" \
-            --get --data-urlencode "card_id=$CID" \
-            "$BASE/scraper/$SID/get_card_sales" -o /tmp/sales.json -w 'HTTP %{http_code}\n'
-          jq '.' /tmp/sales.json 2>/dev/null | head -80 || head -c 2000 /tmp/sales.json
+          SID=$(cat /tmp/sid); CID=$(cat /tmp/cardid 2>/dev/null)
+          [ -n "$CID" ] || { echo "no card id"; exit 0; }
+          curl -sSL -m 60 -H "X-API-Key: $KEY" \
+            --get --data-urlencode "card_id=$CID" --data-urlencode 'limit=5' \
+            "$BASE/scraper/$SID/get_card_sales_detail" -o /tmp/sd.json -w 'HTTP %{http_code}\n'
+          echo "=== one full sale record ==="
+          jq -r '[.. | arrays | select(length>0)][0][0] // empty' /tmp/sd.json 2>/dev/null
           echo
-          echo "=== every field name in the payload ==="
-          jq -r '[.. | objects | keys[]] | unique | join(", ")' /tmp/sales.json 2>/dev/null || echo "  none"
+          echo "=== total_sales and record count ==="
+          jq -r '.data.total_sales // "?"' /tmp/sd.json 2>/dev/null
+          jq -r '[.. | arrays | select(length>0)] | map(length) | max // 0' /tmp/sd.json 2>/dev/null
+
+      - name: get_cert_values_bulk — the bulk path for a graded collection
+        env:
+          KEY: ${{ secrets.PARSE_API_KEY }}
+        run: |
+          SID=$(cat /tmp/sid); [ -n "$SID" ] || exit 0
+          # 93083876 is the PSA cert the endpoint documentation itself cites.
+          curl -sSL -m 90 -H "X-API-Key: $KEY" -H 'Content-Type: application/json' \
+            -d '{"certs":[{"cert_number":"93083876","grading_company":"PSA"}]}' \
+            "$BASE/scraper/$SID/get_cert_values_bulk" -o /tmp/cb.json -w 'HTTP %{http_code}\n'
+          jq '.' /tmp/cb.json 2>/dev/null | head -60 || head -c 1500 /tmp/cb.json
           echo
-          echo "=== how many sale records, and the first one in full ==="
-          jq -r '[.. | arrays | select(length > 0)] | map(length) | max // 0' /tmp/sales.json 2>/dev/null
-          jq -r '[.. | arrays | select(length > 0)][0][0] // empty' /tmp/sales.json 2>/dev/null
+          echo "=== field names present ==="
+          jq -r '[.. | objects | keys[]] | unique | join(", ")' /tmp/cb.json 2>/dev/null || true
