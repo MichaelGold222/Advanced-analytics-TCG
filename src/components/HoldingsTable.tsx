@@ -76,7 +76,7 @@ export function HoldingsTable({ holdings, analyses, onOverride, onRemove }: Prop
               <th>Segment</th>
               <th className="num">Invested</th>
               <th className="num" title="Median of the last 5 completed comps across every venue">Market value</th>
-              <th className="num" title="The last completed eBay sale of this exact card at this grade">Last sold</th>
+              <th className="num" title="The most recent completed sale of this exact card at this grade">Last sold</th>
               <th className="num" title="Lowest this card has traded in the last 6 months">6-mo low</th>
               <th className="num" title="Highest this card has traded in the last 6 months">6-mo high</th>
               <th className="num" title="Highest this card has traded in the last 12 months">Yearly high</th>
@@ -184,13 +184,18 @@ function LowCell({ range, fmv }: { range?: RangeResult; fmv: number | null }) {
   )
 }
 
+const VENUE_LABELS: Record<string, string> = {
+  ebay: 'eBay', fanatics: 'Fanatics', goldin: 'Goldin', pwcc: 'PWCC', heritage: 'Heritage',
+}
+
 /**
- * The last price this exact card actually changed hands for on eBay.
+ * The last price this exact card actually changed hands for.
  *
  * Kept beside the median rather than folded into it: the median is the better
  * estimate of what the card is worth, and this is the better answer to what it
  * went for. The age matters as much as the price, so a sale from eight months
- * ago cannot pass for a current one.
+ * ago cannot pass for a current one, and the venue is shown when known — an
+ * auction-house result carries a buyer's premium worth knowing about.
  */
 function LastSoldCell({ analysis }: { analysis?: ItemAnalysis }) {
   const last = analysis?.lastSale
@@ -198,17 +203,19 @@ function LastSoldCell({ analysis }: { analysis?: ItemAnalysis }) {
     return (
       <>
         <span className="muted">—</span>
-        <div className="text-[11px] muted" title="Card Ladder has no eBay sale on record for this cert within the last year.">
-          no eBay sale
+        <div className="text-[11px] muted" title="No completed sale on record for this card within the last year.">
+          no sales
         </div>
       </>
     )
   }
+  const when = last.ageDays === 0 ? 'today' : last.ageDays === 1 ? 'yesterday' : `${last.ageDays}d ago`
+  const where = last.venue ? VENUE_LABELS[last.venue] ?? last.venue : null
   return (
     <>
       <div className="tabular">{money(last.price)}</div>
-      <div className="text-[11px] muted" title={`Sold on eBay ${last.date}`}>
-        {last.ageDays === 0 ? 'today' : last.ageDays === 1 ? 'yesterday' : `${last.ageDays}d ago`}
+      <div className="text-[11px] muted" title={`Sold ${last.date}${where ? ` on ${where}` : ''}`}>
+        {where ? `${where} · ${when}` : when}
       </div>
     </>
   )

@@ -421,44 +421,53 @@ describe('six-month and yearly highs per card', () => {
   })
 })
 
-describe('market value from the last eBay sale', () => {
+describe('the last completed sale', () => {
   const NOW = new Date('2026-09-19T00:00:00Z')
   const series = (pts: [string, number, string | undefined][]) => ({
     key: 'k',
     points: pts.map(([date, price, venue]) => ({ date, price, source: 'sale' as const, venue })),
   })
 
-  it('takes the most recent eBay sale, not the most recent sale anywhere', () => {
-    // An auction-house result carries a premium and a different audience, so
-    // it is not the answer to "what did it last go for on eBay".
-    const s = series([
+  it('is the most recent sale, whatever venue it happened on', () => {
+    // Requiring eBay reported nothing for a card that had plainly just sold.
+    const last = lastSaleAt(series([
       ['2026-09-01', 4100, 'ebay'],
-      ['2026-09-10', 4400, 'ebay'],
-      ['2026-09-18', 9900, 'fanatics'],
-    ])
-    const last = lastSaleAt(s, 'ebay', NOW)
-    expect(last).toMatchObject({ price: 4400, date: '2026-09-10', venue: 'ebay' })
+      ['2026-09-18', 18_300, 'fanatics'],
+    ]), NOW)
+    expect(last).toMatchObject({ price: 18_300, venue: 'fanatics' })
+  })
+
+  it('still works for comps stored before venues were recorded', () => {
+    const last = lastSaleAt(series([['2026-09-18', 18_300, undefined]]), NOW)
+    expect(last).toMatchObject({ price: 18_300, venue: null })
+  })
+
+  it('agrees with the yearly high when the last sale is the highest', () => {
+    // The number the user saw in one column has to be available to the other.
+    const s = series([['2026-03-01', 12_000, 'ebay'], ['2026-09-18', 18_300, undefined]])
+    expect(compute52WeekRange(s, null, NOW).high).toBe(18_300)
+    expect(lastSaleAt(s, NOW)!.price).toBe(18_300)
   })
 
   it('reports how stale it is, so an old price can be seen to be old', () => {
-    expect(lastSaleAt(series([['2026-08-20', 900, 'ebay']]), 'ebay', NOW)!.ageDays).toBe(30)
+    expect(lastSaleAt(series([['2026-08-20', 900, 'ebay']]), NOW)!.ageDays).toBe(30)
   })
 
-  it('has nothing to say when the card has never sold on eBay', () => {
-    expect(lastSaleAt(series([['2026-09-18', 9900, 'fanatics']]), 'ebay', NOW)).toBeNull()
+  it('has nothing to say when there are no sales at all', () => {
+    expect(lastSaleAt({ key: 'k', points: [] }, NOW)).toBeNull()
   })
 
-  it('ignores eBay sales older than the valuation window', () => {
-    expect(lastSaleAt(series([['2024-01-01', 500, 'ebay']]), 'ebay', NOW)).toBeNull()
+  it('ignores sales older than the valuation window', () => {
+    expect(lastSaleAt(series([['2024-01-01', 500, 'ebay']]), NOW)).toBeNull()
   })
 
-  it('leaves FMV alone — the median still spans every venue', () => {
+  it('leaves market value alone — that is still the median of recent comps', () => {
     const s = series([
       ['2026-09-01', 4000, 'ebay'],
       ['2026-09-05', 4200, 'fanatics'],
-      ['2026-09-10', 4400, 'ebay'],
+      ['2026-09-10', 9900, 'ebay'],
     ])
     expect(computeFmv(s, NOW).fmv).toBe(4200)
-    expect(lastSaleAt(s, 'ebay', NOW)!.price).toBe(4400)
+    expect(lastSaleAt(s, NOW)!.price).toBe(9900)
   })
 })

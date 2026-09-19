@@ -45,10 +45,11 @@ Two numbers, because they answer different questions:
 - **Market value** is the median of the last five completed comps across every
   venue. One sale can be an outlier; five cannot all be, so this is what the
   portfolio is measured on — unrealized and return both run off it.
-- **Last sold** is the last completed **eBay** sale: the price this exact card
-  actually changed hands for, with how long ago beside it. Auction-house
-  results carry a buyer's premium and a different audience, so they are not the
-  answer to "what did it go for".
+- **Last sold** is the most recent completed sale: the price this exact card
+  actually changed hands for, with how long ago and — where it is recorded —
+  which marketplace. The venue is shown rather than filtered on, since an
+  auction-house result carries a buyer's premium worth knowing about but is
+  still a real sale.
 
 A card with too few comps to take a median falls back to its last sale rather
 than going unvalued.

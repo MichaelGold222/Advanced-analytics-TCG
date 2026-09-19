@@ -161,8 +161,8 @@ export interface EntryResult {
 export interface LastSale {
   price: number
   date: string
-  /** Marketplace it sold on, e.g. 'ebay'. */
-  venue: string
+  /** Marketplace it sold on, when recorded; null for older stored comps. */
+  venue: string | null
   /** Days since it sold, so a stale market value can be seen to be stale. */
   ageDays: number
 }
@@ -174,7 +174,7 @@ export interface ItemAnalysis {
   range: RangeResult
   /** The same over six months, which turns sooner than the yearly figure. */
   sixMonthRange: RangeResult
-  /** The last completed eBay sale, which drives market value. */
+  /** The most recent completed sale, shown beside market value. */
   lastSale: LastSale | null
   entry: EntryResult
   referencePrice: number | null

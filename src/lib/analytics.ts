@@ -375,7 +375,7 @@ export function analyzeItem(series: PriceSeries, askingPrice?: number | null, no
   const entry = computeEntry(fmv, range, series, reference, now)
   return {
     key: series.key, fmv, range, sixMonthRange, entry, referencePrice: reference,
-    lastSale: lastSaleAt(series, 'ebay', now),
+    lastSale: lastSaleAt(series, now),
     quote: series.quote, quoteExcluded: series.quoteExcluded,
   }
 }
@@ -514,19 +514,28 @@ export function computeTrend(series: PriceSeries, now = new Date()): TrendResult
 }
 
 /**
- * The most recent completed sale on a given marketplace.
+ * The most recent completed sale, whatever venue it happened on.
  *
- * Distinct from FMV on purpose. FMV is the median of the last few sales, which
- * is deliberately resistant to one unusual result; this is the literal last
- * price the exact card changed hands for. The median is the better estimate of
- * what a card is worth, and this is the better answer to "what did it go for".
- * Showing both means neither has to pretend to be the other.
+ * Distinct from market value on purpose. Market value is the median of the
+ * last few sales, which is deliberately resistant to one unusual result; this
+ * is the literal last price the exact card changed hands for.
+ *
+ * It does not insist on a venue. Insisting on eBay hid real sales twice over:
+ * comps fetched before venues were recorded carry none at all, and a card that
+ * trades at auction houses would report nothing while plainly having sold. The
+ * venue is reported when it is known, so an auction-house result can be
+ * recognised as one, rather than used to suppress the number.
  */
-export function lastSaleAt(series: PriceSeries, venue = 'ebay', now = new Date()): LastSale | null {
+export function lastSaleAt(series: PriceSeries, now = new Date()): LastSale | null {
   const sales = pointsInWindow(series.points, now)
-    .filter((p) => p.source === 'sale' && p.venue === venue && p.price > 0)
+    .filter((p) => p.source === 'sale' && p.price > 0)
     .sort((a, b) => b.date.localeCompare(a.date))
   const latest = sales[0]
   if (!latest) return null
-  return { price: latest.price, date: latest.date, venue, ageDays: daysAgo(latest.date, now) }
+  return {
+    price: latest.price,
+    date: latest.date,
+    venue: latest.venue ?? null,
+    ageDays: daysAgo(latest.date, now),
+  }
 }
