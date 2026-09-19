@@ -35,14 +35,29 @@ jobs:
         run: |
           curl -sSL -m 30 -H "X-API-Key: $KEY" "$BASE/dispatch/tasks?limit=100" -o /tmp/tasks.json \
             -w 'HTTP %{http_code}\n'
-          echo "=== APIs on this account ==="
-          jq -r '(.tasks // .items // .data // .) | if type=="array" then .[] else . end
-                 | "\(.scraper_id // .id // "?")  \(.slug // .name // .url // "")  [\(.status // "")]"' \
-            /tmp/tasks.json 2>/dev/null | head -30 || head -c 600 /tmp/tasks.json
-          jq -r '(.tasks // .items // .data // .) | if type=="array" then .[] else . end
-                 | select((.slug // .name // .url // "") | test("cardladder"; "i")) | .scraper_id // .id' \
-            /tmp/tasks.json 2>/dev/null | head -1 > /tmp/sid || true
+          echo "=== every field on the task record ==="
+          jq -r '(.tasks // .items // .data // .) | if type=="array" then .[0] else . end' /tmp/tasks.json 2>/dev/null | head -60
+
+          TASK=$(jq -r '(.tasks // .items // .data // .) | if type=="array" then .[] else . end
+                        | select((.slug // .name // .url // "") | test("cardladder"; "i")) | .id' \
+                 /tmp/tasks.json 2>/dev/null | head -1)
+          echo "task id: ${TASK:-none}"
+          [ -n "$TASK" ] || exit 0
+
+          echo
+          echo "=== task detail, where the scraper id should live ==="
+          curl -sSL -m 30 -H "X-API-Key: $KEY" "$BASE/dispatch/tasks/$TASK" -o /tmp/task.json \
+            -w 'HTTP %{http_code}\n'
+          jq -r 'paths(scalars) as $p | "\($p | join(".")) = \(getpath($p) | tostring | .[0:70])"' /tmp/task.json 2>/dev/null \
+            | grep -iE 'id|slug|endpoint|status|url' | head -40
+
+          # The scraper id is its own field; the task id is not interchangeable.
+          jq -r '.scraper_id // .scraper.id // .api_id // empty' /tmp/task.json 2>/dev/null | head -1 > /tmp/sid
           echo "scraper id: $(cat /tmp/sid 2>/dev/null || echo 'not found')"
+
+          echo
+          echo "=== endpoint names this API exposes ==="
+          jq -r '[.. | objects | select(has("name")) | .name] | unique | .[]' /tmp/task.json 2>/dev/null | head -20 || true
 
       - name: Read that API's own schema
         env:
