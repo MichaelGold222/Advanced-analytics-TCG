@@ -198,3 +198,88 @@ describe('reading long-format price history', () => {
     expect(Object.keys(history)).toHaveLength(2)
   })
 })
+
+describe('cert columns as people actually label them', () => {
+  const certCol = (headers: string[]) => {
+    const col = mapColumns(headers).cert
+    return col == null ? null : headers[col]
+  }
+
+  it('reads "Graded Cert #" as the cert, not the grade', () => {
+    // It begins with the letters of "grade", which used to win the column and
+    // leave the slab with no cert — so it was never priced at all.
+    const headers = ['Card Name', 'Set', 'Graded Cert #', 'Condition', 'Qty', 'Cost Basis']
+    expect(certCol(headers)).toBe('Graded Cert #')
+    expect(mapColumns(headers).grade).toBeUndefined()
+  })
+
+  it('still tells a cert column from a grade column when both are present', () => {
+    const headers = ['Card Name', 'Graded Cert #', 'Grade', 'Condition']
+    const m = mapColumns(headers)
+    expect(headers[m.cert!]).toBe('Graded Cert #')
+    expect(headers[m.grade!]).toBe('Grade')
+  })
+
+  it.each([
+    ['Cert #'], ['Cert Number'], ['Certificate Number'], ['Certification Number'],
+    ['Cert No'], ['PSA Cert #'], ['Slab ID'], ['Serial Number'], ['certNumber'],
+  ])('reads %s as a cert column', (header) => {
+    expect(certCol(['Card Name', header, 'Qty'])).toBe(header)
+  })
+
+  it('does not mistake a grade column for a cert', () => {
+    for (const header of ['Grade', 'Numeric Grade', 'PSA Grade', 'Grade Label']) {
+      expect(certCol(['Card Name', header, 'Qty'])).toBeNull()
+    }
+  })
+
+  it('carries the cert through to the holding, which is what pricing needs', () => {
+    const { items } = rowsToHoldings({
+      name: 'Portfolio',
+      rows: [
+        ['Card Name', 'Set', 'Condition', 'Graded Cert #', 'Qty'],
+        ['Charizard', 'Base Set', 'PSA 10', '93083876', 1],
+      ],
+    })
+    expect(items[0].cert).toBe('93083876')
+    expect(items[0].grader).toBe('PSA')
+    expect(items[0].grade).toBe(10)
+  })
+})
+
+describe('word boundaries in header matching', () => {
+  it('does not let a longer word match a shorter alias', () => {
+    // "graded" is not "grade"; "noted" is not "no".
+    expect(mapColumns(['Graded Cert #']).grade).toBeUndefined()
+    expect(mapColumns(['Notebook']).number).toBeUndefined()
+  })
+
+  it('still matches an alias that is a whole word inside a longer header', () => {
+    const headers = ['Total Cost Basis USD']
+    expect(mapColumns(headers).costBasis).toBe(0)
+  })
+})
+
+describe('a graded sheet with no cert column', () => {
+  const sheet = {
+    name: 'Portfolio',
+    rows: [
+      ['Card Name', 'Set', 'Condition', 'Qty'],
+      ['Charizard', 'Base Set', 'PSA 10', 1],
+      ['Blastoise', 'Base Set', 'PSA 9', 1],
+    ],
+  }
+
+  it('says so, rather than importing cleanly and pricing nothing', () => {
+    const { issues } = rowsToHoldings(sheet)
+    expect(issues.map((i) => i.message).join(' ')).toMatch(/2 graded cards.*no certificate number column/i)
+  })
+
+  it('stays quiet when there is nothing graded to price', () => {
+    const { issues } = rowsToHoldings({
+      name: 'Portfolio',
+      rows: [['Card Name', 'Qty'], ['Surging Sparks Booster Box', 6]],
+    })
+    expect(issues.filter((i) => /certificate/i.test(i.message))).toHaveLength(0)
+  })
+})

@@ -25,7 +25,11 @@ const FIELD_ALIASES = {
   year: ['release year', 'year', 'released'],
   condition: ['condition', 'grade label', 'grading', 'cond'],
   grader: ['grading company', 'grader', 'company', 'cert company'],
-  cert: ['cert number', 'certification number', 'cert no', 'cert', 'certification', 'serial number', 'slab id'],
+  cert: [
+    'cert number', 'certificate number', 'certification number', 'graded cert', 'cert #', 'cert no',
+    'cert id', 'cert', 'certificate', 'certification', 'serial number', 'slab id', 'psa #', 'bgs #',
+    'cgc #', 'sgc #',
+  ],
   grade: ['grade', 'numeric grade'],
   quantity: ['quantity', 'qty', 'count', 'units', 'copies'],
   costBasis: [
@@ -47,16 +51,49 @@ const FIELD_ALIASES = {
 export type FieldName = keyof typeof FIELD_ALIASES
 export type ColumnMap = Partial<Record<FieldName, number>>
 
+/** Lower-case, split camelCase, and reduce punctuation to single spaces. */
+export function normalizeHeader(header: string): string {
+  return header
+    .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
+    .toLowerCase()
+    .replace(/[^a-z0-9#\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+const boundaryCache = new Map<string, RegExp>()
+
+/**
+ * Where an alias appears in a header, as whole words.
+ *
+ * Matching on raw substrings reads "Graded Cert #" as a grade column, because
+ * it starts with the letters of "grade" — and then the cert number, which is
+ * what actually matches a slab to its sales, is never read at all. An alias
+ * has to land on word boundaries to count.
+ */
+function wordMatch(h: string, a: string): 'exact' | 'edge' | 'inside' | null {
+  if (h === a) return 'exact'
+  let re = boundaryCache.get(a)
+  if (!re) {
+    const escaped = a.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    re = new RegExp(`(^|[^a-z0-9])${escaped}([^a-z0-9]|$)`)
+    boundaryCache.set(a, re)
+  }
+  if (!re.test(h)) return null
+  return h.startsWith(`${a} `) || h.endsWith(` ${a}`) ? 'edge' : 'inside'
+}
+
 function headerScore(header: string, aliases: readonly string[]): number {
-  const h = header.toLowerCase().replace(/[^a-z0-9#\s]/g, ' ').replace(/\s+/g, ' ').trim()
+  const h = normalizeHeader(header)
   if (!h) return 0
   for (let i = 0; i < aliases.length; i++) {
     const a = aliases[i]
-    // Earlier aliases are stronger; exact beats prefix beats substring.
+    // Earlier aliases are stronger; exact beats edge beats inside.
     const rank = 1 - i / (aliases.length * 4)
-    if (h === a) return 100 * rank
-    if (h.startsWith(a) || h.endsWith(a)) return 70 * rank
-    if (h.includes(a)) return 50 * rank
+    const where = wordMatch(h, a)
+    if (where === 'exact') return 100 * rank
+    if (where === 'edge') return 70 * rank
+    if (where === 'inside') return 50 * rank
   }
   return 0
 }
@@ -221,6 +258,19 @@ export function rowsToHoldings(sheet: RawSheet): ImportResult<Holding> {
     }
   }
 
+  // A graded sheet with no cert column imports cleanly and then prices
+  // nothing, because a cert is the only thing that matches a slab to its own
+  // sales. Say so at import rather than leaving it to be discovered later.
+  const gradedCount = items.filter((i) => i.grade != null).length
+  if (map.cert == null && gradedCount > 0) {
+    issues.push({
+      row: headerRow + 1,
+      message: `${gradedCount} graded card${gradedCount === 1 ? '' : 's'} here, but no certificate number column was found. `
+        + 'Graded cards are priced from the sales of that exact slab, so they cannot be valued without one. '
+        + 'Add a column headed "Cert Number".',
+    })
+  }
+
   const claimed = new Set(Object.values(map))
   return {
     items,
@@ -282,6 +332,19 @@ export function rowsToWatchItems(sheet: RawSheet): ImportResult<WatchItem> {
       }
     }
   }
+  // A graded sheet with no cert column imports cleanly and then prices
+  // nothing, because a cert is the only thing that matches a slab to its own
+  // sales. Say so at import rather than leaving it to be discovered later.
+  const gradedCount = items.filter((i) => i.grade != null).length
+  if (map.cert == null && gradedCount > 0) {
+    issues.push({
+      row: headerRow + 1,
+      message: `${gradedCount} graded card${gradedCount === 1 ? '' : 's'} here, but no certificate number column was found. `
+        + 'Graded cards are priced from the sales of that exact slab, so they cannot be valued without one. '
+        + 'Add a column headed "Cert Number".',
+    })
+  }
+
   const claimed = new Set(Object.values(map))
   return {
     items,
