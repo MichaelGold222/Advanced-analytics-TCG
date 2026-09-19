@@ -159,3 +159,55 @@ jobs:
           print()
           print('errors field:', json.dumps((d.get('data') or {}).get('errors'))[:400])
           " || true
+
+      - name: Does anything return a picture?
+        env:
+          KEY: ${{ secrets.PARSE_API_KEY }}
+          CERT: ${{ inputs.cert }}
+        run: |
+          [ -n "$KEY" ] || exit 0
+          SCR=$(python3 -c "
+          import json
+          d = json.load(open('detail.json'))
+          print(d.get('result_scraper_id') or d.get('scraper_id') or '')
+          ")
+          [ -n "$SCR" ] || exit 0
+          ONE=$(python3 -c "
+          import os
+          print([c.strip() for c in os.environ['CERT'].replace(chr(10), ',').split(',') if c.strip()][0])
+          ")
+
+          for ep in "get_cert_full_profile?cert_number=$ONE" "search_by_cert?cert_number=$ONE"; do
+            printf '\n=== GET %s ===\n' "${ep%%\?*}"
+            code=$(curl -sS -m 120 -o prof.json -w '%{http_code}' \
+              -H "X-API-Key: $KEY" "$BASE/scraper/$SCR/$ep")
+            echo "HTTP $code"
+            python3 -c "
+          import json, re
+          try:
+              d = json.load(open('prof.json'))
+          except Exception:
+              print('not JSON:', open('prof.json').read()[:200]); raise SystemExit
+
+          found = []
+          def walk(node, path=''):
+              if isinstance(node, dict):
+                  for k, v in node.items():
+                      walk(v, path + '/' + str(k))
+              elif isinstance(node, list):
+                  for i, v in enumerate(node[:3]):
+                      walk(v, path + '[' + str(i) + ']')
+              elif isinstance(node, str):
+                  if re.search(r'(https?://\S+\.(?:jpg|jpeg|png|webp))|image|photo|img', node, re.I) or re.search(r'image|photo|img|thumb', path, re.I):
+                      found.append((path, node[:160]))
+          walk(d)
+          print('top-level keys:', sorted(d) if isinstance(d, dict) else type(d))
+          if found:
+              print('image-ish fields:')
+              for p, v in found[:15]:
+                  print('  ', p, '=', v)
+          else:
+              print('no image-ish fields found')
+              print('sample:', json.dumps(d)[:500])
+          " || true
+          done
