@@ -11,7 +11,7 @@ on:
   workflow_dispatch:
     inputs:
       cert:
-        description: A certificate number to price
+        description: Certificate numbers to price, comma separated
         required: false
         default: '93083876'
       grader:
@@ -120,17 +120,24 @@ jobs:
           " || true
 
           echo
-          echo "=== 5. price cert $CERT ($GRADER) ==="
-          code=$(curl -sS -m 90 -o bulk.json -w '%{http_code}' -D bulk.head \
+          echo "=== 5. price certs: $CERT ($GRADER) ==="
+          python3 -c "
+          import json, os
+          certs = [c.strip() for c in os.environ['CERT'].replace(chr(10), ',').split(',') if c.strip()]
+          json.dump({'certs': [{'cert_number': c, 'grading_company': os.environ['GRADER']} for c in certs]},
+                    open('req.json', 'w'))
+          print('asking for', len(certs), 'certs')
+          "
+          code=$(curl -sS -m 300 -o bulk.json -w '%{http_code}' -D bulk.head \
             -X POST -H "X-API-Key: $KEY" -H 'Content-Type: application/json' -H "Origin: $ORIGIN" \
-            -d "{\"certs\":[{\"cert_number\":\"$CERT\",\"grading_company\":\"$GRADER\"}]}" \
-            "$BASE/scraper/$SCR/get_cert_values_bulk")
+            -d @req.json "$BASE/scraper/$SCR/get_cert_values_bulk")
           echo "HTTP $code"
           tr -d '\r' < bulk.head | grep -iE '^(x-credits|x-ratelimit|access-control-allow-origin)' || true
-          echo "--- body (first 1500 chars) ---"
-          head -c 1500 bulk.json; echo
+          echo "--- body (first 600 chars) ---"
+          head -c 600 bulk.json; echo
           python3 -c "
-          import json
+          import json, os
+          asked = [c.strip() for c in os.environ['CERT'].replace(chr(10), ',').split(',') if c.strip()]
           try:
               d = json.load(open('bulk.json'))
           except Exception:
@@ -139,39 +146,16 @@ jobs:
           if results is None:
               print('no data.results key; top-level keys:', sorted(d) if isinstance(d, dict) else type(d))
               raise SystemExit
-          print('results:', len(results))
-          for r in results:
-              sales = r.get('recent_sales') or []
-              print(' cert', r.get('cert_number'), '| last', r.get('last_sale_price'), '| sales', len(sales))
-              for s in sales[:5]:
-                  print('   ', s.get('date'), s.get('price'), s.get('type'))
+          print()
+          print('asked for', len(asked), '- got', len(results), 'results')
+          by = {str(r.get('cert_number')): r for r in results}
+          for c in asked:
+              r = by.get(c)
+              if r is None:
+                  print('  ', c.ljust(12), 'ABSENT from the response')
+              else:
+                  n = len(r.get('recent_sales') or [])
+                  print('  ', c.ljust(12), n, 'sales, last', r.get('last_sale_price'))
+          print()
+          print('errors field:', json.dumps((d.get('data') or {}).get('errors'))[:400])
           " || true
-
-      - name: How does it scale with batch size?
-        env:
-          KEY: ${{ secrets.PARSE_API_KEY }}
-        run: |
-          [ -n "$KEY" ] || exit 0
-          SCR=$(python3 -c "
-          import json
-          d = json.load(open('detail.json'))
-          print(d.get('result_scraper_id') or d.get('scraper_id') or '')
-          ")
-          [ -n "$SCR" ] || exit 0
-          echo "One real cert, padded with fillers, to see whether the endpoint"
-          echo "works per cert or answers the whole list at once."
-          for n in 1 4 12; do
-            python3 -c "
-          import json, sys
-          n = int(sys.argv[1])
-          certs = [{'cert_number': '93083876', 'grading_company': 'PSA'}]
-          certs += [{'cert_number': str(90000000 + i), 'grading_company': 'PSA'} for i in range(n - 1)]
-          json.dump({'certs': certs}, open('req.json', 'w'))
-          " "$n"
-            start=$(date +%s.%N)
-            code=$(curl -sS -m 300 -o out.json -w '%{http_code}' -D h.txt               -X POST -H "X-API-Key: $KEY" -H 'Content-Type: application/json'               -d @req.json "$BASE/scraper/$SCR/get_cert_values_bulk")
-            end=$(date +%s.%N)
-            charged=$(tr -d '\r' < h.txt | grep -i '^x-credits-charged' | cut -d' ' -f2)
-            remaining=$(tr -d '\r' < h.txt | grep -i '^x-credits-remaining' | cut -d' ' -f2)
-            printf 'certs=%-3s HTTP %s  %6.1fs  charged=%-4s remaining=%s\n'               "$n" "$code" "$(echo "$end - $start" | bc)" "${charged:-?}" "${remaining:-?}"
-          done
