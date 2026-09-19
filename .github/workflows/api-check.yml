@@ -13,44 +13,51 @@ jobs:
   check:
     runs-on: ubuntu-latest
     steps:
-      - name: Read the API documentation page
+      - name: Does the advertised API host exist?
+        run: |
+          for host in cardhedge-api.com api.cardhedger.com ai.cardhedger.com cardhedger.com; do
+            printf '%-24s ' "$host"
+            if getent hosts "$host" >/dev/null 2>&1; then
+              echo "resolves -> $(getent hosts "$host" | head -1 | awk '{print $1}')"
+            else
+              echo "DOES NOT RESOLVE"
+            fi
+          done
+
+      - name: Try the plausible API bases
+        run: |
+          probe() {
+            code=$(curl -sSL -m 15 -o /tmp/r.txt -w '%{http_code}' \
+              -H 'User-Agent: Mozilla/5.0' -H 'Accept: application/json' "$1" 2>/dev/null) || code=unreachable
+            printf '%-58s -> %s\n' "$1" "$code"
+            [ -f /tmp/r.txt ] && head -c 220 /tmp/r.txt | tr -d '\n' && echo && echo
+            rm -f /tmp/r.txt
+          }
+          probe 'https://api.cardhedger.com/v1/cards/search?q=charizard'
+          probe 'https://api.cardhedger.com/v1/cards'
+          probe 'https://api.cardhedger.com/docs'
+          probe 'https://api.cardhedger.com/openapi.json'
+          probe 'https://cardhedger.com/api/v1/cards/search?q=charizard'
+
+      - name: Read the API page text, styles stripped
         run: |
           curl -sSL -o /tmp/docs.html -H 'User-Agent: Mozilla/5.0' 'https://api.cardhedger.com/' || true
-          echo "=== readable text ==="
-          sed -e ':a' -e 'N' -e '$!ba' -e 's/<script[^>]*>[^<]*<\/script>/ /g' /tmp/docs.html \
+          tr '\n' ' ' < /tmp/docs.html \
+            | sed -e 's/<style[^>]*>[^<]*<\/style>/ /g' -e 's/<script[^>]*>.*\?<\/script>/ /g' \
             | sed -e 's/<[^>]*>/\n/g' \
-            | sed -e 's/&amp;/\&/g' -e 's/&lt;/</g' -e 's/&gt;/>/g' -e 's/&quot;/"/g' -e 's/&#39;/'"'"'/g' \
-            | grep -vE '^[[:space:]]*$' | head -150
+            | sed -e 's/&amp;/\&/g' -e 's/&#39;/'"'"'/g' -e 's/&quot;/"/g' \
+            | grep -vE '^[[:space:]]*$' | grep -vE '^[[:space:]]*[.#@{}]' | head -80
 
-      - name: What does the search endpoint say without a key?
+      - name: Endpoints and sales-related wording
         run: |
-          for url in \
-            'https://cardhedge-api.com/v1/cards/search?q=charizard' \
-            'https://cardhedge-api.com/v1/' \
-            'https://cardhedge-api.com/'; do
-            printf '\n=== %s ===\n' "$url"
-            curl -sSL -m 15 -o /tmp/r.json -w 'HTTP %{http_code}\n' \
-              -H 'User-Agent: Mozilla/5.0' "$url" || echo unreachable
-            head -c 400 /tmp/r.json; echo
-          done
-
-      - name: Hunt for a sales-history endpoint
-        run: |
-          echo "=== endpoint paths mentioned in the docs ==="
-          grep -oiE '/v[0-9]+/[a-z0-9/_{}-]+' /tmp/docs.html | sort -u | head -40
+          echo "=== paths referenced ==="
+          grep -oiE '/(v[0-9]+|api)/[a-z0-9/_{}-]+' /tmp/docs.html | sort -u | head -30
           echo
-          echo "=== keyword counts in the docs ==="
-          for kw in 'sales history' 'sales_history' 'recent sales' 'last sale' \
-                    'sold' 'transaction' 'psa' 'grade' 'population' 'price'; do
+          echo "=== hostnames referenced ==="
+          grep -oiE 'https?://[a-z0-9.-]+' /tmp/docs.html | sort -u | head -20
+          echo
+          echo "=== keyword counts ==="
+          for kw in 'sales history' 'recent sales' 'last sale' 'sold' 'transaction' \
+                    'psa' 'grade' 'population' 'price' 'api key' 'coming soon' 'waitlist'; do
             printf '%-16s %s\n' "$kw" "$(grep -oic "$kw" /tmp/docs.html || echo 0)"
           done
-
-      - name: Can a browser call the API host directly?
-        run: |
-          curl -sS -D - -o /dev/null -X OPTIONS \
-            -H 'Origin: https://michaelgold222.github.io' \
-            -H 'Access-Control-Request-Method: GET' \
-            -H 'Access-Control-Request-Headers: authorization' \
-            'https://cardhedge-api.com/v1/cards/search' | tr -d '\r' \
-            | grep -iE '^(HTTP/|access-control-)' \
-            || echo "no access-control headers -> needs a server to relay, like eBay"
