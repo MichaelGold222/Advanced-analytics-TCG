@@ -76,6 +76,7 @@ export function HoldingsTable({ holdings, analyses, onOverride, onRemove }: Prop
               <th>Segment</th>
               <th className="num">Qty</th>
               <th className="num">Cost / unit</th>
+              <th className="num">Investment</th>
               <th className="num">FMV / unit</th>
               <th className="num">Market value</th>
               <th className="num">Unrealized</th>
@@ -84,7 +85,7 @@ export function HoldingsTable({ holdings, analyses, onOverride, onRemove }: Prop
             </tr>
           </thead>
           <tbody>
-            {rows.map(({ h, a, value, unrealized, roi }) => {
+            {rows.map(({ h, a, cost, value, unrealized, roi }) => {
               const inferred = classify({ ...h, override: null }).segment
               return (
                 <tr key={h.id}>
@@ -100,6 +101,7 @@ export function HoldingsTable({ holdings, analyses, onOverride, onRemove }: Prop
                   </td>
                   <td className="num tabular">{h.quantity}</td>
                   <td className="num tabular">{money(h.costBasis)}</td>
+                  <td className="num tabular">{money(cost)}</td>
                   <td className="num"><PriceCell analysis={a} /></td>
                   <td className="num tabular font-medium">{money(value)}</td>
                   <td className="num tabular" style={{ color: unrealized == null ? undefined : unrealized >= 0 ? 'var(--delta-up)' : 'var(--delta-down)' }}>

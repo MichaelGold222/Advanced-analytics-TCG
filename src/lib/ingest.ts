@@ -31,10 +31,19 @@ const FIELD_ALIASES = {
     'cgc #', 'sgc #',
   ],
   grade: ['grade', 'numeric grade'],
-  quantity: ['quantity', 'qty', 'count', 'units', 'copies'],
+  quantity: ['quantity', 'qty', 'count', 'units', 'unit', 'copies', 'no of cards', '# of cards'],
   costBasis: [
     'cost basis', 'purchase price', 'buy price', 'price paid', 'paid', 'cost',
-    'acquisition price', 'my cost',
+    'acquisition price', 'my cost', 'cost per unit', 'cost unit', 'price per card',
+  ],
+  /**
+   * What the whole position cost, already multiplied out — as opposed to
+   * costBasis, which is per unit. Kept separate because confusing the two
+   * multiplies a position's cost by its own quantity.
+   */
+  investment: [
+    'total investment', 'amount invested', 'total cost', 'total paid', 'total spent',
+    'investment', 'invested', 'book value', 'total basis',
   ],
   purchaseDate: ['purchase date', 'date acquired', 'date bought', 'acquired', 'buy date', 'date'],
   userPrice: [
@@ -199,6 +208,21 @@ function baseFields(row: Cell[], map: ColumnMap) {
   }
 }
 
+/**
+ * Cost per unit, from whichever the sheet actually carries.
+ *
+ * Holdings store cost per unit and multiply by quantity everywhere, so a
+ * column holding the position total has to be divided back down — read as-is
+ * it would be multiplied by that quantity a second time. Where a sheet has
+ * both, the total wins: it is the figure its owner reconciles against.
+ */
+export function perUnitCost(cost: Cell | undefined, investment: Cell | undefined, quantity: number): number {
+  const total = toNumber(investment ?? null)
+  const units = quantity > 0 ? quantity : 1
+  if (total != null && total > 0) return total / units
+  return toNumber(cost ?? null) ?? 0
+}
+
 export function rowsToHoldings(sheet: RawSheet): ImportResult<Holding> {
   const headerRow = findHeaderRow(sheet.rows)
   if (headerRow < 0) {
@@ -223,7 +247,7 @@ export function rowsToHoldings(sheet: RawSheet): ImportResult<Holding> {
       continue
     }
     const quantity = toNumber(f.get('quantity')) ?? 1
-    const costBasis = toNumber(f.get('costBasis')) ?? 0
+    const costBasis = perUnitCost(f.get('costBasis'), f.get('investment'), quantity)
     const userPrice = toNumber(f.get('userPrice'))
     const key = itemKey({ name: f.name, set: f.set, number: f.number, grader: f.grader, grade: f.grade })
 

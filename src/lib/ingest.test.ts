@@ -255,8 +255,21 @@ describe('word boundaries in header matching', () => {
   })
 
   it('still matches an alias that is a whole word inside a longer header', () => {
-    const headers = ['Total Cost Basis USD']
-    expect(mapColumns(headers).costBasis).toBe(0)
+    expect(mapColumns(['Cost Basis USD']).costBasis).toBe(0)
+  })
+
+  it('reads "Total Cost Basis" as the position total, not a per-unit cost', () => {
+    // "Total" is the word that decides it; without it the same header is
+    // per-unit. Getting this backwards scales a position by its own quantity.
+    expect(mapColumns(['Total Cost Basis USD']).investment).toBe(0)
+    expect(mapColumns(['Total Cost Basis USD']).costBasis).toBeUndefined()
+  })
+
+  it('keeps a per-unit cost and a total apart when a sheet carries both', () => {
+    const headers = ['Card', 'Cost Basis', 'Investment']
+    const m = mapColumns(headers)
+    expect(headers[m.costBasis!]).toBe('Cost Basis')
+    expect(headers[m.investment!]).toBe('Investment')
   })
 })
 
@@ -281,5 +294,53 @@ describe('a graded sheet with no cert column', () => {
       rows: [['Card Name', 'Qty'], ['Surging Sparks Booster Box', 6]],
     })
     expect(issues.filter((i) => /certificate/i.test(i.message))).toHaveLength(0)
+  })
+})
+
+describe('an Investment column holding the position total', () => {
+  const sheet = (rows: (string | number)[][]) => ({ name: 'Portfolio', rows })
+
+  it('does not multiply the total by quantity a second time', () => {
+    // Investment is what the whole position cost. Holdings store cost per
+    // unit, so reading 360 as-is would make a 3-card position cost 1080.
+    const { items } = rowsToHoldings(sheet([
+      ['Card Name', 'Cost', 'Unit', 'Investment'],
+      ['Charizard ex', 120, 3, 360],
+    ]))
+    expect(items[0].quantity).toBe(3)
+    expect(items[0].costBasis).toBe(120)
+    expect(items[0].costBasis * items[0].quantity).toBe(360)
+  })
+
+  it('prefers the total over a per-unit cost that disagrees with it', () => {
+    const { items } = rowsToHoldings(sheet([
+      ['Card Name', 'Cost', 'Unit', 'Investment'],
+      ['Charizard ex', 999, 4, 400],
+    ]))
+    expect(items[0].costBasis * items[0].quantity).toBe(400)
+  })
+
+  it('reads a per-unit cost when there is no total', () => {
+    const { items } = rowsToHoldings(sheet([['Card Name', 'Cost', 'Unit'], ['Charizard ex', 120, 3]]))
+    expect(items[0].costBasis).toBe(120)
+    expect(items[0].costBasis * items[0].quantity).toBe(360)
+  })
+
+  it('treats a missing quantity as one rather than dividing by zero', () => {
+    const { items } = rowsToHoldings(sheet([['Card Name', 'Investment'], ['Charizard ex', 500]]))
+    expect(items[0].costBasis).toBe(500)
+    expect(Number.isFinite(items[0].costBasis)).toBe(true)
+  })
+
+  it.each([
+    ['Investment'], ['Total Investment'], ['Total Cost'], ['Amount Invested'], ['Total Paid'],
+  ])('recognises %s as the position total', (header) => {
+    const { items } = rowsToHoldings(sheet([['Card Name', 'Unit', header], ['Charizard ex', 2, 300]]))
+    expect(items[0].costBasis * items[0].quantity).toBe(300)
+  })
+
+  it('still reads Unit as the quantity, not just Units', () => {
+    const { items } = rowsToHoldings(sheet([['Card Name', 'Unit'], ['Charizard ex', 6]]))
+    expect(items[0].quantity).toBe(6)
   })
 })
