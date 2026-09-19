@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { analyzeHoldings, buildValueTrend, computePortfolioHighs, computePortfolioStats, holdingKey } from './portfolio'
+import { analyzeHoldings, buildValueTrend, computePortfolioStats, holdingKey } from './portfolio'
 import type { Holding, PricePoint, PriceSeries, Segment } from './types'
 
 const NOW = new Date('2026-09-18T00:00:00Z')
@@ -143,41 +143,5 @@ describe('buildValueTrend', () => {
   it('carries the cost basis through for the baseline rule', () => {
     const series = new Map([seriesFor(h, [{ date: daysBack(5), price: 300, source: 'sale' }])])
     expect(buildValueTrend([h], series, 365, NOW)[0].costBasis).toBe(2000)
-  })
-})
-
-describe('portfolio highs', () => {
-  const NOW = new Date('2026-09-19T00:00:00Z')
-  const snap = (date: string, marketValue: number) => ({ date, marketValue, costBasis: 0, bySegment: {} })
-
-  it('reads the peak of the whole book, not the sum of each position’s peak', () => {
-    const highs = computePortfolioHighs([
-      snap('2025-11-01', 50_000), snap('2026-03-01', 90_000), snap('2026-09-01', 70_000),
-    ], 70_000, NOW)
-    expect(highs.year!.value).toBe(90_000)
-    expect(highs.year!.date).toBe('2026-03-01')
-  })
-
-  it('reports how far below the high the book is now', () => {
-    const highs = computePortfolioHighs([snap('2026-03-01', 100_000)], 75_000, NOW)
-    expect(highs.year!.belowBy).toBeCloseTo(0.25, 5)
-  })
-
-  it('keeps the six-month high separate from the yearly one', () => {
-    const highs = computePortfolioHighs([
-      snap('2025-10-01', 120_000), // over six months ago
-      snap('2026-07-01', 80_000),
-    ], 80_000, NOW)
-    expect(highs.year!.value).toBe(120_000)
-    expect(highs.sixMonth!.value).toBe(80_000)
-  })
-
-  it('never reports a negative gap when the book is at a new high', () => {
-    const highs = computePortfolioHighs([snap('2026-09-01', 90_000)], 95_000, NOW)
-    expect(highs.year!.belowBy).toBe(0)
-  })
-
-  it('has no high to report when nothing has been valued', () => {
-    expect(computePortfolioHighs([], 0, NOW)).toEqual({ year: null, sixMonth: null })
   })
 })

@@ -2,10 +2,11 @@ import { useMemo, useState } from 'react'
 import { Trash2 } from 'lucide-react'
 import { PriceCell } from './PriceCell'
 import { SegmentPicker } from './SegmentPicker'
-import { money, pct } from '../lib/format'
+import { money, pct, plainPct } from '../lib/format'
 import { classify } from '../lib/classify'
 import { holdingKey } from '../lib/portfolio'
 import { SEGMENTS, SEGMENT_LABELS } from '../lib/types'
+import type { RangeResult } from '../lib/types'
 import type { Holding, ItemAnalysis, Segment } from '../lib/types'
 
 type SortKey = 'name' | 'value' | 'unrealized' | 'roi' | 'segment'
@@ -78,6 +79,8 @@ export function HoldingsTable({ holdings, analyses, onOverride, onRemove }: Prop
               <th className="num">Cost / unit</th>
               <th className="num">Investment</th>
               <th className="num">FMV / unit</th>
+              <th className="num" title="Highest this card has traded in the last 6 months">6-mo high</th>
+              <th className="num" title="Highest this card has traded in the last 12 months">Yearly high</th>
               <th className="num">Market value</th>
               <th className="num">Unrealized</th>
               <th className="num">Return</th>
@@ -85,7 +88,7 @@ export function HoldingsTable({ holdings, analyses, onOverride, onRemove }: Prop
             </tr>
           </thead>
           <tbody>
-            {rows.map(({ h, a, cost, value, unrealized, roi }) => {
+            {rows.map(({ h, a, cost, fmv, value, unrealized, roi }) => {
               const inferred = classify({ ...h, override: null }).segment
               return (
                 <tr key={h.id}>
@@ -103,6 +106,8 @@ export function HoldingsTable({ holdings, analyses, onOverride, onRemove }: Prop
                   <td className="num tabular">{money(h.costBasis)}</td>
                   <td className="num tabular">{money(cost)}</td>
                   <td className="num"><PriceCell analysis={a} /></td>
+                  <td className="num"><HighCell range={a?.sixMonthRange} fmv={fmv} /></td>
+                  <td className="num"><HighCell range={a?.range} fmv={fmv} /></td>
                   <td className="num tabular font-medium">{money(value)}</td>
                   <td className="num tabular" style={{ color: unrealized == null ? undefined : unrealized >= 0 ? 'var(--delta-up)' : 'var(--delta-down)' }}>
                     {unrealized == null ? '—' : money(unrealized)}
@@ -123,5 +128,36 @@ export function HoldingsTable({ holdings, analyses, onOverride, onRemove }: Prop
         {rows.length === 0 && <p className="p-8 text-center text-sm muted">No positions match those filters.</p>}
       </div>
     </section>
+  )
+}
+
+/**
+ * A high-water mark, with how far under it the card currently sits.
+ *
+ * The gap is the point: a high on its own says nothing about whether now is
+ * dear or cheap. A thin window is marked rather than dropped, since "the
+ * highest of the three sales we have" is worth seeing as long as it does not
+ * pass itself off as a real yearly high.
+ */
+function HighCell({ range, fmv }: { range?: RangeResult; fmv: number | null }) {
+  const high = range?.high ?? null
+  if (high == null) return <span className="muted">—</span>
+
+  const below = fmv != null && high > 0 ? (high - fmv) / high : null
+  return (
+    <>
+      <div className="tabular">{money(high)}</div>
+      {below != null && below > 0.001 && (
+        <div className="text-[11px] muted tabular">{plainPct(below, 1)} below</div>
+      )}
+      {below != null && below <= 0.001 && (
+        <div className="text-[11px] tabular" style={{ color: 'var(--delta-up)' }}>at high</div>
+      )}
+      {range?.estimated && (
+        <div className="text-[11px] muted" title={`Only ${range.sampleSize} observation${range.sampleSize === 1 ? '' : 's'} across ${range.coverageDays} days, so this is the highest seen rather than a full-window high.`}>
+          thin data
+        </div>
+      )}
+    </>
   )
 }

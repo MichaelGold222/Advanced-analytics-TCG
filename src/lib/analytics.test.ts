@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
-  LISTING_HAIRCUT, TREND_FLAT_BAND, analyzeItem, buildSeries, compute52WeekRange, computeEntry, computeFmv, computeTrend,
+  LISTING_HAIRCUT, SIX_MONTH_DAYS, TREND_FLAT_BAND, analyzeItem, buildSeries, compute52WeekRange, computeEntry, computeFmv, computeRange, computeTrend,
 } from './analytics'
 import type { PricePoint, PriceSeries } from './types'
 
@@ -370,5 +370,53 @@ describe('trend from the last five sales', () => {
       ['2026-01-01', 1000], ['2026-05-01', 1100], ['2026-09-01', 1200],
     ]), NOW)
     expect(fast.perMonthPct!).toBeGreaterThan(slow.perMonthPct!)
+  })
+})
+
+describe('six-month and yearly highs per card', () => {
+  const NOW = new Date('2026-09-19T00:00:00Z')
+  const from = (pairs: [string, number][]) => ({
+    key: 'k',
+    points: pairs.map(([date, price]) => ({ date, price, source: 'sale' as const })),
+  })
+
+  it('keeps a peak that fell outside six months out of the six-month high', () => {
+    const series = from([
+      ['2025-11-01', 30_000], // ~10 months ago
+      ['2026-06-01', 20_000],
+      ['2026-09-01', 21_000],
+    ])
+    expect(compute52WeekRange(series, null, NOW).high).toBe(30_000)
+    expect(computeRange(series, null, NOW, SIX_MONTH_DAYS).high).toBe(21_000)
+  })
+
+  it('agrees with the yearly high when everything is recent', () => {
+    const series = from([['2026-08-01', 900], ['2026-09-01', 1200]])
+    expect(computeRange(series, null, NOW, SIX_MONTH_DAYS).high)
+      .toBe(compute52WeekRange(series, null, NOW).high)
+  })
+
+  it('scales its confidence to the window it was asked for', () => {
+    // Four months of dense coverage is most of a six-month window and only a
+    // third of a year, so the same points cannot earn the same confidence.
+    const dense = from(
+      Array.from({ length: 24 }, (_, i) => [
+        new Date(NOW.getTime() - (120 - i * 5) * 86_400_000).toISOString().slice(0, 10),
+        1000 + i,
+      ] as [string, number]),
+    )
+    const six = computeRange(dense, null, NOW, SIX_MONTH_DAYS)
+    const year = compute52WeekRange(dense, null, NOW)
+    expect(six.confidence).toBe('medium')
+    expect(year.confidence).toBe('low')
+  })
+
+  it('marks a window too thin to be a real high', () => {
+    const thin = from([['2026-09-10', 1000], ['2026-09-12', 1100]])
+    expect(compute52WeekRange(thin, null, NOW).estimated).toBe(true)
+  })
+
+  it('reports no high at all when there is nothing in the window', () => {
+    expect(computeRange(from([['2023-01-01', 500]]), null, NOW, SIX_MONTH_DAYS).high).toBeNull()
   })
 })

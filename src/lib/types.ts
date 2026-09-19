@@ -159,7 +159,10 @@ export interface EntryResult {
 export interface ItemAnalysis {
   key: string
   fmv: FmvResult
+  /** Twelve-month high and low. */
   range: RangeResult
+  /** The same over six months, which turns sooner than the yearly figure. */
+  sixMonthRange: RangeResult
   entry: EntryResult
   referencePrice: number | null
   /** The provider's live quote, whether or not it fed the valuation. */

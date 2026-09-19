@@ -200,8 +200,23 @@ function weightedBlend(windowed: PricePoint[], now: Date): FmvResult {
   return { fmv, confidence, agreement, stalenessDays, sampleSize: kept.length, contributors, rationale }
 }
 
-export function compute52WeekRange(series: PriceSeries, reference: number | null, now = new Date()): RangeResult {
-  const windowed = pointsInWindow(series.points, now)
+/** Half a year, for the shorter of the two high-water marks. */
+export const SIX_MONTH_DAYS = 182
+
+/**
+ * High, low, and where the current price sits between them.
+ *
+ * Takes the window so the same measurement serves both the twelve-month and
+ * the six-month mark; the confidence gates scale with it, because 120 days of
+ * coverage means something different inside a six-month window than a year.
+ */
+export function computeRange(
+  series: PriceSeries,
+  reference: number | null,
+  now = new Date(),
+  windowDays = WINDOW_DAYS,
+): RangeResult {
+  const windowed = pointsInWindow(series.points, now, windowDays)
   if (windowed.length === 0) {
     return { high: null, low: null, position: null, coverageDays: 0, sampleSize: 0, confidence: 'none', estimated: true }
   }
@@ -211,15 +226,21 @@ export function compute52WeekRange(series: PriceSeries, reference: number | null
   const coverageDays = daysBetween(windowed[0].date, windowed[windowed.length - 1].date)
 
   let confidence: Confidence = 'low'
-  if (coverageDays >= 300 && windowed.length >= 20) confidence = 'high'
-  else if (coverageDays >= 120 && windowed.length >= 8) confidence = 'medium'
+  const wide = coverageDays / windowDays
+  if (wide >= 0.82 && windowed.length >= 20) confidence = 'high'
+  else if (wide >= 0.33 && windowed.length >= 8) confidence = 'medium'
 
   const position = reference != null && high > low ? clamp01((reference - low) / (high - low)) : reference != null ? 0.5 : null
 
   return {
     high, low, position, coverageDays, sampleSize: windowed.length, confidence,
-    estimated: coverageDays < 90 || windowed.length < 8,
+    estimated: wide < 0.25 || windowed.length < 8,
   }
+}
+
+/** The twelve-month range, which is what "52-week high" means everywhere else. */
+export function compute52WeekRange(series: PriceSeries, reference: number | null, now = new Date()): RangeResult {
+  return computeRange(series, reference, now, WINDOW_DAYS)
 }
 
 /** Fallback discount demanded when a series is too short to measure volatility. */
@@ -350,9 +371,10 @@ export function analyzeItem(series: PriceSeries, askingPrice?: number | null, no
   const fmv = computeFmv(series, now)
   const reference = askingPrice ?? null
   const range = compute52WeekRange(series, reference ?? fmv.fmv, now)
+  const sixMonthRange = computeRange(series, reference ?? fmv.fmv, now, SIX_MONTH_DAYS)
   const entry = computeEntry(fmv, range, series, reference, now)
   return {
-    key: series.key, fmv, range, entry, referencePrice: reference,
+    key: series.key, fmv, range, sixMonthRange, entry, referencePrice: reference,
     quote: series.quote, quoteExcluded: series.quoteExcluded,
   }
 }

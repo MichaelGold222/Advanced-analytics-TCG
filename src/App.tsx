@@ -14,11 +14,9 @@ import { ValueTrend } from './components/ValueTrend'
 import { WatchlistPanel } from './components/WatchlistPanel'
 import { useTheme } from './hooks/useTheme'
 import { analyzeItem, computeTrend } from './lib/analytics'
-import { money, pct, plainPct, relativeTime, shortDate } from './lib/format'
+import { money, pct, relativeTime } from './lib/format'
 import { itemKey } from './lib/key'
-import {
-  analyzeHoldings, buildValueTrend, computePortfolioHighs, computePortfolioStats, holdingKey, unitValue,
-} from './lib/portfolio'
+import { analyzeHoldings, buildValueTrend, computePortfolioStats, holdingKey, unitValue } from './lib/portfolio'
 import { getParseKey } from './lib/providers/cardladder-client'
 import { selectSeries, useStore } from './lib/store'
 import { downloadTemplate, exportAnalysis } from './lib/workbook-out'
@@ -68,11 +66,6 @@ export default function App() {
 
   const stats = useMemo(() => computePortfolioStats(holdings, holdingAnalyses), [holdings, holdingAnalyses])
   const trend = useMemo(() => buildValueTrend(holdings, series), [holdings, series])
-  const highs = useMemo(
-    () => computePortfolioHighs(trend, stats.marketValue),
-    [trend, stats.marketValue],
-  )
-
   const trendRows = useMemo<TrendRow[]>(() => holdings.flatMap((h) => {
     const key = holdingKey(h)
     const s = series.get(key)
@@ -239,26 +232,6 @@ export default function App() {
                   direction: stats.unrealized > 0 ? 'up' : stats.unrealized < 0 ? 'down' : 'flat',
                 }}
                 sub={stats.unvalued > 0 ? `${stats.unvalued} position${stats.unvalued === 1 ? '' : 's'} not valued` : undefined}
-              />
-              <StatTile
-                label="Yearly high"
-                value={highs.year ? money(highs.year.value, { compact: highs.year.value >= 100_000 }) : '—'}
-                delta={highs.year && highs.year.belowBy > 0
-                  ? { value: `${plainPct(highs.year.belowBy, 1)} below`, direction: 'down' }
-                  : highs.year
-                    ? { value: 'at its high', direction: 'up' }
-                    : undefined}
-                sub={highs.year ? `Peaked ${shortDate(highs.year.date)}` : 'Needs price history across the year.'}
-              />
-              <StatTile
-                label="6-month high"
-                value={highs.sixMonth ? money(highs.sixMonth.value, { compact: highs.sixMonth.value >= 100_000 }) : '—'}
-                delta={highs.sixMonth && highs.sixMonth.belowBy > 0
-                  ? { value: `${plainPct(highs.sixMonth.belowBy, 1)} below`, direction: 'down' }
-                  : highs.sixMonth
-                    ? { value: 'at its high', direction: 'up' }
-                    : undefined}
-                sub={highs.sixMonth ? `Peaked ${shortDate(highs.sixMonth.date)}` : 'Needs price history across six months.'}
               />
               <StatTile
                 label="Return"
