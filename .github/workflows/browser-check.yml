@@ -25,6 +25,8 @@ jobs:
         with:
           node-version: 22
       - run: npm ci
+      # The package itself, not just the browser binaries the script drives.
+      - run: npm i --no-save playwright
       - run: npx playwright install --with-deps chromium
       - run: npm run build
 
