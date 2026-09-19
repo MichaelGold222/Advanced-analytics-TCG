@@ -255,3 +255,53 @@ describe('re-uploading a sheet', () => {
     expect(useStore.getState().holdings).toHaveLength(2)
   })
 })
+
+describe('retrying only the slabs that are missing', () => {
+  const slab = (cert: string) => holding({
+    name: `Card ${cert}`, condition: 'PSA 10', grader: 'PSA', grade: 10, cert,
+  })
+
+  beforeEach(() => {
+    // These tests run in Node; the client keeps the key in localStorage.
+    const store = new Map<string, string>([['aa-tcg.parseKey', 'k']])
+    vi.stubGlobal('localStorage', {
+      getItem: (k: string) => store.get(k) ?? null,
+      setItem: (k: string, v: string) => void store.set(k, v),
+      removeItem: (k: string) => void store.delete(k),
+    })
+    useStore.setState({
+      holdings: [slab('111'), slab('222'), slab('333')],
+      watchlist: [],
+      certSales: { '111': [{ date: '2026-09-18', price: 100, source: 'sale' }] },
+      gradedRefresh: { running: false, done: 0, total: 0, unmatched: [], failed: [], startedAt: null },
+    })
+  })
+
+  it('asks only for the certs that have nothing yet', async () => {
+    const asked: string[] = []
+    vi.stubGlobal('fetch', async (url: string, init?: RequestInit) => {
+      const make = (payload: unknown) =>
+        ({ ok: true, status: 200, headers: { get: () => null }, json: async () => payload }) as unknown as Response
+      if (String(url).includes('/dispatch/tasks/')) return make({ result_scraper_id: 's' })
+      if (String(url).includes('/dispatch/tasks')) return make({ tasks: [{ id: 't', url: 'https://cardladder.com/' }] })
+      const body = JSON.parse(String(init?.body ?? '{}')) as { certs: { cert_number: string }[] }
+      asked.push(...body.certs.map((c) => c.cert_number))
+      return make({ status: 'success', data: { results: [], errors: [], total: 0 } })
+    })
+
+    await useStore.getState().refreshGraded({ onlyMissing: true })
+    expect(asked.sort()).toEqual(['222', '333'])
+  })
+
+  it('keeps the comps it already had', async () => {
+    vi.stubGlobal('fetch', async (url: string) => {
+      const make = (payload: unknown) =>
+        ({ ok: true, status: 200, headers: { get: () => null }, json: async () => payload }) as unknown as Response
+      if (String(url).includes('/dispatch/tasks/')) return make({ result_scraper_id: 's' })
+      if (String(url).includes('/dispatch/tasks')) return make({ tasks: [{ id: 't', url: 'https://cardladder.com/' }] })
+      return make({ status: 'success', data: { results: [], errors: [], total: 0 } })
+    })
+    await useStore.getState().refreshGraded({ onlyMissing: true })
+    expect(useStore.getState().certSales['111']).toHaveLength(1)
+  })
+})

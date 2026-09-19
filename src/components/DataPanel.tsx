@@ -17,8 +17,10 @@ interface Props {
   gradedRefresh: { running: boolean; done: number; total: number; unmatched: string[]; failed: string[]; startedAt: number | null }
   certLastFetched: string | null
   certCount: number
+  /** Slabs with a cert but still no sold comps. */
+  missingCerts: number
   usage: UsageInfo | null
-  onRefreshGraded: () => void
+  onRefreshGraded: (opts?: { onlyMissing?: boolean }) => void
   onImport: (file: File, kind: 'portfolio' | 'watchlist', mode?: ImportMode) => Promise<void>
   onTemplate: () => void
   onExport: () => void
@@ -26,7 +28,7 @@ interface Props {
 }
 
 export function DataPanel({
-  importLog, refresh, gradedRefresh, certLastFetched, certCount, usage,
+  importLog, refresh, gradedRefresh, certLastFetched, certCount, missingCerts, usage,
   onImport, onTemplate, onExport, onClear, onRefreshGraded,
 }: Props) {
   const [key, setKey] = useState(getApiKey())
@@ -105,11 +107,19 @@ export function DataPanel({
           </div>
 
           <div className="flex flex-wrap items-center gap-2 mt-3">
-            <button type="button" className="btn btn-primary" onClick={onRefreshGraded} disabled={gradedRefresh.running || certCount === 0}>
+            <button type="button" className="btn btn-primary" onClick={() => onRefreshGraded()} disabled={gradedRefresh.running || certCount === 0}>
               {gradedRefresh.running
                 ? `Fetching ${gradedRefresh.done}/${gradedRefresh.total}…`
                 : `Fetch sold comps for ${certCount} slab${certCount === 1 ? '' : 's'}`}
             </button>
+            {missingCerts > 0 && certLastFetched && (
+              <button
+                type="button" className="btn" onClick={() => onRefreshGraded({ onlyMissing: true })}
+                disabled={gradedRefresh.running}
+              >
+                Retry the {missingCerts} still missing
+              </button>
+            )}
             <span className="text-xs muted">
               {certLastFetched ? `updated ${relativeTime(certLastFetched)}` : 'not fetched yet'}
             </span>

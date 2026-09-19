@@ -77,7 +77,7 @@ interface AppState extends PersistedState {
   setSegmentOverride(id: string, segment: Segment | null, kind: 'holding' | 'watch'): void
   removeHolding(id: string): void
   refreshPrices(provider?: PriceProvider): Promise<void>
-  refreshGraded(): Promise<void>
+  refreshGraded(opts?: { onlyMissing?: boolean }): Promise<void>
   clearAll(): Promise<void>
   reportError(message: string): void
   dismissError(): void
@@ -134,7 +134,7 @@ export const useStore = create<AppState>((setState, getState) => ({
    * Runs in the browser: Parse serves CORS, and the key is the user's own,
    * held on their device. One call covers 200 slabs.
    */
-  async refreshGraded() {
+  async refreshGraded(opts = {}) {
     const state = getState()
     if (state.gradedRefresh.running) return
 
@@ -150,7 +150,17 @@ export const useStore = create<AppState>((setState, getState) => ({
       if (!item.cert || !isSupportedGrader(grader)) continue
       certs.set(item.cert, { cert_number: item.cert, grading_company: grader })
     }
-    const list = [...certs.values()]
+    // After a partial failure, going back for everything re-does work that
+    // succeeded and spends the time and credits again. The slabs with nothing
+    // are the ones that need another try.
+    const all = [...certs.values()]
+    const list = opts.onlyMissing
+      ? all.filter((c) => (state.certSales[c.cert_number] ?? []).length === 0)
+      : all
+    if (opts.onlyMissing && list.length === 0) {
+      setState({ error: 'Every slab already has sold comps. Use Fetch sold comps for newer ones.' })
+      return
+    }
     if (list.length === 0) {
       setState({
         error: 'No certificate numbers found. Add a Cert Number column to your sheet — graded cards are priced by cert.',

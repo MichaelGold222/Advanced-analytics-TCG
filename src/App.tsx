@@ -322,7 +322,14 @@ export default function App() {
             importLog={store.importLog} refresh={store.refresh}
             gradedRefresh={store.gradedRefresh} certLastFetched={store.certLastFetched}
             certCount={new Set([...holdings, ...watchlist].filter((i) => i.cert).map((i) => i.cert)).size}
-            usage={store.usage} onRefreshGraded={() => void store.refreshGraded()}
+            missingCerts={
+              new Set(
+                [...holdings, ...watchlist]
+                  .filter((i) => i.cert && (store.certSales[i.cert] ?? []).length === 0)
+                  .map((i) => i.cert),
+              ).size
+            }
+            usage={store.usage} onRefreshGraded={(o) => void store.refreshGraded(o)}
             onImport={store.importFile} onTemplate={handleTemplate} onExport={handleExport}
             onClear={() => void store.clearAll()}
           />
