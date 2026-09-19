@@ -12,7 +12,9 @@ import { importWorkbook, mergeHistory, reclassify } from './ingest'
 import { itemKey } from './key'
 import { refreshQuotes, type PriceProvider, type RefreshTarget } from './pricing'
 import { isSupportedGrader, type PriceFeed } from './providers/cardladder'
-import { fetchCertPrices, getParseKey, ParseError, type UsageInfo } from './providers/cardladder-client'
+import {
+  fetchCertImages, fetchCertPrices, getParseKey, ParseError, type UsageInfo,
+} from './providers/cardladder-client'
 import { pokemonTcgIo } from './pricing'
 import { toISODate } from './stats'
 import type { Holding, PricePoint, PriceQuote, PriceSeries, Segment, WatchItem } from './types'
@@ -53,6 +55,8 @@ interface PersistedState {
   /** Sold comps by certificate number, from Card Ladder. */
   certSales: Record<string, PricePoint[]>
   certLastFetched: string | null
+  /** Pictures by cert. Fetched once and kept: a photo does not go stale. */
+  certImages: Record<string, { image: string | null; thumbnail: string | null }>
 }
 
 /** Whether an upload replaces what is there or adds to it. */
@@ -95,6 +99,7 @@ const EMPTY: PersistedState = {
   lastRefresh: null,
   certSales: {},
   certLastFetched: null,
+  certImages: {},
 }
 
 function persistable(s: AppState): PersistedState {
@@ -108,6 +113,7 @@ function persistable(s: AppState): PersistedState {
     lastRefresh: s.lastRefresh,
     certSales: s.certSales,
     certLastFetched: s.certLastFetched,
+    certImages: s.certImages,
   }
 }
 
@@ -179,6 +185,25 @@ export const useStore = create<AppState>((setState, getState) => ({
 
       const certSales = { ...getState().certSales }
       for (const p of prices) if (p.points.length > 0) certSales[p.cert] = p.points
+
+      // Pictures are fetched once per cert and kept. They do not go stale the
+      // way a price does, and the search that carries them is charged its own
+      // credit, so re-pulling one already held would be paying twice for the
+      // same photograph.
+      const known = getState().certImages
+      const missing = list.filter((c) => !known[c.cert_number])
+      if (missing.length > 0) {
+        try {
+          const { images } = await fetchCertImages(missing, { key })
+          if (images.length > 0) {
+            const certImages = { ...getState().certImages }
+            for (const img of images) certImages[img.cert] = { image: img.image, thumbnail: img.thumbnail }
+            setState({ certImages })
+          }
+        } catch {
+          /* a missing picture is cosmetic; the prices already landed */
+        }
+      }
 
       const priced = prices.filter((p) => p.points.length > 0).length
       setState({

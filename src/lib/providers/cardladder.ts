@@ -228,3 +228,45 @@ export function estimateFetch(
   const waves = Math.ceil(calls / Math.max(1, concurrency))
   return { ms: waves * perCall, credits: calls * CREDITS_PER_CALL, calls }
 }
+
+export interface CertImage {
+  cert: string
+  /** Full-size picture: the card, or the listing photo of the slab. */
+  image: string | null
+  /** Smaller version of the same, which is what a table row wants. */
+  thumbnail: string | null
+}
+
+/** Only pictures served over https are worth carrying into the page. */
+function httpsUrl(v: unknown): string | null {
+  const s = typeof v === 'string' ? v.trim() : ''
+  return s.startsWith('https://') ? s : null
+}
+
+/**
+ * Read pictures out of a bulk cert search.
+ *
+ * Results are keyed by the certificate they answer for where the upstream
+ * says so, and fall back to request order where it does not — a picture on
+ * the wrong card is worse than no picture, so the order is only trusted when
+ * the count matches exactly.
+ */
+export function parseCertImages(body: unknown, asked: CertRequest[]): CertImage[] {
+  const results = (body as { data?: { results?: unknown[] } })?.data?.results
+  if (!Array.isArray(results)) return []
+
+  const rows = results.filter((r): r is Record<string, unknown> => !!r && typeof r === 'object')
+  const named = rows.filter((r) => String(r.cert_number ?? '').trim() !== '')
+  const positional = named.length === 0 && rows.length === asked.length
+
+  const out: CertImage[] = []
+  rows.forEach((r, i) => {
+    const cert = positional ? asked[i].cert_number : String(r.cert_number ?? '').trim()
+    if (!cert) return
+    const image = httpsUrl(r.image)
+    const thumbnail = httpsUrl(r.thumbnail)
+    if (!image && !thumbnail) return
+    out.push({ cert, image, thumbnail })
+  })
+  return out
+}

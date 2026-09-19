@@ -310,6 +310,7 @@ export default function App() {
             holdings={holdings} analyses={holdingAnalyses}
             onOverride={(id, s) => store.setSegmentOverride(id, s, 'holding')}
             onSetValue={(id, v) => store.setHoldingValue(id, v)}
+            images={store.certImages}
             onRemove={store.removeHolding}
           />
         ) : tab === 'watchlist' ? (

@@ -285,7 +285,8 @@ describe('retrying only the slabs that are missing', () => {
       if (String(url).includes('/dispatch/tasks/')) return make({ result_scraper_id: 's' })
       if (String(url).includes('/dispatch/tasks')) return make({ tasks: [{ id: 't', url: 'https://cardladder.com/' }] })
       const body = JSON.parse(String(init?.body ?? '{}')) as { certs: { cert_number: string }[] }
-      asked.push(...body.certs.map((c) => c.cert_number))
+      // Pictures come from their own endpoint; only the price call is the subject here.
+      if (String(url).includes('get_cert_values_bulk')) asked.push(...body.certs.map((c) => c.cert_number))
       return make({ status: 'success', data: { results: [], errors: [], total: 0 } })
     })
 

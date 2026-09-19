@@ -15,10 +15,12 @@ interface Props {
   analyses: Map<string, ItemAnalysis>
   onOverride: (id: string, segment: Segment | null) => void
   onSetValue: (id: string, value: number | null) => void
+  /** Pictures by cert, where one has been fetched. */
+  images: Record<string, { image: string | null; thumbnail: string | null }>
   onRemove: (id: string) => void
 }
 
-export function HoldingsTable({ holdings, analyses, onOverride, onSetValue, onRemove }: Props) {
+export function HoldingsTable({ holdings, analyses, images, onOverride, onSetValue, onRemove }: Props) {
   // Which row is being edited, if any. Opened from the pencil in that row.
   const [editingId, setEditingId] = useState<string | null>(null)
   const [query, setQuery] = useState('')
@@ -95,9 +97,14 @@ export function HoldingsTable({ holdings, analyses, onOverride, onSetValue, onRe
               return (
                 <tr key={h.id}>
                   <td>
-                    <div className="font-medium">{h.name}</div>
-                    <div className="text-xs muted">
-                      {[h.set, h.number && `#${h.number}`, h.condition, h.year, h.cert && `cert ${h.cert}`].filter(Boolean).join(' · ') || '—'}
+                    <div className="flex items-start gap-3">
+                      <CardThumb src={h.cert ? images[h.cert]?.thumbnail ?? images[h.cert]?.image ?? null : null} name={h.name} />
+                      <div className="min-w-0">
+                        <div className="font-medium">{h.name}</div>
+                        <div className="text-xs muted">
+                          {[h.set, h.number && `#${h.number}`, h.condition, h.year, h.cert && `cert ${h.cert}`].filter(Boolean).join(' · ') || '—'}
+                        </div>
+                      </div>
                     </div>
                   </td>
                   <td>
@@ -281,9 +288,48 @@ function LastSoldCell({
   return (
     <>
       {shown == null ? <span className="muted">—</span> : <div className="tabular">{money(shown)}</div>}
-      <div className="text-[11px] muted">
-        {override != null ? 'yours' : last ? [where, when].filter(Boolean).join(' · ') : 'no sales'}
-      </div>
+      {/* Nothing under an edited figure: it is the number, not a status. */}
+      {override == null && (
+        <div className="text-[11px] muted">
+          {last ? [where, when].filter(Boolean).join(' · ') : 'no sales'}
+        </div>
+      )}
     </>
+  )
+}
+
+/**
+ * The slab, as a picture.
+ *
+ * A certificate number is not something anyone recognises a card by. The
+ * photograph is the listing's own, so it shows the card in its holder rather
+ * than as clean artwork, which is what makes it recognisable.
+ *
+ * Kept to a fixed box so rows stay the same height whatever comes back, and
+ * hidden outright if the picture fails to load — a broken-image icon on every
+ * row is worse than no picture.
+ */
+function CardThumb({ src, name }: { src: string | null; name: string }) {
+  const [failed, setFailed] = useState(false)
+  if (!src || failed) {
+    return (
+      <div
+        className="shrink-0 w-10 h-14 rounded-sm"
+        style={{ background: 'var(--surface-2)', border: '1px solid var(--border)' }}
+        aria-hidden
+      />
+    )
+  }
+  return (
+    <img
+      src={src}
+      alt={`${name} slab`}
+      loading="lazy"
+      decoding="async"
+      referrerPolicy="no-referrer"
+      onError={() => setFailed(true)}
+      className="shrink-0 w-10 h-14 rounded-sm object-cover"
+      style={{ border: '1px solid var(--border)' }}
+    />
   )
 }

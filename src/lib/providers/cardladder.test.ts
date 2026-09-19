@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   CALL_OVERHEAD_MS, CREDITS_PER_CALL, FETCH_CONCURRENCY, MAX_CERTS_PER_CALL, MIN_BATCH_SIZE, MS_PER_CERT,
   batchCerts, buildFeed, estimateFetch, isSupportedGrader, parseBulkResponse, planBatchSize,
-  salesToPricePoints, venueOf,
+  parseCertImages, salesToPricePoints, venueOf,
 } from './cardladder'
 import { computeFmv } from '../analytics'
 
@@ -245,5 +245,67 @@ describe('where a sale happened', () => {
       { date: '2026-09-08T00:00:00Z', price: 200, url: 'https://www.fanaticscollect.com/weekly/2' },
     ])
     expect(points.map((p) => p.venue)).toEqual(['ebay', 'fanatics'])
+  })
+})
+
+describe('pictures of the slabs', () => {
+  const asked = [
+    { cert_number: '141142901', grading_company: 'PSA' as const },
+    { cert_number: '93083876', grading_company: 'PSA' as const },
+  ]
+  // The live shape, as the bulk search returns it.
+  const LIVE = {
+    status: 'success',
+    data: {
+      results: [
+        {
+          cert_number: 141142901, grading_company: 'psa',
+          image: 'https://firebasestorage.googleapis.com/v0/b/cardladder-71d53.appspot.com/o/cards%2FZrxi8?alt=media',
+          thumbnail: 'https://i.ebayimg.com/images/g/FWcAAeSwDW5qqfoT/s-l400.webp',
+        },
+        {
+          cert_number: '93083876', grading_company: 'psa',
+          image: 'https://firebasestorage.googleapis.com/v0/b/cardladder-71d53.appspot.com/o/sales%2Ffanatics?alt=media',
+          thumbnail: null,
+        },
+      ],
+    },
+  }
+
+  it('keys each picture to the cert it answers for', () => {
+    const out = parseCertImages(LIVE, asked)
+    expect(out.map((i) => i.cert)).toEqual(['141142901', '93083876'])
+    expect(out[0].thumbnail).toMatch(/ebayimg/)
+    expect(out[1].thumbnail).toBeNull()
+  })
+
+  it('handles a numeric cert without turning it into a different string', () => {
+    expect(parseCertImages(LIVE, asked)[0].cert).toBe('141142901')
+  })
+
+  it('falls back to request order only when nothing is named and counts match', () => {
+    const unnamed = { data: { results: [{ image: 'https://x/a.jpg' }, { image: 'https://x/b.jpg' }] } }
+    expect(parseCertImages(unnamed, asked).map((i) => i.cert)).toEqual(['141142901', '93083876'])
+  })
+
+  it('drops results it cannot place rather than guessing', () => {
+    // A picture on the wrong card is worse than no picture.
+    const mismatched = { data: { results: [{ image: 'https://x/a.jpg' }] } }
+    expect(parseCertImages(mismatched, asked)).toEqual([])
+  })
+
+  it('refuses anything that is not an https picture', () => {
+    const bad = { data: { results: [{ cert_number: '1', image: 'javascript:alert(1)', thumbnail: 'http://x/a.jpg' }] } }
+    expect(parseCertImages(bad, asked)).toEqual([])
+  })
+
+  it('skips a result with no picture at all', () => {
+    const none = { data: { results: [{ cert_number: '141142901', image: null, thumbnail: null }] } }
+    expect(parseCertImages(none, asked)).toEqual([])
+  })
+
+  it('survives a response of the wrong shape', () => {
+    expect(parseCertImages({}, asked)).toEqual([])
+    expect(parseCertImages(null, asked)).toEqual([])
   })
 })

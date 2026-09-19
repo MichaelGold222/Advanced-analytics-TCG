@@ -11,7 +11,8 @@
  * valuation needs.
  */
 import {
-  FETCH_CONCURRENCY, batchCerts, parseBulkResponse, type CertPrices, type CertRequest,
+  FETCH_CONCURRENCY, batchCerts, parseBulkResponse, parseCertImages,
+  type CertImage, type CertPrices, type CertRequest,
 } from './cardladder'
 
 const BASE = 'https://api.parse.bot'
@@ -320,4 +321,54 @@ export async function fetchCertPrices(
         }.`
       : null,
   }
+}
+
+/**
+ * Pictures for a set of slabs.
+ *
+ * A separate endpoint from the prices, and a cheaper one — a bulk search is
+ * charged a single credit where the price call is charged three. Pictures also
+ * do not go stale the way a price does, so this is worth doing once and
+ * keeping, rather than on every refresh.
+ *
+ * A failure here is not worth interrupting anything for: the collection is
+ * perfectly usable without pictures, so batches that fail are simply left out.
+ */
+export async function fetchCertImages(
+  certs: CertRequest[],
+  opts: { key: string; signal?: AbortSignal; onProgress?: (done: number, total: number) => void },
+): Promise<{ images: CertImage[]; usage: UsageInfo | null }> {
+  if (certs.length === 0) return { images: [], usage: null }
+
+  const scraperId = await resolveScraperId(opts.key, opts.signal)
+  const batches = batchCerts(certs)
+  const images: CertImage[] = []
+  let usage: UsageInfo | null = null
+  let done = 0
+  let next = 0
+
+  const worker = async () => {
+    for (;;) {
+      const i = next++
+      if (i >= batches.length) return
+      const batch = batches[i]
+      try {
+        const res = await call(`/scraper/${scraperId}/search_by_certs_bulk`, opts.key, {
+          method: 'POST',
+          body: JSON.stringify({ certs: batch }),
+          signal: opts.signal,
+        })
+        usage = readUsage(res)
+        images.push(...parseCertImages(await res.json(), batch))
+      } catch (err) {
+        if ((err as Error)?.name === 'AbortError') throw err
+        // No picture is a cosmetic loss; it must not fail a refresh.
+      }
+      done += batch.length
+      opts.onProgress?.(Math.min(done, certs.length), certs.length)
+    }
+  }
+
+  await Promise.all(Array.from({ length: Math.min(FETCH_CONCURRENCY, batches.length) }, worker))
+  return { images, usage }
 }

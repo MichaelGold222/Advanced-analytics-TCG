@@ -53,6 +53,13 @@ Two numbers, because they answer different questions:
   steadier estimate. It is shown for reference, and stands in where nothing has
   sold inside the year so a position is never left unvalued.
 
+Each row carries a **photograph of the slab**, taken from the listing it last
+sold in, so a card is recognisable at a glance rather than by its certificate
+number. Pictures come from the bulk cert search, which is charged one credit a
+call against the price call's three, and are fetched once per certificate and
+kept — a photograph does not go stale the way a price does, so a cert that
+already has one is never asked about again.
+
 The pencil at the end of a row sets your own figure for that card — for a
 lowball auction, a private sale you know about, or a card that has not traded.
 It then reads "yours", and clearing the box hands the card back to the fetched
