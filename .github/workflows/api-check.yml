@@ -259,4 +259,12 @@ jobs:
               print('  ', p, '=', v)
           if not found:
               print('no image fields; sample:', json.dumps(d)[:400])
+          results = (d.get('data') or {}).get('results') or []
+          print()
+          print('results:', len(results))
+          for r in results[:3]:
+              if isinstance(r, dict):
+                  print('  keys:', sorted(r))
+                  print('  cert_number =', r.get('cert_number'), '| grading_company =', r.get('grading_company'))
+                  print('  name =', str(r.get('name') or r.get('card_name'))[:70])
           " || true
