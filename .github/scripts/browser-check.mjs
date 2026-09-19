@@ -49,17 +49,49 @@ await page.waitForTimeout(1500)
 await page.getByRole('button', { name: 'Data & settings' }).click()
 console.log(`\n--- pressing fetch for ${CERTS.length} cert(s) ---`)
 await page.getByRole('button', { name: /Fetch sold comps/ }).click()
-await page.waitForTimeout(25000)
+// The endpoint scrapes; give it room, and keep going once it settles.
+for (let i = 0; i < 24; i++) {
+  await page.waitForTimeout(5000)
+  const running = await page.getByRole('button', { name: /Fetching/ }).count()
+  if (running === 0 && i > 1) break
+}
 
 const banner = await page.locator('[role=alert], .error, [class*=error]').allTextContents()
 console.log('\n--- what the page shows ---')
 console.log('  banner:', banner.filter(Boolean).map(redact).join(' | ') || '(none)')
-const stored = await page.evaluate(() => {
-  const raw = localStorage.getItem('aa-tcg.parseScraperId')
-  return { scraperCached: !!raw }
-})
-console.log('  scraper id cached:', stored.scraperCached)
+const cached = await page.evaluate(() => !!localStorage.getItem('aa-tcg.parseScraperId'))
+console.log('  scraper id cached:', cached)
 const body = await page.locator('main').innerText()
-console.log('  fetch section:', redact(body.split('Graded cards')[1]?.slice(0, 400) ?? '(not found)'))
+console.log('  fetch section:', redact(body.split('Graded cards')[1]?.slice(0, 500) ?? '(not found)'))
+
+// What actually landed in the store, which is the question.
+const stored = await page.evaluate(async () => {
+  const open = indexedDB.open('keyval-store')
+  const db = await new Promise((res, rej) => {
+    open.onsuccess = () => res(open.result)
+    open.onerror = () => rej(open.error)
+  })
+  const val = await new Promise((res, rej) => {
+    const r = db.transaction('keyval').objectStore('keyval').get('advanced-analytics-tcg/v1')
+    r.onsuccess = () => res(r.result)
+    r.onerror = () => rej(r.error)
+  })
+  return {
+    certSales: Object.keys(val?.certSales ?? {}).length,
+    certImages: Object.keys(val?.certImages ?? {}).length,
+    sampleImage: Object.values(val?.certImages ?? {})[0] ?? null,
+  }
+})
+console.log('\n--- what reached storage ---')
+console.log('  certs with sales :', stored.certSales)
+console.log('  certs with photos:', stored.certImages)
+console.log('  sample photo     :', JSON.stringify(stored.sampleImage))
+
+// And did any <img> actually render?
+const imgs = await page.evaluate(() => {
+  const list = [...document.querySelectorAll('img')]
+  return list.map((i) => ({ src: i.src.slice(0, 80), w: i.naturalWidth }))
+})
+console.log('  <img> on page    :', JSON.stringify(imgs.slice(0, 5)))
 
 await browser.close()
