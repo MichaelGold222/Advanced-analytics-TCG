@@ -42,17 +42,19 @@ grade**. Nothing to upload but your own collection sheet.
 
 Two numbers, because they answer different questions:
 
-- **Market value** is the median of the last five completed comps across every
-  venue. One sale can be an outlier; five cannot all be, so this is what the
-  portfolio is measured on — unrealized and return both run off it.
 - **Last sold** is the most recent completed sale: the price this exact card
   actually changed hands for, with how long ago and — where it is recorded —
-  which marketplace. The venue is shown rather than filtered on, since an
+  which marketplace. **Portfolio value, unrealized and return are all measured
+  against it**, so a gain compares a price paid with a price achieved rather
+  than with an average. The venue is shown rather than filtered on, since an
   auction-house result carries a buyer's premium worth knowing about but is
   still a real sale.
+- **Median of 5** is the middle of the last five comps across every venue, the
+  steadier estimate. It is shown for reference, and stands in where nothing has
+  sold inside the year so a position is never left unvalued.
 
-A card with too few comps to take a median falls back to its last sale rather
-than going unvalued.
+Both run through one function, so the per-position figures and the portfolio
+totals cannot disagree about how anything was valued.
 
 Source: Card Ladder, reached through [Parse](https://parse.bot), via its
 `get_cert_values_bulk` endpoint. Sales carry ISO dates and prices and come from
