@@ -65,6 +65,9 @@ export default function App() {
   }, [watchlist, series])
 
   const stats = useMemo(() => computePortfolioStats(holdings, holdingAnalyses), [holdings, holdingAnalyses])
+  // Stored holdings keep whatever they were parsed as, so an importer fix only
+  // reaches a sheet that is uploaded again. Say so rather than showing zeros.
+  const costMissing = holdings.length > 0 && stats.costBasis === 0
   const trend = useMemo(() => buildValueTrend(holdings, series), [holdings, series])
   const trendRows = useMemo<TrendRow[]>(() => holdings.flatMap((h) => {
     const key = holdingKey(h)
@@ -201,6 +204,23 @@ export default function App() {
             <button type="button" className="btn px-2 py-1" onClick={store.dismissError} aria-label="Dismiss">
               <X className="size-3.5" aria-hidden />
             </button>
+          </div>
+        )}
+
+        {costMissing && (
+          <div
+            className="card p-3 mb-4 flex items-start gap-2 text-sm"
+            style={{ borderColor: 'var(--serious)' }}
+            role="status"
+          >
+            <AlertCircle className="size-4 mt-0.5 shrink-0" style={{ color: 'var(--serious)' }} aria-hidden />
+            <span className="flex-1 leading-relaxed">
+              <strong>Every position has a cost of 0</strong>, so returns are meaningless. Holdings are stored
+              exactly as they were read, so a sheet imported before a column was understood keeps its zeros —
+              re-upload it in <button type="button" className="underline" onClick={() => setTab('data')}>Data &amp; settings</button>{' '}
+              and the cost column will be picked up. If it still reads 0 afterwards, the import history there
+              names the columns that were ignored.
+            </span>
           </div>
         )}
 
