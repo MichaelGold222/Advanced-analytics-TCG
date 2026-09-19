@@ -90,11 +90,18 @@ console.log('  certs with sales :', stored.certSales)
 console.log('  certs with photos:', stored.certImages)
 console.log('  sample photo     :', JSON.stringify(stored.sampleImage))
 
-// And did any <img> actually render?
-const imgs = await page.evaluate(() => {
+// Storage holding a URL is not the same as a picture appearing. Holdings is
+// where they are drawn, so go and look, and wait for them to actually decode.
+await page.getByRole('button', { name: 'Holdings' }).click()
+await page.waitForTimeout(6000)
+const imgs = await page.evaluate(async () => {
   const list = [...document.querySelectorAll('img')]
-  return list.map((i) => ({ src: i.src.slice(0, 80), w: i.naturalWidth }))
+  await Promise.all(list.map((i) => (i.complete ? null : i.decode().catch(() => null))))
+  return list.map((i) => ({ src: i.src.slice(0, 70), w: i.naturalWidth, h: i.naturalHeight }))
 })
-console.log('  <img> on page    :', JSON.stringify(imgs.slice(0, 5)))
+console.log('\n--- pictures drawn on Holdings ---')
+console.log('  <img> count      :', imgs.length)
+console.log('  rendered         :', imgs.filter((i) => i.w > 0).length)
+for (const i of imgs.slice(0, 4)) console.log('   ', i.w + 'x' + i.h, i.src)
 
 await browser.close()
