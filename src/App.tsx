@@ -333,6 +333,13 @@ export default function App() {
                   .map((i) => i.cert),
               ).size
             }
+            photoCount={
+              new Set(
+                [...holdings, ...watchlist]
+                  .filter((i) => i.cert && store.certImages[i.cert])
+                  .map((i) => i.cert),
+              ).size
+            }
             usage={store.usage} onRefreshGraded={(o) => void store.refreshGraded(o)}
             onImport={store.importFile} onTemplate={handleTemplate} onExport={handleExport}
             onClear={() => void store.clearAll()}

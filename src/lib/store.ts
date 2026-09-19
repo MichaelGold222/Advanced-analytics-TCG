@@ -84,6 +84,8 @@ interface AppState extends PersistedState {
   removeHolding(id: string): void
   refreshPrices(provider?: PriceProvider): Promise<void>
   refreshGraded(opts?: { onlyMissing?: boolean }): Promise<void>
+  /** Fetch pictures for any of these certs that has none yet. */
+  refreshImages(certs: { cert_number: string; grading_company: 'PSA' | 'BGS' | 'CGC' | 'SGC' }[]): Promise<void>
   clearAll(): Promise<void>
   reportError(message: string): void
   dismissError(): void
@@ -142,6 +144,25 @@ export const useStore = create<AppState>((setState, getState) => ({
    * Runs in the browser: Parse serves CORS, and the key is the user's own,
    * held on their device. One call covers 200 slabs.
    */
+  async refreshImages(certs) {
+    const key = getParseKey()
+    if (!key || certs.length === 0) return
+    const known = getState().certImages
+    const missing = certs.filter((c) => !known[c.cert_number])
+    if (missing.length === 0) return
+
+    try {
+      const { images } = await fetchCertImages(missing, { key })
+      if (images.length === 0) return
+      const certImages = { ...getState().certImages }
+      for (const img of images) certImages[img.cert] = { image: img.image, thumbnail: img.thumbnail }
+      setState({ certImages })
+      scheduleSave(getState())
+    } catch {
+      /* a missing picture is cosmetic and must not disturb anything else */
+    }
+  },
+
   async refreshGraded(opts = {}) {
     const state = getState()
     if (state.gradedRefresh.running) return
@@ -186,25 +207,6 @@ export const useStore = create<AppState>((setState, getState) => ({
       const certSales = { ...getState().certSales }
       for (const p of prices) if (p.points.length > 0) certSales[p.cert] = p.points
 
-      // Pictures are fetched once per cert and kept. They do not go stale the
-      // way a price does, and the search that carries them is charged its own
-      // credit, so re-pulling one already held would be paying twice for the
-      // same photograph.
-      const known = getState().certImages
-      const missing = list.filter((c) => !known[c.cert_number])
-      if (missing.length > 0) {
-        try {
-          const { images } = await fetchCertImages(missing, { key })
-          if (images.length > 0) {
-            const certImages = { ...getState().certImages }
-            for (const img of images) certImages[img.cert] = { image: img.image, thumbnail: img.thumbnail }
-            setState({ certImages })
-          }
-        } catch {
-          /* a missing picture is cosmetic; the prices already landed */
-        }
-      }
-
       const priced = prices.filter((p) => p.points.length > 0).length
       setState({
         certSales,
@@ -222,6 +224,13 @@ export const useStore = create<AppState>((setState, getState) => ({
         error: err instanceof ParseError ? err.message : `Graded price fetch failed: ${err instanceof Error ? err.message : String(err)}`,
       })
     }
+
+    // Pictures are a separate errand, run whether or not the prices came back:
+    // tying them to a successful price fetch meant one bad night at the
+    // upstream left a collection with no photographs at all. They are fetched
+    // once per cert and kept, since a photograph does not go stale the way a
+    // price does and the search that carries them costs its own credit.
+    await getState().refreshImages(list)
   },
 
   /**

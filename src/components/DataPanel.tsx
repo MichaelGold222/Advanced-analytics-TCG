@@ -19,6 +19,8 @@ interface Props {
   certCount: number
   /** Slabs with a cert but still no sold comps. */
   missingCerts: number
+  /** Slabs that have a photograph. */
+  photoCount: number
   usage: UsageInfo | null
   onRefreshGraded: (opts?: { onlyMissing?: boolean }) => void
   onImport: (file: File, kind: 'portfolio' | 'watchlist', mode?: ImportMode) => Promise<void>
@@ -28,7 +30,7 @@ interface Props {
 }
 
 export function DataPanel({
-  importLog, refresh, gradedRefresh, certLastFetched, certCount, missingCerts, usage,
+  importLog, refresh, gradedRefresh, certLastFetched, certCount, missingCerts, photoCount, usage,
   onImport, onTemplate, onExport, onClear, onRefreshGraded,
 }: Props) {
   const [key, setKey] = useState(getApiKey())
@@ -149,6 +151,15 @@ export function DataPanel({
             <p className="text-xs mt-2 leading-relaxed" style={{ color: 'var(--serious)' }}>
               No certificate numbers in your sheet yet. Add a <strong>Cert Number</strong> column — that is how a
               slab is matched to its own sales.
+            </p>
+          )}
+          {certCount > 0 && certLastFetched && (
+            <p className="text-xs muted mt-2 leading-relaxed">
+              {photoCount === 0
+                ? 'No photographs yet. They come with the next fetch, and are kept once they arrive.'
+                : `Photographs for ${photoCount} of ${certCount} slab${certCount === 1 ? '' : 's'}${
+                    photoCount < certCount ? ' — the rest have none on record' : ''
+                  }.`}
             </p>
           )}
           {usage && (usage.creditsRemaining != null || usage.creditsCharged != null) && (
