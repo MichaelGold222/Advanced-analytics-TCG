@@ -79,7 +79,12 @@ export function HoldingsTable({ holdings, analyses, onOverride, onSetValue, onRe
               <th className="num">Invested</th>
               <th className="num" title="Median of the last 5 completed comps across every venue. A steadier estimate than any one sale, shown for reference.">Median of 5</th>
               <th className="num" title="The most recent completed sale of this exact card at this grade">Last sold</th>
-              <th className="num" title="A value you type in. It outranks the fetched prices for this card.">Your value</th>
+              <th
+                className="num"
+                title="Type a price here to value this card at it instead of the fetched price. Leave blank to use the fetched one."
+              >
+                Override
+              </th>
               <th className="num" title="Lowest this card has traded in the last 6 months">6-mo low</th>
               <th className="num" title="Highest this card has traded in the last 6 months">6-mo high</th>
               <th className="num" title="Highest this card has traded in the last 12 months">Yearly high</th>
@@ -136,6 +141,8 @@ export function HoldingsTable({ holdings, analyses, onOverride, onSetValue, onRe
           Unrealized and return are measured against <strong>Last sold</strong> — what the card actually went
           for — so they compare a price paid with a price achieved. <strong>Median of 5</strong> sits beside it
           as the steadier estimate; where nothing has sold inside the year, it stands in.
+          Type a price under <strong>Override</strong> to value a card at that instead, for when you know its
+          last sale was not representative. Clear the box and the fetched price takes over again.
         </p>
       )}
     </section>
@@ -260,8 +267,8 @@ function ValueInput({ value, onChange }: { value: number | null; onChange: (v: n
     <input
       className="input tabular text-right w-24 px-2 py-1"
       inputMode="decimal"
-      placeholder="—"
-      aria-label="Your value for this card"
+      placeholder="auto"
+      aria-label="Override this card’s value"
       value={text}
       onFocus={() => setEditing(true)}
       onChange={(e) => setText(e.target.value)}

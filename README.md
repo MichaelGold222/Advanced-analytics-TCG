@@ -53,10 +53,10 @@ Two numbers, because they answer different questions:
   steadier estimate. It is shown for reference, and stands in where nothing has
   sold inside the year so a position is never left unvalued.
 
-**Your value** overrides both. Type a price into the Holdings row and that card
-is valued at it — whoever typed it knows something the sales record does not.
-Clear the field and the fetched price takes over again. A **Market Value**
-column in your sheet is read as the same thing.
+**Override** beats both. Type a price into the Holdings row and that card is
+valued at it, for when you know its last sale was not representative. Clear the
+box and the fetched price takes over again. A **Market Value** column in your
+sheet is read as the same thing.
 
 All three run through one function, so the per-position figures and the
 portfolio totals cannot disagree about how anything was valued.
