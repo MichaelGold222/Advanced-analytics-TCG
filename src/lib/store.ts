@@ -212,7 +212,10 @@ export const useStore = create<AppState>((setState, getState) => ({
         certSales,
         certLastFetched: new Date().toISOString(),
         usage,
-        gradedRefresh: { running: false, done: list.length, total: list.length, unmatched, failed, startedAt: null },
+        // Still running: the pictures are part of this errand, and reporting
+        // it finished while a call is in flight is how a fetch looks like it
+        // did nothing.
+        gradedRefresh: { ...getState().gradedRefresh, done: list.length, total: list.length, unmatched, failed },
         error: priced === 0
           ? `Looked up ${list.length} certificate${list.length === 1 ? '' : 's'} and none came back with sales. Check the numbers against the slab labels.`
           : partialError,
@@ -220,17 +223,21 @@ export const useStore = create<AppState>((setState, getState) => ({
       scheduleSave(getState())
     } catch (err) {
       setState({
-        gradedRefresh: { ...getState().gradedRefresh, running: false, startedAt: null },
         error: err instanceof ParseError ? err.message : `Graded price fetch failed: ${err instanceof Error ? err.message : String(err)}`,
       })
     }
 
-    // Pictures are a separate errand, run whether or not the prices came back:
-    // tying them to a successful price fetch meant one bad night at the
-    // upstream left a collection with no photographs at all. They are fetched
-    // once per cert and kept, since a photograph does not go stale the way a
-    // price does and the search that carries them costs its own credit.
-    await getState().refreshImages(list)
+    // Pictures run whether or not the prices came back: tying them to a
+    // successful price fetch meant one bad night at the upstream left a
+    // collection with no photographs at all. They are fetched once per cert
+    // and kept, since a photograph does not go stale the way a price does and
+    // the search that carries them costs its own credit.
+    try {
+      await getState().refreshImages(list)
+    } finally {
+      setState({ gradedRefresh: { ...getState().gradedRefresh, running: false, startedAt: null } })
+      scheduleSave(getState())
+    }
   },
 
   /**

@@ -49,12 +49,15 @@ await page.waitForTimeout(1500)
 await page.getByRole('button', { name: 'Data & settings' }).click()
 console.log(`\n--- pressing fetch for ${CERTS.length} cert(s) ---`)
 await page.getByRole('button', { name: /Fetch sold comps/ }).click()
-// The endpoint scrapes; give it room, and keep going once it settles.
-for (let i = 0; i < 24; i++) {
+// The endpoint scrapes; give it room. The button stays in its fetching state
+// until the pictures are in too, so this waits for the whole errand — reading
+// the page the moment prices land measured a call still in flight.
+for (let i = 0; i < 36; i++) {
   await page.waitForTimeout(5000)
   const running = await page.getByRole('button', { name: /Fetching/ }).count()
   if (running === 0 && i > 1) break
 }
+await page.waitForTimeout(3000)
 
 const banner = await page.locator('[role=alert], .error, [class*=error]').allTextContents()
 console.log('\n--- what the page shows ---')
