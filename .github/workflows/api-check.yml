@@ -52,7 +52,7 @@ jobs:
             | grep -iE 'id|slug|endpoint|status|url' | head -40
 
           # The scraper id is its own field; the task id is not interchangeable.
-          jq -r '.scraper_id // .scraper.id // .api_id // empty' /tmp/task.json 2>/dev/null | head -1 > /tmp/sid
+          jq -r '.result_scraper_id // .scraper_id // empty' /tmp/task.json 2>/dev/null | head -1 > /tmp/sid
           echo "scraper id: $(cat /tmp/sid 2>/dev/null || echo 'not found')"
 
           echo
@@ -102,8 +102,11 @@ jobs:
           curl -sSL -m 45 -H "X-API-Key: $KEY" \
             --get --data-urlencode "card_id=$CID" \
             "$BASE/scraper/$SID/get_card_sales" -o /tmp/sales.json -w 'HTTP %{http_code}\n'
-          jq '.' /tmp/sales.json 2>/dev/null | head -70 || head -c 1500 /tmp/sales.json
+          jq '.' /tmp/sales.json 2>/dev/null | head -80 || head -c 2000 /tmp/sales.json
           echo
-          echo "=== field names that look like a sale record ==="
-          jq -r '[.. | objects | keys[]] | unique | .[]' /tmp/sales.json 2>/dev/null \
-            | grep -iE 'date|price|sold|grade|amount|auction|source' | head -20 || echo "  none"
+          echo "=== every field name in the payload ==="
+          jq -r '[.. | objects | keys[]] | unique | join(", ")' /tmp/sales.json 2>/dev/null || echo "  none"
+          echo
+          echo "=== how many sale records, and the first one in full ==="
+          jq -r '[.. | arrays | select(length > 0)] | map(length) | max // 0' /tmp/sales.json 2>/dev/null
+          jq -r '[.. | arrays | select(length > 0)][0][0] // empty' /tmp/sales.json 2>/dev/null
