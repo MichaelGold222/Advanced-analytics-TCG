@@ -75,6 +75,16 @@ function retryAfterMs(res: Response): number {
   return 15_000
 }
 
+/** When the daily allowance comes back, in words, or '' if the server did not say. */
+function resetsIn(res: Response): string {
+  const raw = res.headers.get('X-RateLimit-Daily-Reset')
+  const secs = raw == null ? NaN : Number(raw)
+  if (!Number.isFinite(secs) || secs <= 0) return ''
+  const hours = Math.round(secs / 3600)
+  if (hours >= 1) return `, and resets in about ${hours} hour${hours === 1 ? '' : 's'}`
+  return `, and resets in about ${Math.max(1, Math.round(secs / 60))} minutes`
+}
+
 /** A spent burst rather than a spent balance: worth waiting for. */
 export class RateLimited extends Error {
   readonly retryAfterMs: number
@@ -132,14 +142,27 @@ async function call(path: string, key: string, init: RequestInit = {}): Promise<
     throw new ParseError(res.status, 'That API key was refused. Check it at parse.bot/settings.')
   }
   if (res.status === 429) {
-    // Two different situations share this status. An empty balance will not
-    // fix itself; a spent burst refills in under a minute.
-    // Number(null) is 0, so an absent header would otherwise read as an empty
-    // balance and stop a run that only needed to wait a few seconds.
-    const header = res.headers.get('X-Credits-Remaining')
-    const remaining = header == null || header.trim() === '' ? NaN : Number(header)
-    if (Number.isFinite(remaining) && remaining <= 0) {
+    // Three different situations share this status, and they need opposite
+    // responses: a spent burst refills in under a minute and is worth waiting
+    // for, while an exhausted day or an empty balance will not fix itself no
+    // matter how long anything waits.
+    // Number(null) is 0, so an absent header must not read as zero left.
+    const count = (h: string) => {
+      const v = res.headers.get(h)
+      return v == null || v.trim() === '' ? NaN : Number(v)
+    }
+    const credits = count('X-Credits-Remaining')
+    if (Number.isFinite(credits) && credits <= 0) {
       throw new ParseError(429, 'Out of credits. Check your plan at parse.bot.')
+    }
+    const daily = count('X-RateLimit-Daily-Remaining')
+    if (Number.isFinite(daily) && daily <= 0) {
+      const limit = count('X-RateLimit-Daily-Limit')
+      throw new ParseError(
+        429,
+        `Today's request allowance is used up${Number.isFinite(limit) ? ` (${limit} a day)` : ''}`
+          + `${resetsIn(res)}. What has already been fetched is kept.`,
+      )
     }
     throw new RateLimited(retryAfterMs(res))
   }

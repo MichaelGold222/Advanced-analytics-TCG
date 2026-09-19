@@ -86,26 +86,24 @@ the wait scales with the collection. Measured against the live endpoint:
 About two seconds of fixed cost per call, six tenths of a second per cert, and
 a flat three credits however many certs are in it.
 
-That shapes the client. Filling a call to its 200-cert ceiling is one request
-running roughly two minutes with nothing to report until it returns, which
-reads as a hang. One-cert calls are worse in the other direction: they
-multiply both the fixed cost and the per-call charge, and the account allows
-only 100 requests a day.
+That shapes the client, but not in the direction the numbers first suggest.
+The scarce thing is requests: the plan allows **100 a day** and charges three
+credits per price call, so a split that halves the wait triples both bills —
+and running out of either stops the collection being priced at all, which no
+amount of speed makes up for.
 
-So the collection is split into as many calls as run at once — eight, inside
-the account's burst of 30 — which makes the wait the length of one call rather
-than the length of the collection, with a floor so a small collection does not
-buy calls it has no use for:
+So a collection is split into three calls, run at once. The wait is the length
+of one call however large the collection, and the cost does not grow with it:
 
-| slabs | calls | wait | credits |
-|---|---|---|---|
-| 8 | 1 × 15 | ~7s | 3 |
-| 50 | 4 × 15 | ~11s | 12 |
-| 90 | 6 × 15 | ~11s | 18 |
-| 400 | 8 × 50 | ~32s | 24 |
+| slabs | calls | wait | credits | requests |
+|---|---|---|---|---|
+| 25 | 1 × 25 | ~17s | 3 | 1 |
+| 90 | 3 × 30 | ~20s | 9 | 3 |
+| 400 | 3 × 134 | ~82s | 9 | 3 |
 
-Past a point the cost stops growing: 400 slabs take the same eight calls as
-150, just longer ones.
+Filling a call to its 200-cert ceiling would be one request running minutes
+with nothing to report; splitting ninety slabs six ways would cost eighteen
+credits and six requests to save nine seconds.
 
 A spent burst is waited out and retried, not reported as failure — and a call
 that fails outright costs only its own slabs, not the whole run.

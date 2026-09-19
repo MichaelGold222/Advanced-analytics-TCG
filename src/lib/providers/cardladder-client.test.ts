@@ -359,3 +359,56 @@ describe('a call that hangs', () => {
     await expect(run).rejects.toThrow()
   })
 })
+
+describe('telling the three kinds of 429 apart', () => {
+  const one = [{ cert_number: '111', grading_company: 'PSA' as const }]
+
+  function stub(headers: Record<string, string>) {
+    const make = (status: number, payload: unknown, h: Record<string, string> = {}) =>
+      ({ ok: status >= 200 && status < 300, status, headers: { get: (k: string) => h[k] ?? null }, json: async () => payload }) as unknown as Response
+    vi.stubGlobal('fetch', async (url: string) => {
+      if (String(url).includes('/dispatch/tasks/')) return make(200, { result_scraper_id: 's' })
+      if (String(url).includes('/dispatch/tasks')) return make(200, { tasks: [{ id: 't', url: 'https://cardladder.com/' }] })
+      return make(429, {}, headers)
+    })
+  }
+
+  it('says the day is spent, and when it comes back', async () => {
+    stub({
+      'X-Credits-Remaining': '150',
+      'X-RateLimit-Daily-Remaining': '0',
+      'X-RateLimit-Daily-Limit': '100',
+      'X-RateLimit-Daily-Reset': '21600',
+    })
+    await expect(fetchCertPrices(one, { key: 'k' })).rejects.toThrow(/allowance is used up \(100 a day\).*6 hours/i)
+  })
+
+  it('keeps an empty balance separate from a spent day', async () => {
+    stub({ 'X-Credits-Remaining': '0', 'X-RateLimit-Daily-Remaining': '50' })
+    await expect(fetchCertPrices(one, { key: 'k' })).rejects.toThrow(/out of credits/i)
+  })
+
+  it('treats anything else as a burst worth waiting out', async () => {
+    vi.useFakeTimers()
+    try {
+      stub({ 'X-Credits-Remaining': '150', 'X-RateLimit-Daily-Remaining': '50', 'Retry-After': '1' })
+      const run = fetchCertPrices(one, { key: 'k' }).catch((e: Error) => e)
+      await vi.advanceTimersByTimeAsync(20_000)
+      expect((await run as Error).message).toMatch(/rate limited/i)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('does not claim the day is spent when the server said nothing about it', async () => {
+    vi.useFakeTimers()
+    try {
+      stub({ 'Retry-After': '1' })
+      const run = fetchCertPrices(one, { key: 'k' }).catch((e: Error) => e)
+      await vi.advanceTimersByTimeAsync(20_000)
+      expect((await run as Error).message).not.toMatch(/allowance/i)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+})

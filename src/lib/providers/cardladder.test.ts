@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   CALL_OVERHEAD_MS, CREDITS_PER_CALL, FETCH_CONCURRENCY, MAX_CERTS_PER_CALL, MIN_BATCH_SIZE, MS_PER_CERT,
+  TARGET_CALLS,
   batchCerts, buildFeed, estimateFetch, isSupportedGrader, parseBulkResponse, planBatchSize,
   parseCertImages, salesToPricePoints, venueOf,
 } from './cardladder'
@@ -108,9 +109,10 @@ describe('the valuation those sales feed', () => {
 describe('batching', () => {
   const certs = Array.from({ length: 450 }, (_, i) => ({ cert_number: String(i), grading_company: 'PSA' as const }))
 
-  it('splits into as many calls as run at once, so it is one wave', () => {
-    const batches = batchCerts(certs)
-    expect(batches).toHaveLength(FETCH_CONCURRENCY)
+  it('keeps a collection to a few calls, because requests are what run out', () => {
+    // The plan allows 100 requests a day and charges 3 credits a price call,
+    // so splitting finely spends both to save seconds.
+    expect(batchCerts(certs)).toHaveLength(TARGET_CALLS)
   })
 
   it('never exceeds the endpoint ceiling, whatever size is asked for', () => {
@@ -125,10 +127,8 @@ describe('batching', () => {
     expect(batchCerts(certs).flat()).toHaveLength(450)
   })
 
-  it('an 85-card collection is one wave of short calls, not one long call', () => {
-    const batches = batchCerts(certs.slice(0, 85))
-    expect(batches.length).toBeLessThanOrEqual(FETCH_CONCURRENCY)
-    expect(Math.max(...batches.map((b) => b.length))).toBeLessThanOrEqual(15)
+  it('an 85-card collection costs three requests, not six', () => {
+    expect(batchCerts(certs.slice(0, 85))).toHaveLength(TARGET_CALLS)
   })
 
   it('handles an empty list', () => {
@@ -214,8 +214,19 @@ describe('planning the calls', () => {
     }
   })
 
-  it('prices 90 slabs in well under a minute', () => {
-    expect(estimateFetch(90).ms).toBeLessThan(20_000)
+  it('prices 90 slabs in well under a minute, for three requests', () => {
+    const { ms, calls, credits } = estimateFetch(90)
+    expect(ms).toBeLessThanOrEqual(25_000)
+    expect(calls).toBe(3)
+    expect(credits).toBe(9)
+  })
+
+  it('does not grow its request count as the collection grows', () => {
+    // A day's allowance is spent per request, so 400 slabs must not cost more
+    // requests than 90 — only longer ones.
+    for (const n of [90, 150, 400, 600]) {
+      expect(estimateFetch(n).calls).toBeLessThanOrEqual(TARGET_CALLS)
+    }
   })
 
   it('handles an empty collection without dividing by zero', () => {

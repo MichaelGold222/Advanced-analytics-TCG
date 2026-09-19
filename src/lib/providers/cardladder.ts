@@ -37,10 +37,11 @@ export const FETCH_CONCURRENCY = 8
 /**
  * Smallest call worth making.
  *
- * Every call costs the same three credits and about two seconds of fixed
- * overhead, so splitting a small collection finely spends both on nothing.
+ * Every call costs the same three credits, one of the day's hundred requests,
+ * and about two seconds of fixed overhead, so splitting a small collection
+ * finely spends all three on nothing.
  */
-export const MIN_BATCH_SIZE = 15
+export const MIN_BATCH_SIZE = 25
 
 /** Credits one call costs, whatever its size. Observed live. */
 export const CREDITS_PER_CALL = 3
@@ -191,21 +192,30 @@ export function buildFeed(entries: CertPrices[], errors: PriceFeed['errors'] = [
 
 
 /**
+ * How many calls a whole collection should take.
+ *
+ * The scarce thing is requests, not time. The plan allows 100 requests a day
+ * and charges three credits per price call, so a split that halves the wait
+ * triples both bills — and running out of either stops the collection being
+ * priced at all, which no amount of speed makes up for.
+ *
+ * Three calls prices ninety slabs in about twenty seconds for nine credits and
+ * three requests. Splitting the same ninety into six would cost eighteen
+ * credits and six requests to save nine seconds.
+ */
+export const TARGET_CALLS = 3
+
+/**
  * How to split a collection into calls.
  *
- * Calls run concurrently, so the wall clock is the size of one call, not the
- * size of the collection — provided they all fit in a single wave. Splitting
- * into exactly as many calls as run at once therefore prices any collection in
- * one call's worth of time, and for a fixed number of calls the credit cost is
- * fixed too, whether the collection is 90 slabs or 400.
- *
- * The floor stops a small collection from buying eight calls it does not need,
- * and the ceiling is the endpoint's own limit, past which a second wave is
- * unavoidable.
+ * Aims for TARGET_CALLS, which all run at once, so the wait is the length of
+ * one call however large the collection. The floor stops a small collection
+ * from buying calls it has no use for, and the ceiling is the endpoint's own
+ * limit.
  */
-export function planBatchSize(certCount: number, concurrency = FETCH_CONCURRENCY): number {
+export function planBatchSize(certCount: number, targetCalls = TARGET_CALLS): number {
   if (certCount <= 0) return MIN_BATCH_SIZE
-  const even = Math.ceil(certCount / Math.max(1, concurrency))
+  const even = Math.ceil(certCount / Math.max(1, targetCalls))
   return Math.max(MIN_BATCH_SIZE, Math.min(even, MAX_CERTS_PER_CALL))
 }
 
