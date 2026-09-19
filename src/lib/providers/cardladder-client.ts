@@ -10,7 +10,9 @@
  * returns up to ten completed sales each, which is what the median-of-five
  * valuation needs.
  */
-import { batchCerts, parseBulkResponse, type CertPrices, type CertRequest } from './cardladder'
+import {
+  FETCH_CONCURRENCY, batchCerts, parseBulkResponse, type CertPrices, type CertRequest,
+} from './cardladder'
 
 const BASE = 'https://api.parse.bot'
 const KEY_STORAGE = 'aa-tcg.parseKey'
@@ -58,6 +60,30 @@ function readUsage(res: Response): UsageInfo {
   }
 }
 
+/** How long to wait before retrying, from whichever header the server sent. */
+function retryAfterMs(res: Response): number {
+  const after = Number(res.headers.get('Retry-After'))
+  if (Number.isFinite(after) && after > 0) return Math.min(after * 1000, 60_000)
+  const reset = Number(res.headers.get('X-RateLimit-Reset'))
+  if (Number.isFinite(reset) && reset > 0) {
+    // Sent as a unix timestamp; treat anything small as a plain duration.
+    const ms = reset > 1e9 ? reset * 1000 - Date.now() : reset * 1000
+    if (ms > 0) return Math.min(ms, 60_000)
+  }
+  // The burst refills at 5/min, so a quarter minute frees several slots.
+  return 15_000
+}
+
+/** A spent burst rather than a spent balance: worth waiting for. */
+export class RateLimited extends Error {
+  readonly retryAfterMs: number
+  constructor(retryAfterMs: number) {
+    super('Rate limited; waiting for the burst to refill.')
+    this.retryAfterMs = retryAfterMs
+    this.name = 'RateLimited'
+  }
+}
+
 export class ParseError extends Error {
   readonly status: number
   constructor(status: number, message: string) {
@@ -82,7 +108,16 @@ async function call(path: string, key: string, init: RequestInit = {}): Promise<
     throw new ParseError(res.status, 'That API key was refused. Check it at parse.bot/settings.')
   }
   if (res.status === 429) {
-    throw new ParseError(429, 'Out of credits or rate limited for now. Check your plan at parse.bot.')
+    // Two different situations share this status. An empty balance will not
+    // fix itself; a spent burst refills in under a minute.
+    // Number(null) is 0, so an absent header would otherwise read as an empty
+    // balance and stop a run that only needed to wait a few seconds.
+    const header = res.headers.get('X-Credits-Remaining')
+    const remaining = header == null || header.trim() === '' ? NaN : Number(header)
+    if (Number.isFinite(remaining) && remaining <= 0) {
+      throw new ParseError(429, 'Out of credits. Check your plan at parse.bot.')
+    }
+    throw new RateLimited(retryAfterMs(res))
   }
   if (!res.ok) {
     throw new ParseError(res.status, `The Card Ladder API returned ${res.status}.`)
@@ -129,14 +164,26 @@ export interface CertFetchResult {
   prices: CertPrices[]
   unmatched: string[]
   usage: UsageInfo | null
+  /** Set when some batches failed but others returned; the fetch is partial. */
+  partialError: string | null
 }
 
-/** Price graded slabs by certificate number, 200 per call. */
+/**
+ * Price graded slabs by certificate number.
+ *
+ * The endpoint scrapes each slab when asked, so this is inherently slow: the
+ * work is split into small batches run a few at a time, and progress is
+ * reported as each lands rather than only at the end.
+ *
+ * A batch that fails does not lose the rest. A refused key or an exhausted
+ * credit balance does stop the run, since every remaining call would fail the
+ * same way and each one still costs time.
+ */
 export async function fetchCertPrices(
   certs: CertRequest[],
   opts: { key: string; signal?: AbortSignal; onProgress?: (done: number, total: number) => void },
 ): Promise<CertFetchResult> {
-  if (certs.length === 0) return { prices: [], unmatched: [], usage: null }
+  if (certs.length === 0) return { prices: [], unmatched: [], usage: null, partialError: null }
 
   const scraperId = await resolveScraperId(opts.key, opts.signal)
   const batches = batchCerts(certs)
@@ -144,8 +191,11 @@ export async function fetchCertPrices(
   const unmatched: string[] = []
   let usage: UsageInfo | null = null
   let done = 0
+  const failures: ParseError[] = []
+  let fatal = false
 
-  for (const batch of batches) {
+  let next = 0
+  const runOne = async (batch: CertRequest[]) => {
     const res = await call(`/scraper/${scraperId}/get_cert_values_bulk`, opts.key, {
       method: 'POST',
       body: JSON.stringify({ certs: batch }),
@@ -158,10 +208,61 @@ export async function fetchCertPrices(
     // An unresolvable cert is simply absent from the results.
     const returned = new Set(got.map((g) => g.cert))
     for (const c of batch) if (!returned.has(c.cert_number)) unmatched.push(c.cert_number)
-
-    done += batch.length
-    opts.onProgress?.(done, certs.length)
   }
 
-  return { prices, unmatched, usage }
+  const sleep = (ms: number) =>
+    new Promise<void>((resolve, reject) => {
+      const id = setTimeout(resolve, ms)
+      opts.signal?.addEventListener('abort', () => {
+        clearTimeout(id)
+        reject(new DOMException('Aborted', 'AbortError'))
+      }, { once: true })
+    })
+
+  const worker = async () => {
+    while (!fatal) {
+      const i = next++
+      if (i >= batches.length) return
+      const batch = batches[i]
+      try {
+        // A spent burst refills in well under a minute, so wait it out rather
+        // than dropping the slabs in this batch on the floor.
+        for (let attempt = 0; ; attempt++) {
+          try {
+            await runOne(batch)
+            break
+          } catch (err) {
+            if (!(err instanceof RateLimited) || attempt >= 3) throw err
+            await sleep(err.retryAfterMs)
+          }
+        }
+      } catch (err) {
+        if ((err as Error)?.name === 'AbortError') throw err
+        const pe = err instanceof ParseError
+          ? err
+          : new ParseError(err instanceof RateLimited ? 429 : 0, (err as Error)?.message ?? String(err))
+        failures.push(pe)
+        // A bad key or an empty balance will not fix itself on the next call.
+        if (pe.status === 401 || pe.status === 403 || pe.status === 429) fatal = true
+        else for (const c of batch) unmatched.push(c.cert_number)
+      }
+      done += batch.length
+      opts.onProgress?.(Math.min(done, certs.length), certs.length)
+    }
+  }
+
+  await Promise.all(Array.from({ length: Math.min(FETCH_CONCURRENCY, batches.length) }, worker))
+
+  // Nothing came back at all: the failure is the result, not a footnote.
+  const failure = failures[0]
+  if (failure && prices.length === 0) throw failure
+
+  return {
+    prices,
+    unmatched,
+    usage,
+    partialError: failure
+      ? `${failure.message} Priced ${prices.length} of ${certs.length} before stopping.`
+      : null,
+  }
 }

@@ -41,11 +41,34 @@ Graded slabs are priced from **completed sales of that exact card at that exact
 grade** — the median of the last five, which is what a slab is actually worth
 today. Nothing to upload but your own collection sheet.
 
-Source: Card Ladder, reached through [Parse](https://parse.bot). The
-`get_cert_values_bulk` endpoint takes up to **200 certificate numbers in one
-call** and returns recent sales for each, so one call covers most collections.
-Sales carry ISO dates and prices and come from eBay, Fanatics and the auction
-houses Card Ladder tracks.
+Source: Card Ladder, reached through [Parse](https://parse.bot), via its
+`get_cert_values_bulk` endpoint. Sales carry ISO dates and prices and come from
+eBay, Fanatics and the auction houses Card Ladder tracks.
+
+### How long it takes, and why
+
+Card Ladder prices a slab when asked rather than reading a stored number, so
+the wait scales with the collection. Measured against the live endpoint:
+
+| certs in one call | time | credits charged |
+|---|---|---|
+| 1 | 2.5s | 3 |
+| 4 | 4.5s | 3 |
+| 12 | 9.0s | 3 |
+
+About two seconds of fixed cost per call, six tenths of a second per cert, and
+a flat three credits however many certs are in it.
+
+That shapes the client. Filling a call to its 200-cert ceiling is one request
+running roughly two minutes with nothing to report until it returns, which
+reads as a hang — so calls carry 25 certs and eight run at once, inside the
+account's burst of 30. An 85-slab collection is then about fifteen seconds
+rather than two minutes, and the progress bar moves four times on the way.
+One-cert calls would be worse than either: they multiply both the fixed cost
+and the per-call charge.
+
+A spent burst is waited out and retried, not reported as failure — and a call
+that fails outright costs only its own slabs, not the whole run.
 
 ### Setting it up
 

@@ -52,7 +52,7 @@ function stubParse(opts: { bulkStatus?: number; missing?: string[]; headers?: Re
       return make(200, { tasks: [{ id: 'task-xyz', url: 'https://cardladder.com/', status: 'completed' }] })
     }
     if (String(url).includes('get_cert_values_bulk')) {
-      if (opts.bulkStatus && opts.bulkStatus !== 200) return make(opts.bulkStatus, {})
+      if (opts.bulkStatus && opts.bulkStatus !== 200) return make(opts.bulkStatus, {}, opts.headers ?? {})
       const asked = (body as { certs: { cert_number: string }[] }).certs
       const kept = asked.filter((c) => !opts.missing?.includes(c.cert_number))
       return make(200, bulkBody(kept), opts.headers ?? {})
@@ -106,11 +106,26 @@ describe('fetchCertPrices', () => {
     expect((bulk[0].body as { certs: unknown[] }).certs).toHaveLength(2)
   })
 
-  it('splits past the 200-cert limit', async () => {
+  it('splits a large collection into calls that report progress along the way', async () => {
     const calls = stubParse()
     const many = Array.from({ length: 250 }, (_, i) => ({ cert_number: String(i), grading_company: 'PSA' as const }))
-    await fetchCertPrices(many, { key: 'k' })
-    expect(calls.filter((c) => c.url.includes('get_cert_values_bulk'))).toHaveLength(2)
+    const seen: number[] = []
+    await fetchCertPrices(many, { key: 'k', onProgress: (done) => seen.push(done) })
+    expect(calls.filter((c) => c.url.includes('get_cert_values_bulk'))).toHaveLength(10)
+    // The whole point: the counter moves before the end, not only at it.
+    expect(seen).toHaveLength(10)
+    expect(seen.at(-1)).toBe(250)
+  })
+
+  it('prices every cert exactly once across those calls', async () => {
+    const calls = stubParse()
+    const many = Array.from({ length: 250 }, (_, i) => ({ cert_number: String(i), grading_company: 'PSA' as const }))
+    const { prices } = await fetchCertPrices(many, { key: 'k' })
+    const sent = calls
+      .filter((c) => c.url.includes('get_cert_values_bulk'))
+      .flatMap((c) => (c.body as { certs: { cert_number: string }[] }).certs.map((x) => x.cert_number))
+    expect(new Set(sent).size).toBe(250)
+    expect(prices).toHaveLength(250)
   })
 
   it('reports certs the upstream simply omitted', async () => {
@@ -135,7 +150,8 @@ describe('fetchCertPrices', () => {
 
   it('does nothing, and charges nothing, for an empty list', async () => {
     const calls = stubParse()
-    expect(await fetchCertPrices([], { key: 'k' })).toEqual({ prices: [], unmatched: [], usage: null })
+    expect(await fetchCertPrices([], { key: 'k' }))
+      .toEqual({ prices: [], unmatched: [], usage: null, partialError: null })
     expect(calls).toHaveLength(0)
   })
 
@@ -145,8 +161,44 @@ describe('fetchCertPrices', () => {
   })
 
   it('says plainly when credits run out', async () => {
-    stubParse({ bulkStatus: 429 })
-    await expect(fetchCertPrices(certs, { key: 'k' })).rejects.toThrow(/credits or rate limited/i)
+    stubParse({ bulkStatus: 429, headers: { 'X-Credits-Remaining': '0' } })
+    await expect(fetchCertPrices(certs, { key: 'k' })).rejects.toThrow(/out of credits/i)
+  })
+
+  it('waits out a spent burst instead of calling it an empty balance', async () => {
+    // A 429 with no credit header is a rate limit. Number(null) is 0, so this
+    // is exactly the case that would otherwise be misread as no credits left.
+    vi.useFakeTimers()
+    try {
+      const calls = stubParse({ bulkStatus: 429, headers: { 'Retry-After': '1' } })
+      const run = fetchCertPrices(certs, { key: 'k' }).catch((e: Error) => e)
+      await vi.advanceTimersByTimeAsync(10_000)
+      const err = await run
+      expect((err as Error).message).toMatch(/rate limited/i)
+      // It retried rather than giving up on the first refusal.
+      expect(calls.filter((c) => c.url.includes('get_cert_values_bulk')).length).toBeGreaterThan(1)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('keeps the slabs it did price when one call fails', async () => {
+    let n = 0
+    vi.stubGlobal('fetch', async (url: string, init?: RequestInit) => {
+      const body = init?.body ? JSON.parse(String(init.body)) : undefined
+      const make = (status: number, payload: unknown) =>
+        ({ ok: status >= 200 && status < 300, status, headers: { get: () => null }, json: async () => payload }) as unknown as Response
+      if (String(url).includes('/dispatch/tasks/')) return make(200, { result_scraper_id: 's' })
+      if (String(url).includes('/dispatch/tasks')) return make(200, { tasks: [{ id: 't', url: 'https://cardladder.com/' }] })
+      // The second batch fails; the first and third must survive it.
+      if (++n === 2) return make(500, {})
+      return make(200, bulkBody((body as { certs: { cert_number: string }[] }).certs))
+    })
+    const many = Array.from({ length: 75 }, (_, i) => ({ cert_number: String(i), grading_company: 'PSA' as const }))
+    const { prices, unmatched, partialError } = await fetchCertPrices(many, { key: 'k' })
+    expect(prices).toHaveLength(50)
+    expect(unmatched).toHaveLength(25)
+    expect(partialError).toMatch(/Priced 50 of 75/)
   })
 
   it('distinguishes an unreachable API from a refusal', async () => {

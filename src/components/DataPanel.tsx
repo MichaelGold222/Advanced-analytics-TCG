@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Download, FileSpreadsheet, KeyRound, Layers, Plug, Trash2 } from 'lucide-react'
 import { UploadZone } from './UploadZone'
 import {
@@ -7,13 +7,14 @@ import {
 } from '../lib/pricing'
 import { relativeTime } from '../lib/format'
 import { getParseKey, setParseKey } from '../lib/providers/cardladder-client'
+import { estimateFetch } from '../lib/providers/cardladder'
 import type { UsageInfo } from '../lib/providers/cardladder-client'
 import type { ImportLogEntry, RefreshState } from '../lib/store'
 
 interface Props {
   importLog: ImportLogEntry[]
   refresh: RefreshState
-  gradedRefresh: { running: boolean; done: number; total: number; unmatched: string[] }
+  gradedRefresh: { running: boolean; done: number; total: number; unmatched: string[]; startedAt: number | null }
   certLastFetched: string | null
   certCount: number
   usage: UsageInfo | null
@@ -102,6 +103,26 @@ export function DataPanel({
               {certLastFetched ? `updated ${relativeTime(certLastFetched)}` : 'not fetched yet'}
             </span>
           </div>
+
+          {gradedRefresh.running && <GradedProgress gradedRefresh={gradedRefresh} />}
+
+          {!gradedRefresh.running && certCount > 0 && (() => {
+            const { ms, credits } = estimateFetch(certCount)
+            const short = usage?.creditsRemaining != null && credits > usage.creditsRemaining
+            return (
+              <p className="text-xs muted mt-2 leading-relaxed">
+                Card Ladder prices each slab when asked rather than reading a stored number, so expect
+                about <span className="tabular">{formatDuration(ms)}</span> for {certCount} and about{' '}
+                <span className="tabular">{credits}</span> credits.
+                {short && (
+                  <span style={{ color: 'var(--serious)' }}>
+                    {' '}That is more than the {usage.creditsRemaining?.toLocaleString()} you have left, so it
+                    will stop partway.
+                  </span>
+                )}
+              </p>
+            )
+          })()}
 
           {certCount === 0 && (
             <p className="text-xs mt-2 leading-relaxed" style={{ color: 'var(--serious)' }}>
@@ -275,6 +296,65 @@ export function DataPanel({
           </ul>
         )}
       </section>
+    </div>
+  )
+}
+
+/** "2m 30s" — an estimate is useless if it needs arithmetic to read. */
+function formatDuration(ms: number): string {
+  const total = Math.max(1, Math.round(ms / 1000))
+  if (total < 60) return `${total}s`
+  const m = Math.floor(total / 60)
+  const sec = total % 60
+  return sec === 0 ? `${m}m` : `${m}m ${sec}s`
+}
+
+/**
+ * Progress for a fetch that genuinely takes minutes.
+ *
+ * A bare spinner on a two-minute wait is indistinguishable from a hang, so
+ * this shows how far along it is and how long is left, re-estimated from the
+ * rate actually achieved rather than an assumed one.
+ */
+function GradedProgress({
+  gradedRefresh,
+}: {
+  gradedRefresh: { done: number; total: number; startedAt: number | null }
+}) {
+  const [now, setNow] = useState(() => Date.now())
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), 500)
+    return () => clearInterval(id)
+  }, [])
+
+  const { done, total, startedAt } = gradedRefresh
+  const elapsed = startedAt ? now - startedAt : 0
+  const pct = total > 0 ? Math.round((done / total) * 100) : 0
+  // Before anything lands there is no measured rate; fall back to the modelled one.
+  const perCert = done > 0 ? elapsed / done : estimateFetch(total).ms / Math.max(1, total)
+  const remaining = Math.max(0, total - done) * perCert
+
+  return (
+    <div className="mt-2">
+      <div
+        className="h-1.5 rounded-full overflow-hidden"
+        style={{ background: 'var(--border)' }}
+        role="progressbar"
+        aria-valuenow={pct}
+        aria-valuemin={0}
+        aria-valuemax={100}
+        aria-label="Fetching sold comps"
+      >
+        <div
+          className="h-full transition-all duration-500"
+          style={{ width: `${Math.max(pct, 2)}%`, background: 'var(--accent)' }}
+        />
+      </div>
+      <p className="text-xs muted mt-1 tabular">
+        {formatDuration(elapsed)} elapsed
+        {done > 0 && remaining > 0 && ` · about ${formatDuration(remaining)} left`}
+        {done === 0 && ' · waiting on the first batch'}
+      </p>
     </div>
   )
 }

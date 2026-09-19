@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
-  MAX_CERTS_PER_CALL, batchCerts, buildFeed, isSupportedGrader, parseBulkResponse, salesToPricePoints,
+  CALL_OVERHEAD_MS, CREDITS_PER_CALL, FETCH_BATCH_SIZE, MAX_CERTS_PER_CALL, MS_PER_CERT,
+  batchCerts, buildFeed, estimateFetch, isSupportedGrader, parseBulkResponse, salesToPricePoints,
 } from './cardladder'
 import { computeFmv } from '../analytics'
 
@@ -106,18 +107,26 @@ describe('the valuation those sales feed', () => {
 describe('batching', () => {
   const certs = Array.from({ length: 450 }, (_, i) => ({ cert_number: String(i), grading_company: 'PSA' as const }))
 
-  it('splits at the documented limit of 200 per call', () => {
+  it('splits into calls that finish quickly enough to show progress', () => {
     const batches = batchCerts(certs)
-    expect(batches.map((b) => b.length)).toEqual([200, 200, 50])
-    expect(MAX_CERTS_PER_CALL).toBe(200)
+    expect(batches.map((b) => b.length)).toEqual(Array(18).fill(25))
+    expect(FETCH_BATCH_SIZE).toBe(25)
+  })
+
+  it('never exceeds the endpoint ceiling, whatever size is asked for', () => {
+    expect(batchCerts(certs, 1000)[0]).toHaveLength(MAX_CERTS_PER_CALL)
+  })
+
+  it('treats a nonsense batch size as one per call rather than looping forever', () => {
+    expect(batchCerts(certs.slice(0, 3), 0).map((b) => b.length)).toEqual([1, 1, 1])
   })
 
   it('keeps every cert exactly once', () => {
     expect(batchCerts(certs).flat()).toHaveLength(450)
   })
 
-  it('a whole 85-card collection fits in one call', () => {
-    expect(batchCerts(certs.slice(0, 85))).toHaveLength(1)
+  it('an 85-card collection takes four calls, not one long one', () => {
+    expect(batchCerts(certs.slice(0, 85))).toHaveLength(4)
   })
 
   it('handles an empty list', () => {
@@ -143,5 +152,37 @@ describe('buildFeed', () => {
     expect(feed.byCert['93083876'].clValue).toBe(21911.69)
     expect(feed.errors).toEqual([{ cert: '111', message: 'not found' }])
     expect(Date.parse(feed.fetchedAt)).not.toBeNaN()
+  })
+})
+
+describe('estimating the wait', () => {
+  it('is measured against the live endpoint, not guessed', () => {
+    // Observed: 1 cert 2.5s, 4 certs 4.5s, 12 certs 9.0s in a single call.
+    const oneCall = (n: number) => CALL_OVERHEAD_MS + n * MS_PER_CERT
+    expect(oneCall(1)).toBeCloseTo(2600, -3)
+    expect(oneCall(4)).toBeCloseTo(4400, -3)
+    expect(oneCall(12)).toBeCloseTo(9200, -3)
+  })
+
+  it('counts waves rather than calls, since calls overlap', () => {
+    // Six calls three at a time is two waves, not six.
+    const { ms, calls } = estimateFetch(25 * 6, 25, 3)
+    expect(calls).toBe(6)
+    expect(ms).toBe(2 * (CALL_OVERHEAD_MS + 25 * MS_PER_CERT))
+  })
+
+  it('an 85-slab collection is a wait of seconds, not minutes', () => {
+    // What the old single 200-cert call made of it: over two minutes.
+    expect(estimateFetch(85).ms).toBeLessThan(30_000)
+  })
+
+  it('charges per call, so more certs in a call is cheaper', () => {
+    expect(estimateFetch(25).credits).toBe(CREDITS_PER_CALL)
+    expect(estimateFetch(50).credits).toBe(2 * CREDITS_PER_CALL)
+    expect(estimateFetch(50, 50).credits).toBe(CREDITS_PER_CALL)
+  })
+
+  it('promises nothing for an empty list', () => {
+    expect(estimateFetch(0)).toEqual({ ms: 0, credits: 0, calls: 0 })
   })
 })
