@@ -1,9 +1,8 @@
-# Diagnostic: read Card Hedge's OpenAPI spec.
+# Diagnostic: read Parse's REST contract from its own documentation.
 #
-# It lists every endpoint and response field, which settles the decisive
-# question: does the API serve individual completed sales (date + price per
-# grade), or only an aggregate price? The valuation here is a median of the
-# last five real sales, so an aggregate alone cannot feed it.
+# Parse (parse.bot) fronts the Card Ladder API this project wants. Nothing is
+# written against it until its real URL pattern, auth header and response
+# shape are read from the docs rather than guessed.
 #
 # Run from the Actions tab → "Price API check" → Run workflow.
 name: Price API check
@@ -14,52 +13,42 @@ jobs:
   check:
     runs-on: ubuntu-latest
     steps:
-      - name: Fetch the OpenAPI spec
+      - name: Plain-text documentation, if published
         run: |
-          for u in 'https://ai.cardhedger.com/v1/agent/docs' \
-                   'https://ai.cardhedger.com/v1/agent/openapi.json' \
-                   'https://ai.cardhedger.com/openapi.json'; do
-            printf '%-52s -> %s\n' "$u" \
-              "$(curl -sSL -m 15 -o /tmp/try.json -w '%{http_code}' -H 'Accept: application/json' "$u" 2>/dev/null || echo err)"
-            if head -c 1 /tmp/try.json 2>/dev/null | grep -q '{'; then cp /tmp/try.json /tmp/spec.json; echo "  ^ JSON captured"; fi
+          for u in 'https://docs.parse.bot/llms-full.txt' \
+                   'https://docs.parse.bot/llms.txt' \
+                   'https://docs.parse.bot/openapi.json' \
+                   'https://api.parse.bot/openapi.json'; do
+            code=$(curl -sSL -m 20 -o /tmp/d.txt -w '%{http_code}' "$u" 2>/dev/null || echo err)
+            size=$(wc -c < /tmp/d.txt 2>/dev/null || echo 0)
+            printf '%-44s -> %s  (%s bytes)\n' "$u" "$code" "$size"
+            if [ "$code" = "200" ] && [ "$size" -gt 400 ]; then cp /tmp/d.txt /tmp/best.txt; echo "  ^ kept"; fi
           done
 
-      - name: Every endpoint the spec declares
+      - name: The parts that define the contract
         run: |
-          if [ ! -s /tmp/spec.json ]; then echo "no JSON spec retrieved"; exit 0; fi
-          echo "=== paths ==="
-          jq -r '.paths | keys[]' /tmp/spec.json 2>/dev/null | head -40 || echo "not an OpenAPI doc"
+          if [ ! -s /tmp/best.txt ]; then echo "nothing captured"; exit 0; fi
+          echo "=== lines mentioning the REST call shape ==="
+          grep -inE 'api\.parse\.bot|X-API-Key|curl |https://api|/v[0-9]+/|endpoint|base url|authorization' /tmp/best.txt \
+            | head -60
           echo
-          echo "=== summaries ==="
-          jq -r '.paths | to_entries[] | "\(.key): \(.value | to_entries[0].value.summary // "")"' /tmp/spec.json 2>/dev/null | head -40 || true
+          echo "=== first 120 lines ==="
+          head -120 /tmp/best.txt
 
-      - name: Does any response carry individual sales?
+      - name: Fall back to the rendered docs page
         run: |
-          if [ ! -s /tmp/spec.json ]; then echo "no spec"; exit 0; fi
-          echo "=== schema property names mentioning sales, dates or grades ==="
-          jq -r '[paths(scalars) as $p | $p | join(".")] | .[]' /tmp/spec.json 2>/dev/null \
-            | grep -oiE '[a-z_]*(sale|sold|history|transaction|date|grade|psa|cert)[a-z_]*' \
-            | sort -u | head -40 || echo "none"
-          echo
-          echo "=== raw keyword counts in the spec ==="
-          for kw in sale sold history transaction date grade cert population price; do
-            printf '%-14s %s\n' "$kw" "$(grep -oic "$kw" /tmp/spec.json || echo 0)"
+          if [ -s /tmp/best.txt ]; then echo "already have text"; exit 0; fi
+          curl -sSL -m 20 -o /tmp/docs.html -H 'User-Agent: Mozilla/5.0' 'https://docs.parse.bot' || true
+          tr '\n' ' ' < /tmp/docs.html \
+            | sed -e 's/<style[^>]*>[^<]*<\/style>/ /g' -e 's/<[^>]*>/\n/g' \
+            | grep -vE '^[[:space:]]*$' | head -100
+
+      - name: What does the API host say unauthenticated?
+        run: |
+          for u in 'https://api.parse.bot/' \
+                   'https://api.parse.bot/cardladder-com-api/search_cards?query=charizard' \
+                   'https://api.parse.bot/v1/cardladder-com-api/search_cards?query=charizard'; do
+            printf '\n=== %s ===\n' "$u"
+            curl -sSL -m 20 -o /tmp/r.json -w 'HTTP %{http_code}\n' "$u" 2>/dev/null || echo err
+            head -c 300 /tmp/r.json 2>/dev/null; echo
           done
-
-      - name: Pricing tiers, and can a browser call it?
-        run: |
-          echo "=== /v1/agent/pricing ==="
-          curl -sSL -m 15 -H 'Accept: application/json' 'https://ai.cardhedger.com/v1/agent/pricing' | head -c 900; echo
-          echo
-          echo "=== prices-by-cert without a key ==="
-          curl -sSL -m 15 -o /tmp/c.json -w 'HTTP %{http_code}\n' \
-            'https://ai.cardhedger.com/v1/agent/cards/prices-by-cert?cert=12345678' || true
-          head -c 300 /tmp/c.json; echo
-          echo
-          echo "=== CORS preflight ==="
-          curl -sS -m 15 -D - -o /dev/null -X OPTIONS \
-            -H 'Origin: https://michaelgold222.github.io' \
-            -H 'Access-Control-Request-Method: GET' \
-            -H 'Access-Control-Request-Headers: authorization' \
-            'https://ai.cardhedger.com/v1/agent/cards/prices-by-cert' | tr -d '\r' \
-            | grep -iE '^(HTTP/|access-control-)' || echo "  none -> needs a server to relay"
