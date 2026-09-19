@@ -11,7 +11,8 @@ import { buildSeries } from './analytics'
 import { importWorkbook, mergeHistory, reclassify } from './ingest'
 import { itemKey } from './key'
 import { refreshQuotes, type PriceProvider, type RefreshTarget } from './pricing'
-import type { PriceFeed } from './providers/cardladder'
+import { isSupportedGrader, type PriceFeed } from './providers/cardladder'
+import { fetchCertPrices, getParseKey, ParseError, type UsageInfo } from './providers/cardladder-client'
 import { pokemonTcgIo } from './pricing'
 import { toISODate } from './stats'
 import type { Holding, PricePoint, PriceQuote, PriceSeries, Segment, WatchItem } from './types'
@@ -49,6 +50,9 @@ interface PersistedState {
   quotes: Record<string, PriceQuote>
   importLog: ImportLogEntry[]
   lastRefresh: string | null
+  /** Sold comps by certificate number, from Card Ladder. */
+  certSales: Record<string, PricePoint[]>
+  certLastFetched: string | null
 }
 
 interface AppState extends PersistedState {
@@ -57,6 +61,9 @@ interface AppState extends PersistedState {
   error: string | null
   /** Sold comps published alongside the site by the scheduled fetch. */
   feed: PriceFeed | null
+  /** Credit counters Parse returned on the last graded fetch. */
+  usage: UsageInfo | null
+  gradedRefresh: { running: boolean; done: number; total: number; unmatched: string[] }
 
   hydrate(): Promise<void>
   loadFeed(): Promise<void>
@@ -67,6 +74,7 @@ interface AppState extends PersistedState {
   setSegmentOverride(id: string, segment: Segment | null, kind: 'holding' | 'watch'): void
   removeHolding(id: string): void
   refreshPrices(provider?: PriceProvider): Promise<void>
+  refreshGraded(): Promise<void>
   clearAll(): Promise<void>
   reportError(message: string): void
   dismissError(): void
@@ -80,6 +88,8 @@ const EMPTY: PersistedState = {
   quotes: {},
   importLog: [],
   lastRefresh: null,
+  certSales: {},
+  certLastFetched: null,
 }
 
 function persistable(s: AppState): PersistedState {
@@ -91,6 +101,8 @@ function persistable(s: AppState): PersistedState {
     quotes: s.quotes,
     importLog: s.importLog.slice(-20),
     lastRefresh: s.lastRefresh,
+    certSales: s.certSales,
+    certLastFetched: s.certLastFetched,
   }
 }
 
@@ -110,6 +122,67 @@ export const useStore = create<AppState>((setState, getState) => ({
   refresh: { running: false, done: 0, total: 0, lastRun: null, errors: [], skipped: [] },
   error: null,
   feed: null,
+  usage: null,
+  gradedRefresh: { running: false, done: 0, total: 0, unmatched: [] },
+
+  /**
+   * Price graded slabs from Card Ladder, by certificate number.
+   *
+   * Runs in the browser: Parse serves CORS, and the key is the user's own,
+   * held on their device. One call covers 200 slabs.
+   */
+  async refreshGraded() {
+    const state = getState()
+    if (state.gradedRefresh.running) return
+
+    const key = getParseKey()
+    if (!key) {
+      setState({ error: 'Add your Card Ladder API key in Data & settings to price graded cards.' })
+      return
+    }
+
+    const certs = new Map<string, { cert_number: string; grading_company: 'PSA' | 'BGS' | 'CGC' | 'SGC' }>()
+    for (const item of [...state.holdings, ...state.watchlist]) {
+      const grader = item.grader?.toUpperCase()
+      if (!item.cert || !isSupportedGrader(grader)) continue
+      certs.set(item.cert, { cert_number: item.cert, grading_company: grader })
+    }
+    const list = [...certs.values()]
+    if (list.length === 0) {
+      setState({
+        error: 'No certificate numbers found. Add a Cert Number column to your sheet — graded cards are priced by cert.',
+      })
+      return
+    }
+
+    setState({ gradedRefresh: { running: true, done: 0, total: list.length, unmatched: [] } })
+    try {
+      const { prices, unmatched, usage } = await fetchCertPrices(list, {
+        key,
+        onProgress: (done, total) => setState({ gradedRefresh: { ...getState().gradedRefresh, done, total } }),
+      })
+
+      const certSales = { ...getState().certSales }
+      for (const p of prices) if (p.points.length > 0) certSales[p.cert] = p.points
+
+      const priced = prices.filter((p) => p.points.length > 0).length
+      setState({
+        certSales,
+        certLastFetched: new Date().toISOString(),
+        usage,
+        gradedRefresh: { running: false, done: list.length, total: list.length, unmatched },
+        error: priced === 0
+          ? `Looked up ${list.length} certificate${list.length === 1 ? '' : 's'} and none came back with sales. Check the numbers against the slab labels.`
+          : null,
+      })
+      scheduleSave(getState())
+    } catch (err) {
+      setState({
+        gradedRefresh: { ...getState().gradedRefresh, running: false },
+        error: err instanceof ParseError ? err.message : `Graded price fetch failed: ${err instanceof Error ? err.message : String(err)}`,
+      })
+    }
+  },
 
   /**
    * Load the sold-comp feed shipped with the site.
@@ -371,8 +444,10 @@ export function selectSeries(state: AppState): Map<string, PriceSeries> {
     // Feed sales are grade-specific by construction — they are sales of this
     // certificate's card at this grade — so they count as the item's own
     // history, unlike a raw-card quote.
-    const fromFeed = item.cert ? (state.feed?.byCert[item.cert]?.sales ?? []) : []
-    const uploaded = [...(state.uploadedHistory[key] ?? []), ...fromFeed]
+    const fromCerts = item.cert
+      ? [...(state.certSales[item.cert] ?? []), ...(state.feed?.byCert[item.cert]?.sales ?? [])]
+      : []
+    const uploaded = [...(state.uploadedHistory[key] ?? []), ...fromCerts]
     out.set(
       key,
       buildSeries(key, uploaded, state.snapshots[key], state.quotes[key], {

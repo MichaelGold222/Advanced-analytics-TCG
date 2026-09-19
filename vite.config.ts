@@ -23,6 +23,8 @@ export default defineConfig({
     },
   },
   test: {
+    // Default to Node; files needing a DOM declare it with a @vitest-environment
+    // docblock, which this version honours where environmentMatchGlobs does not.
     environment: 'node',
     include: ['src/**/*.test.ts', 'scripts/**/*.test.ts'],
   },

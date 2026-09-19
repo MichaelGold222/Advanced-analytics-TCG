@@ -1,23 +1,33 @@
 import { useState } from 'react'
-import { Download, FileSpreadsheet, KeyRound, Plug, Trash2 } from 'lucide-react'
+import { Download, FileSpreadsheet, KeyRound, Layers, Plug, Trash2 } from 'lucide-react'
 import { UploadZone } from './UploadZone'
 import {
   getApiBaseOverride, getApiKey, isFileOrigin, pokemonTcgIo, setApiBaseOverride, setApiKey,
   type ConnectionResult,
 } from '../lib/pricing'
 import { relativeTime } from '../lib/format'
+import { getParseKey, setParseKey } from '../lib/providers/cardladder-client'
+import type { UsageInfo } from '../lib/providers/cardladder-client'
 import type { ImportLogEntry, RefreshState } from '../lib/store'
 
 interface Props {
   importLog: ImportLogEntry[]
   refresh: RefreshState
+  gradedRefresh: { running: boolean; done: number; total: number; unmatched: string[] }
+  certLastFetched: string | null
+  certCount: number
+  usage: UsageInfo | null
+  onRefreshGraded: () => void
   onImport: (file: File, kind: 'portfolio' | 'watchlist') => Promise<void>
   onTemplate: () => void
   onExport: () => void
   onClear: () => void
 }
 
-export function DataPanel({ importLog, refresh, onImport, onTemplate, onExport, onClear }: Props) {
+export function DataPanel({
+  importLog, refresh, gradedRefresh, certLastFetched, certCount, usage,
+  onImport, onTemplate, onExport, onClear, onRefreshGraded,
+}: Props) {
   const [key, setKey] = useState(getApiKey())
   const [saved, setSaved] = useState(false)
   const [confirmClear, setConfirmClear] = useState(false)
@@ -25,6 +35,8 @@ export function DataPanel({ importLog, refresh, onImport, onTemplate, onExport, 
   const [test, setTest] = useState<ConnectionResult | null>(null)
   const [apiBase, setApiBase] = useState(getApiBaseOverride())
   const [baseSaved, setBaseSaved] = useState(false)
+  const [parseKey, setParseKeyField] = useState(getParseKey())
+  const [parseSaved, setParseSaved] = useState(false)
 
   async function runTest() {
     setTesting(true)
@@ -40,7 +52,7 @@ export function DataPanel({ importLog, refresh, onImport, onTemplate, onExport, 
 
   return (
     <div className="space-y-4">
-      <div className="grid gap-4 lg:grid-cols-2">
+      <div className="grid gap-4 lg:grid-cols-2 items-start">
         <section className="card p-4">
           <h2 className="text-sm font-semibold mb-3">Import</h2>
           <div className="space-y-3">
@@ -59,7 +71,67 @@ export function DataPanel({ importLog, refresh, onImport, onTemplate, onExport, 
 
         <section className="card p-4">
           <h2 className="text-sm font-semibold mb-1 flex items-center gap-2">
-            <KeyRound className="size-4" aria-hidden /> Price API key (optional)
+            <Layers className="size-4" aria-hidden /> Graded cards — Card Ladder
+          </h2>
+          <p className="text-xs secondary leading-relaxed mb-3">
+            Prices PSA, BGS, CGC and SGC slabs from their own completed sales, matched by certificate
+            number. Paste your key from <span className="font-medium">parse.bot/settings</span>; it stays in
+            this browser and is sent only to Parse. One lookup covers 200 slabs.
+          </p>
+          <div className="flex gap-2">
+            <input
+              className="input" type="password" placeholder="Parse API key" value={parseKey}
+              aria-label="Card Ladder API key"
+              onChange={(e) => { setParseKeyField(e.target.value); setParseSaved(false) }}
+            />
+            <button
+              type="button" className="btn"
+              onClick={() => { setParseKey(parseKey.trim()); setParseSaved(true) }}
+            >
+              {parseSaved ? 'Saved' : 'Save'}
+            </button>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2 mt-3">
+            <button type="button" className="btn btn-primary" onClick={onRefreshGraded} disabled={gradedRefresh.running || certCount === 0}>
+              {gradedRefresh.running
+                ? `Fetching ${gradedRefresh.done}/${gradedRefresh.total}…`
+                : `Fetch sold comps for ${certCount} slab${certCount === 1 ? '' : 's'}`}
+            </button>
+            <span className="text-xs muted">
+              {certLastFetched ? `updated ${relativeTime(certLastFetched)}` : 'not fetched yet'}
+            </span>
+          </div>
+
+          {certCount === 0 && (
+            <p className="text-xs mt-2 leading-relaxed" style={{ color: 'var(--serious)' }}>
+              No certificate numbers in your sheet yet. Add a <strong>Cert Number</strong> column — that is how a
+              slab is matched to its own sales.
+            </p>
+          )}
+          {usage && (usage.creditsRemaining != null || usage.creditsCharged != null) && (
+            <p className="text-xs muted mt-2 tabular">
+              {usage.creditsCharged != null && `${usage.creditsCharged} credit${usage.creditsCharged === 1 ? '' : 's'} charged`}
+              {usage.creditsRemaining != null && `${usage.creditsCharged != null ? ' · ' : ''}${usage.creditsRemaining.toLocaleString()} remaining`}
+              {usage.creditsLimit != null && ` of ${usage.creditsLimit.toLocaleString()}`}
+            </p>
+          )}
+          {gradedRefresh.unmatched.length > 0 && (
+            <details className="mt-2">
+              <summary className="text-xs cursor-pointer" style={{ color: 'var(--serious)' }}>
+                {gradedRefresh.unmatched.length} cert{gradedRefresh.unmatched.length === 1 ? '' : 's'} had no match
+              </summary>
+              <p className="text-xs muted mt-1 leading-relaxed">
+                Card Ladder has no verified sales for {gradedRefresh.unmatched.slice(0, 8).join(', ')}
+                {gradedRefresh.unmatched.length > 8 ? ', and others' : ''}. Check the digits against the slab label.
+              </p>
+            </details>
+          )}
+        </section>
+
+        <section className="card p-4">
+          <h2 className="text-sm font-semibold mb-1 flex items-center gap-2">
+            <KeyRound className="size-4" aria-hidden /> Ungraded singles (optional)
           </h2>
           <p className="text-xs secondary leading-relaxed mb-3">
             Lookups use the free Pokémon TCG API, which works without a key but is rate limited.

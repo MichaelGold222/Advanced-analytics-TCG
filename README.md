@@ -38,17 +38,38 @@ routed through it instead, so the same build works in both places.
 ## Automatic sold comps for graded cards (Card Ladder)
 
 Graded slabs are priced from **completed sales of that exact card at that exact
-grade**, fetched on a schedule and published with the site. Nothing to upload,
-and no browser involvement: the fetch runs in CI because the API key must never
-reach a public page.
+grade** — the median of the last five, which is what a slab is actually worth
+today. Nothing to upload but your own collection sheet.
 
 Source: Card Ladder, reached through [Parse](https://parse.bot). The
 `get_cert_values_bulk` endpoint takes up to **200 certificate numbers in one
-call** and returns up to ten recent sales for each — one call covers most
-collections. Sales carry ISO dates and prices and come from eBay, Fanatics and
-the auction houses Card Ladder tracks.
+call** and returns recent sales for each, so one call covers most collections.
+Sales carry ISO dates and prices and come from eBay, Fanatics and the auction
+houses Card Ladder tracks.
 
-Setup, both as repository secrets (Settings → Secrets and variables → Actions):
+### Setting it up
+
+1. Add a **Cert Number** column to your sheet — that is what matches a slab to
+   its own sold comps. Cert numbers can also be typed into a watchlist row.
+2. Open **Data & settings** and paste your key from parse.bot/settings into
+   *Graded cards — Card Ladder*, then Save.
+3. Press **Fetch sold comps** (or the header's *Refresh prices*, which does
+   graded first).
+
+The key is kept in this browser's `localStorage` and sent to `api.parse.bot`
+alone — it is never committed, never part of the built page, and never travels
+to any other service. Parse serves CORS headers, so the page calls it directly;
+there is no proxy or server in between. Credits charged and remaining are read
+back from the response and shown next to the button.
+
+Fetched sales are stored locally alongside your holdings, so a refresh is only
+needed when you want newer comps.
+
+### Optional: fetch on a schedule instead
+
+If you would rather have prices published with the site than fetched per browser,
+the same call runs in CI. Add two repository secrets (Settings → Secrets and
+variables → Actions):
 
 | Secret | Value |
 |---|---|
@@ -60,10 +81,11 @@ public and a collection sheet carries cost basis. Secrets are encrypted and neve
 published, so what ships with the site is certificate numbers and public sale
 prices alone — nothing about what anything cost you.
 
-The fetch runs before each deploy and once a day, writes `public/prices.json`,
+That fetch runs before each deploy and once a day, writes `public/prices.json`,
 and commits it so the record outlives the subscription. It can never fail the
-deploy: a stale feed beats no dashboard. The app joins the feed to your cards by
-certificate number, so add a **Cert Number** column to your sheet.
+deploy: a stale feed beats no dashboard. Where both paths are in use the app
+pools their sales and collapses exact duplicates, then values off the five most
+recent.
 
 Run it by hand with `PARSE_API_KEY=… PORTFOLIO_CERTS=… npm run prices`.
 
@@ -201,9 +223,9 @@ the full chain of reasoning.
 
 A TCGplayer-style quote prices a **raw** card. Applying it to a PSA 10 would value a
 slab at ungraded money, so for any graded item the quote is shown as context and
-deliberately excluded from FMV. Import your own graded comps to value slabs
-accurately. Grade is part of an item's identity throughout, so a PSA 9 and a PSA 10
-of the same card never share a price series.
+deliberately excluded from FMV. Slabs are valued from their own sold comps instead
+— fetched by cert number as above, or imported. Grade is part of an item's identity
+throughout, so a PSA 9 and a PSA 10 of the same card never share a price series.
 
 ### What is not valued
 

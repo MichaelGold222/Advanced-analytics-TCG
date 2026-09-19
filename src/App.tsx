@@ -15,6 +15,7 @@ import { analyzeItem } from './lib/analytics'
 import { money, pct, relativeTime } from './lib/format'
 import { itemKey } from './lib/key'
 import { analyzeHoldings, buildValueTrend, computePortfolioStats, holdingKey, unitValue } from './lib/portfolio'
+import { getParseKey } from './lib/providers/cardladder-client'
 import { selectSeries, useStore } from './lib/store'
 import { downloadTemplate, exportAnalysis } from './lib/workbook-out'
 import type { ItemAnalysis } from './lib/types'
@@ -81,6 +82,18 @@ export default function App() {
   }, [holdings, holdingAnalyses, stats.marketValue])
 
   const isEmpty = holdings.length === 0 && watchlist.length === 0
+  const busy = store.refresh.running || store.gradedRefresh.running
+
+  /**
+   * Price everything in one gesture: graded slabs by certificate from Card
+   * Ladder, then ungraded singles from the free quote API. Graded goes first
+   * because it is the accurate half and the one people are waiting on.
+   */
+  async function refreshEverything() {
+    const hasCerts = [...holdings, ...watchlist].some((i) => i.cert)
+    if (hasCerts && getParseKey()) await store.refreshGraded()
+    await store.refreshPrices()
+  }
   const ThemeIcon = choice === 'light' ? Sun : choice === 'dark' ? Moon : Monitor
 
   /** Saves can fail in a viewer that mediates downloads; never fail silently. */
@@ -108,11 +121,15 @@ export default function App() {
 
           <button
             type="button" className="btn btn-primary"
-            onClick={() => void store.refreshPrices()}
-            disabled={store.refresh.running || isEmpty}
+            onClick={() => void refreshEverything()}
+            disabled={busy || isEmpty}
           >
-            <RefreshCw className={`size-4 ${store.refresh.running ? 'animate-spin' : ''}`} aria-hidden />
-            {store.refresh.running ? `${store.refresh.done}/${store.refresh.total}` : 'Refresh prices'}
+            <RefreshCw className={`size-4 ${busy ? 'animate-spin' : ''}`} aria-hidden />
+            {store.gradedRefresh.running
+              ? `Graded ${store.gradedRefresh.done}/${store.gradedRefresh.total}`
+              : store.refresh.running
+                ? `Singles ${store.refresh.done}/${store.refresh.total}`
+                : 'Refresh prices'}
           </button>
 
           <button type="button" className="btn" onClick={cycle} aria-label={`Theme: ${choice}. Click to change.`} title={`Theme: ${choice}`}>
@@ -204,8 +221,8 @@ export default function App() {
             <PriceCoverage
               holdings={holdings} watchlist={watchlist}
               holdingAnalyses={holdingAnalyses} watchAnalyses={watchAnalyses}
-              lastRefresh={store.lastRefresh} hasFeed={!!feed} refresh={store.refresh}
-              onRefresh={() => void store.refreshPrices()} onGoToData={() => setTab('data')}
+              lastRefresh={store.lastRefresh} hasFeed={!!feed || !!store.certLastFetched} refresh={store.refresh}
+              onRefresh={() => void refreshEverything()} onGoToData={() => setTab('data')}
             />
 
             <div className="grid gap-4 lg:grid-cols-2">
@@ -233,6 +250,9 @@ export default function App() {
         ) : (
           <DataPanel
             importLog={store.importLog} refresh={store.refresh}
+            gradedRefresh={store.gradedRefresh} certLastFetched={store.certLastFetched}
+            certCount={new Set([...holdings, ...watchlist].filter((i) => i.cert).map((i) => i.cert)).size}
+            usage={store.usage} onRefreshGraded={() => void store.refreshGraded()}
             onImport={store.importFile} onTemplate={handleTemplate} onExport={handleExport}
             onClear={() => void store.clearAll()}
           />
