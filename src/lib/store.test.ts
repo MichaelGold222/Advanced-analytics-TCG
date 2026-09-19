@@ -50,11 +50,75 @@ beforeEach(() => {
   pricingTuning.retryDelaysMs = [0, 0, 0, 0]
   resetPacing()
   useStore.setState({
-    holdings: [], watchlist: [], quotes: {}, snapshots: {}, uploadedHistory: {}, error: null,
+    holdings: [], watchlist: [], quotes: {}, snapshots: {}, uploadedHistory: {}, error: null, feed: null,
     refresh: { running: false, done: 0, total: 0, lastRun: null, errors: [], skipped: [] },
   })
 })
 afterEach(() => vi.unstubAllGlobals())
+
+describe('the published sold-comp feed', () => {
+  const SLAB_WITH_CERT = holding({
+    name: 'Charizard', set: 'Base Set', number: '4', condition: 'PSA 9',
+    grader: 'PSA', grade: 9, cert: '93083876',
+  })
+
+  const FEED = {
+    fetchedAt: '2026-09-19T00:00:00.000Z',
+    source: 'Card Ladder via Parse',
+    byCert: {
+      '93083876': {
+        grader: 'PSA',
+        clValue: 21911.69,
+        lastSalePrice: 21000,
+        sales: [
+          { date: '2026-03-16', price: 6300, source: 'sale' as const },
+          { date: '2026-06-15', price: 16200, source: 'sale' as const },
+          { date: '2026-07-20', price: 11200, source: 'sale' as const },
+          { date: '2026-08-24', price: 21600, source: 'sale' as const },
+          { date: '2026-09-07', price: 21000, source: 'sale' as const },
+        ],
+      },
+    },
+    errors: [],
+  }
+
+  it('values a graded slab from its own cert\u2019s sales', () => {
+    // The exclusion that blocks raw quotes must not block these: they are
+    // sales of this card at this grade.
+    useStore.setState({ holdings: [SLAB_WITH_CERT], feed: FEED })
+    const series = selectSeries(useStore.getState())
+    const fmv = computeFmv(series.get(holdingKey(SLAB_WITH_CERT))!, new Date('2026-09-19T00:00:00Z'))
+    expect(fmv.fmv).toBe(16200)
+    expect(fmv.sampleSize).toBe(5)
+  })
+
+  it('ignores the feed for a card whose cert is not in it', () => {
+    const other = holding({ name: 'Blastoise', grader: 'PSA', grade: 8, cert: '00000000' })
+    useStore.setState({ holdings: [other], feed: FEED })
+    expect(selectSeries(useStore.getState()).get(holdingKey(other))!.points).toHaveLength(0)
+  })
+
+  it('ignores the feed for a card with no cert at all', () => {
+    const noCert = holding({ name: 'Blastoise', grader: 'PSA', grade: 8 })
+    useStore.setState({ holdings: [noCert], feed: FEED })
+    expect(selectSeries(useStore.getState()).get(holdingKey(noCert))!.points).toHaveLength(0)
+  })
+
+  it('merges feed sales with comps the user imported', () => {
+    const key = holdingKey(SLAB_WITH_CERT)
+    useStore.setState({
+      holdings: [SLAB_WITH_CERT],
+      feed: FEED,
+      uploadedHistory: { [key]: [{ date: '2026-09-15', price: 18000, source: 'sale' }] },
+    })
+    expect(selectSeries(useStore.getState()).get(key)!.points).toHaveLength(6)
+  })
+
+  it('works with no feed published', () => {
+    useStore.setState({ holdings: [SLAB_WITH_CERT], feed: null })
+    expect(selectSeries(useStore.getState()).get(holdingKey(SLAB_WITH_CERT))!.points).toHaveLength(0)
+  })
+})
 
 describe('purgeGradedSnapshots', () => {
   it('drops snapshots an earlier version recorded against graded items', () => {

@@ -35,17 +35,18 @@ export default function App() {
 
   useEffect(() => {
     void store.hydrate()
+    void store.loadFeed()
     // Hydration runs once; the store is a stable singleton.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  const { holdings, watchlist, uploadedHistory, snapshots, quotes } = store
+  const { holdings, watchlist, uploadedHistory, snapshots, quotes, feed } = store
 
   const series = useMemo(
     () => selectSeries(store),
     // Rebuilt whenever any price input or item list changes.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [holdings, watchlist, uploadedHistory, snapshots, quotes],
+    [holdings, watchlist, uploadedHistory, snapshots, quotes, feed],
   )
 
   const holdingAnalyses = useMemo(() => analyzeHoldings(holdings, series), [holdings, series])

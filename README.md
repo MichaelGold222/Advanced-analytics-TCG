@@ -35,7 +35,39 @@ the browser. A host that mediates downloads — the claude.ai Artifact viewer, w
 plain download link silently does nothing — is detected at runtime and the save is
 routed through it instead, so the same build works in both places.
 
-## About the price service
+## Automatic sold comps for graded cards (Card Ladder)
+
+Graded slabs are priced from **completed sales of that exact card at that exact
+grade**, fetched on a schedule and published with the site. Nothing to upload,
+and no browser involvement: the fetch runs in CI because the API key must never
+reach a public page.
+
+Source: Card Ladder, reached through [Parse](https://parse.bot). The
+`get_cert_values_bulk` endpoint takes up to **200 certificate numbers in one
+call** and returns up to ten recent sales for each — one call covers most
+collections. Sales carry ISO dates and prices and come from eBay, Fanatics and
+the auction houses Card Ladder tracks.
+
+Setup, both as repository secrets (Settings → Secrets and variables → Actions):
+
+| Secret | Value |
+|---|---|
+| `PARSE_API_KEY` | Your key from parse.bot/settings |
+| `PORTFOLIO_CERTS` | Lines like `PSA 12345678`. Comma, semicolon, newline or JSON all work; either order within a pair |
+
+**The cert list is a secret rather than a file on purpose.** This repository is
+public and a collection sheet carries cost basis. Secrets are encrypted and never
+published, so what ships with the site is certificate numbers and public sale
+prices alone — nothing about what anything cost you.
+
+The fetch runs before each deploy and once a day, writes `public/prices.json`,
+and commits it so the record outlives the subscription. It can never fail the
+deploy: a stale feed beats no dashboard. The app joins the feed to your cards by
+certificate number, so add a **Cert Number** column to your sheet.
+
+Run it by hand with `PARSE_API_KEY=… PORTFOLIO_CERTS=… npm run prices`.
+
+## About the singles price service
 
 Measured directly against `api.pokemontcg.io` (see `.github/workflows/api-check.yml`,
 which can be re-run any time): the service currently **fails roughly half of all

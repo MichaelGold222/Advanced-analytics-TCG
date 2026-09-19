@@ -11,6 +11,7 @@ import { buildSeries } from './analytics'
 import { importWorkbook, mergeHistory, reclassify } from './ingest'
 import { itemKey } from './key'
 import { refreshQuotes, type PriceProvider, type RefreshTarget } from './pricing'
+import type { PriceFeed } from './providers/cardladder'
 import { pokemonTcgIo } from './pricing'
 import { toISODate } from './stats'
 import type { Holding, PricePoint, PriceQuote, PriceSeries, Segment, WatchItem } from './types'
@@ -54,8 +55,11 @@ interface AppState extends PersistedState {
   hydrated: boolean
   refresh: RefreshState
   error: string | null
+  /** Sold comps published alongside the site by the scheduled fetch. */
+  feed: PriceFeed | null
 
   hydrate(): Promise<void>
+  loadFeed(): Promise<void>
   importFile(file: File, kind: 'portfolio' | 'watchlist'): Promise<void>
   addWatchItem(item: Omit<WatchItem, 'id' | 'segment' | 'segmentReason'>): void
   removeWatchItem(id: string): void
@@ -105,6 +109,25 @@ export const useStore = create<AppState>((setState, getState) => ({
   hydrated: false,
   refresh: { running: false, done: 0, total: 0, lastRun: null, errors: [], skipped: [] },
   error: null,
+  feed: null,
+
+  /**
+   * Load the sold-comp feed shipped with the site.
+   *
+   * Absent when the site was built without the pricing secrets, which is an
+   * ordinary state rather than a failure: the dashboard works on whatever the
+   * user imported.
+   */
+  async loadFeed() {
+    try {
+      const res = await fetch(new URL('prices.json', document.baseURI), { cache: 'no-cache' })
+      if (!res.ok) return
+      const feed = (await res.json()) as PriceFeed
+      if (feed && typeof feed === 'object' && feed.byCert) setState({ feed })
+    } catch {
+      /* no feed published; nothing to report */
+    }
+  },
 
   async hydrate() {
     try {
@@ -345,9 +368,14 @@ export function selectSeries(state: AppState): Map<string, PriceSeries> {
   const build = (item: Holding | WatchItem) => {
     const key = itemKey(item)
     if (out.has(key)) return
+    // Feed sales are grade-specific by construction — they are sales of this
+    // certificate's card at this grade — so they count as the item's own
+    // history, unlike a raw-card quote.
+    const fromFeed = item.cert ? (state.feed?.byCert[item.cert]?.sales ?? []) : []
+    const uploaded = [...(state.uploadedHistory[key] ?? []), ...fromFeed]
     out.set(
       key,
-      buildSeries(key, state.uploadedHistory[key], state.snapshots[key], state.quotes[key], {
+      buildSeries(key, uploaded, state.snapshots[key], state.quotes[key], {
         graded: item.grade != null,
       }),
     )
