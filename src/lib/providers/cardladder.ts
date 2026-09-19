@@ -26,21 +26,21 @@ export type SupportedGrader = (typeof SUPPORTED_GRADERS)[number]
 export const MAX_CERTS_PER_CALL = 200
 
 /**
- * How many certs to actually put in one call.
+ * Concurrent calls the client runs.
  *
- * Measured against the live endpoint, which scrapes rather than reads a stored
- * number: 1 cert 2.5s, 4 certs 4.5s, 12 certs 9.0s — about two seconds of
- * fixed cost per call plus six tenths per cert. Every one of those calls was
- * charged the same 3 credits.
- *
- * So the ceiling of 200 is the wrong size for a different reason than it first
- * appears: it is not expensive, it is one request running about two minutes
- * with nothing to report until it returns, which reads as a hang. Tiny batches
- * are wrong too — they multiply both the fixed cost and the per-call charge.
- * This is the middle: a call finishes in around fifteen seconds, so progress
- * moves, without spending credits on overhead.
+ * The account allows a burst of 30 requests refilling at 5/min. Eight in
+ * flight stays well inside that while cutting the wall clock eightfold, and
+ * the client backs off and retries if a burst is spent anyway.
  */
-export const FETCH_BATCH_SIZE = 25
+export const FETCH_CONCURRENCY = 8
+
+/**
+ * Smallest call worth making.
+ *
+ * Every call costs the same three credits and about two seconds of fixed
+ * overhead, so splitting a small collection finely spends both on nothing.
+ */
+export const MIN_BATCH_SIZE = 15
 
 /** Credits one call costs, whatever its size. Observed live. */
 export const CREDITS_PER_CALL = 3
@@ -82,7 +82,7 @@ export function isSupportedGrader(g: string | null | undefined): g is SupportedG
 }
 
 /** Split into request-sized batches, since one call covers at most 200 certs. */
-export function batchCerts(certs: CertRequest[], size = FETCH_BATCH_SIZE): CertRequest[][] {
+export function batchCerts(certs: CertRequest[], size = planBatchSize(certs.length)): CertRequest[][] {
   const step = Math.max(1, Math.min(Math.floor(size) || 1, MAX_CERTS_PER_CALL))
   const out: CertRequest[][] = []
   for (let i = 0; i < certs.length; i += step) out.push(certs.slice(i, i + step))
@@ -168,14 +168,26 @@ export function buildFeed(entries: CertPrices[], errors: PriceFeed['errors'] = [
   }
 }
 
+
+
 /**
- * Concurrent calls the client runs.
+ * How to split a collection into calls.
  *
- * The account allows a burst of 30 requests refilling at 5/min. Eight in
- * flight stays well inside that while cutting the wall clock eightfold, and
- * the client backs off and retries if a burst is spent anyway.
+ * Calls run concurrently, so the wall clock is the size of one call, not the
+ * size of the collection — provided they all fit in a single wave. Splitting
+ * into exactly as many calls as run at once therefore prices any collection in
+ * one call's worth of time, and for a fixed number of calls the credit cost is
+ * fixed too, whether the collection is 90 slabs or 400.
+ *
+ * The floor stops a small collection from buying eight calls it does not need,
+ * and the ceiling is the endpoint's own limit, past which a second wave is
+ * unavoidable.
  */
-export const FETCH_CONCURRENCY = 8
+export function planBatchSize(certCount: number, concurrency = FETCH_CONCURRENCY): number {
+  if (certCount <= 0) return MIN_BATCH_SIZE
+  const even = Math.ceil(certCount / Math.max(1, concurrency))
+  return Math.max(MIN_BATCH_SIZE, Math.min(even, MAX_CERTS_PER_CALL))
+}
 
 /**
  * How long pricing this many certs should take, and what it should cost.
@@ -185,14 +197,14 @@ export const FETCH_CONCURRENCY = 8
  */
 export function estimateFetch(
   certCount: number,
-  batchSize = FETCH_BATCH_SIZE,
+  batchSize = planBatchSize(certCount),
   concurrency = FETCH_CONCURRENCY,
 ): { ms: number; credits: number; calls: number } {
   if (certCount <= 0) return { ms: 0, credits: 0, calls: 0 }
   const size = Math.max(1, Math.min(batchSize, MAX_CERTS_PER_CALL))
   const calls = Math.ceil(certCount / size)
-  const perCall = CALL_OVERHEAD_MS + size * MS_PER_CERT
-  // Calls run a few at a time, so the wall clock is the number of waves.
+  // The last call may be short; the wave is only as slow as its longest.
+  const perCall = CALL_OVERHEAD_MS + Math.min(size, certCount) * MS_PER_CERT
   const waves = Math.ceil(calls / Math.max(1, concurrency))
   return { ms: waves * perCall, credits: calls * CREDITS_PER_CALL, calls }
 }

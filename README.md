@@ -61,11 +61,24 @@ a flat three credits however many certs are in it.
 
 That shapes the client. Filling a call to its 200-cert ceiling is one request
 running roughly two minutes with nothing to report until it returns, which
-reads as a hang — so calls carry 25 certs and eight run at once, inside the
-account's burst of 30. An 85-slab collection is then about fifteen seconds
-rather than two minutes, and the progress bar moves four times on the way.
-One-cert calls would be worse than either: they multiply both the fixed cost
-and the per-call charge.
+reads as a hang. One-cert calls are worse in the other direction: they
+multiply both the fixed cost and the per-call charge, and the account allows
+only 100 requests a day.
+
+So the collection is split into as many calls as run at once — eight, inside
+the account's burst of 30 — which makes the wait the length of one call rather
+than the length of the collection, with a floor so a small collection does not
+buy calls it has no use for:
+
+| slabs | calls | wait | credits |
+|---|---|---|---|
+| 8 | 1 × 15 | ~7s | 3 |
+| 50 | 4 × 15 | ~11s | 12 |
+| 90 | 6 × 15 | ~11s | 18 |
+| 400 | 8 × 50 | ~32s | 24 |
+
+Past a point the cost stops growing: 400 slabs take the same eight calls as
+150, just longer ones.
 
 A spent burst is waited out and retried, not reported as failure — and a call
 that fails outright costs only its own slabs, not the whole run.

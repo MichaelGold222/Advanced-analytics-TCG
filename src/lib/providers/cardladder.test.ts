@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import {
-  CALL_OVERHEAD_MS, CREDITS_PER_CALL, FETCH_BATCH_SIZE, MAX_CERTS_PER_CALL, MS_PER_CERT,
-  batchCerts, buildFeed, estimateFetch, isSupportedGrader, parseBulkResponse, salesToPricePoints,
+  CALL_OVERHEAD_MS, CREDITS_PER_CALL, FETCH_CONCURRENCY, MAX_CERTS_PER_CALL, MIN_BATCH_SIZE, MS_PER_CERT,
+  batchCerts, buildFeed, estimateFetch, isSupportedGrader, parseBulkResponse, planBatchSize,
+  salesToPricePoints,
 } from './cardladder'
 import { computeFmv } from '../analytics'
 
@@ -107,10 +108,9 @@ describe('the valuation those sales feed', () => {
 describe('batching', () => {
   const certs = Array.from({ length: 450 }, (_, i) => ({ cert_number: String(i), grading_company: 'PSA' as const }))
 
-  it('splits into calls that finish quickly enough to show progress', () => {
+  it('splits into as many calls as run at once, so it is one wave', () => {
     const batches = batchCerts(certs)
-    expect(batches.map((b) => b.length)).toEqual(Array(18).fill(25))
-    expect(FETCH_BATCH_SIZE).toBe(25)
+    expect(batches).toHaveLength(FETCH_CONCURRENCY)
   })
 
   it('never exceeds the endpoint ceiling, whatever size is asked for', () => {
@@ -125,8 +125,10 @@ describe('batching', () => {
     expect(batchCerts(certs).flat()).toHaveLength(450)
   })
 
-  it('an 85-card collection takes four calls, not one long one', () => {
-    expect(batchCerts(certs.slice(0, 85))).toHaveLength(4)
+  it('an 85-card collection is one wave of short calls, not one long call', () => {
+    const batches = batchCerts(certs.slice(0, 85))
+    expect(batches.length).toBeLessThanOrEqual(FETCH_CONCURRENCY)
+    expect(Math.max(...batches.map((b) => b.length))).toBeLessThanOrEqual(15)
   })
 
   it('handles an empty list', () => {
@@ -177,12 +179,46 @@ describe('estimating the wait', () => {
   })
 
   it('charges per call, so more certs in a call is cheaper', () => {
-    expect(estimateFetch(25).credits).toBe(CREDITS_PER_CALL)
-    expect(estimateFetch(50).credits).toBe(2 * CREDITS_PER_CALL)
+    expect(estimateFetch(50, 25).credits).toBe(2 * CREDITS_PER_CALL)
     expect(estimateFetch(50, 50).credits).toBe(CREDITS_PER_CALL)
   })
 
   it('promises nothing for an empty list', () => {
     expect(estimateFetch(0)).toEqual({ ms: 0, credits: 0, calls: 0 })
+  })
+})
+
+describe('planning the calls', () => {
+  it('keeps a collection to a single wave', () => {
+    for (const n of [30, 90, 200, 400, 1200]) {
+      expect(Math.ceil(n / planBatchSize(n))).toBeLessThanOrEqual(FETCH_CONCURRENCY)
+    }
+  })
+
+  it('does not buy calls a small collection has no use for', () => {
+    expect(planBatchSize(8)).toBe(MIN_BATCH_SIZE)
+    expect(batchCerts(Array.from({ length: 8 }, (_, i) => ({
+      cert_number: String(i), grading_company: 'PSA' as const,
+    })))).toHaveLength(1)
+  })
+
+  it('never asks for more than the endpoint accepts', () => {
+    expect(planBatchSize(100_000)).toBe(MAX_CERTS_PER_CALL)
+  })
+
+  it('takes one wave whether it is 90 slabs or 400, so cost stays bounded', () => {
+    const ceiling = FETCH_CONCURRENCY * CREDITS_PER_CALL
+    for (const n of [90, 200, 400]) {
+      expect(estimateFetch(n).credits).toBeLessThanOrEqual(ceiling)
+      expect(estimateFetch(n).ms).toBeLessThan(150_000)
+    }
+  })
+
+  it('prices 90 slabs in well under a minute', () => {
+    expect(estimateFetch(90).ms).toBeLessThan(20_000)
+  })
+
+  it('handles an empty collection without dividing by zero', () => {
+    expect(planBatchSize(0)).toBe(MIN_BATCH_SIZE)
   })
 })
