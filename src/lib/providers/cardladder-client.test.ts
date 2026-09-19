@@ -295,3 +295,67 @@ describe('a server that is having a bad moment', () => {
     }
   })
 })
+
+describe('a call that hangs', () => {
+  it('gives up on it and retries rather than holding the worker forever', async () => {
+    vi.useFakeTimers()
+    try {
+      let attempts = 0
+      const make = (payload: unknown) =>
+        ({ ok: true, status: 200, headers: { get: () => null }, json: async () => payload }) as unknown as Response
+      vi.stubGlobal('fetch', (url: string, init?: RequestInit) => {
+        if (String(url).includes('/dispatch/tasks/')) return Promise.resolve(make({ result_scraper_id: 's' }))
+        if (String(url).includes('/dispatch/tasks')) {
+          return Promise.resolve(make({ tasks: [{ id: 't', url: 'https://cardladder.com/' }] }))
+        }
+        // The first bulk call never settles until it is aborted.
+        if (attempts++ === 0) {
+          return new Promise<Response>((_, reject) => {
+            init?.signal?.addEventListener('abort', () => {
+              reject(new DOMException('Timed out', 'TimeoutError'))
+            })
+          })
+        }
+        const body = JSON.parse(String(init?.body ?? '{}')) as { certs: { cert_number: string }[] }
+        return Promise.resolve(make(bulkBody(body.certs)))
+      })
+
+      const run = fetchCertPrices(
+        [{ cert_number: '111', grading_company: 'PSA' }], { key: 'k' },
+      )
+      await vi.advanceTimersByTimeAsync(200_000)
+      const { prices, failed } = await run
+      expect(attempts).toBeGreaterThan(1)
+      expect(prices).toHaveLength(1)
+      expect(failed).toEqual([])
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('still honours a cancellation from the caller', async () => {
+    const ac = new AbortController()
+    let bulkStarted: () => void
+    const inFlight = new Promise<void>((resolve) => { bulkStarted = resolve })
+
+    vi.stubGlobal('fetch', (url: string, init?: RequestInit) => {
+      const make = (payload: unknown) =>
+        ({ ok: true, status: 200, headers: { get: () => null }, json: async () => payload }) as unknown as Response
+      if (String(url).includes('/dispatch/tasks/')) return Promise.resolve(make({ result_scraper_id: 's' }))
+      if (String(url).includes('/dispatch/tasks')) {
+        return Promise.resolve(make({ tasks: [{ id: 't', url: 'https://cardladder.com/' }] }))
+      }
+      bulkStarted()
+      return new Promise<Response>((_, reject) => {
+        init?.signal?.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')))
+      })
+    })
+
+    const run = fetchCertPrices([{ cert_number: '111', grading_company: 'PSA' }], { key: 'k', signal: ac.signal })
+    // Abort only once the call is actually in flight; a signal that is already
+    // aborted never fires a listener added afterwards.
+    await inFlight
+    ac.abort()
+    await expect(run).rejects.toThrow()
+  })
+})

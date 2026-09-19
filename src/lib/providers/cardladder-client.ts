@@ -93,16 +93,39 @@ export class ParseError extends Error {
   }
 }
 
+/**
+ * How long to wait on one call before giving up on it.
+ *
+ * The endpoint scrapes, so it is slow by nature — but when the upstream is
+ * struggling a call can hang for many minutes. Without a deadline one stuck
+ * call holds a worker forever and the fetch looks frozen with no way to tell
+ * it apart from ordinary slowness. A timeout is transient, so it is retried.
+ */
+const CALL_TIMEOUT_MS = 90_000
+
 async function call(path: string, key: string, init: RequestInit = {}): Promise<Response> {
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(new DOMException('Timed out', 'TimeoutError')), CALL_TIMEOUT_MS)
+  const onOuterAbort = () => controller.abort(init.signal?.reason)
+  init.signal?.addEventListener('abort', onOuterAbort, { once: true })
+
   let res: Response
   try {
     res = await fetch(`${BASE}${path}`, {
       ...init,
+      signal: controller.signal,
       headers: { 'X-API-Key': key, ...(init.body ? { 'Content-Type': 'application/json' } : {}), ...init.headers },
     })
   } catch (err) {
-    if ((err as Error)?.name === 'AbortError') throw err
+    // The caller's own cancellation must propagate; our deadline must not.
+    if (init.signal?.aborted) throw err
+    if ((err as Error)?.name === 'TimeoutError' || (err as Error)?.name === 'AbortError') {
+      throw new ParseError(408, `Card Ladder did not answer within ${CALL_TIMEOUT_MS / 1000}s.`)
+    }
     throw new ParseError(0, 'Could not reach the Card Ladder API. Check your connection.')
+  } finally {
+    clearTimeout(timer)
+    init.signal?.removeEventListener('abort', onOuterAbort)
   }
   if (res.status === 401 || res.status === 403) {
     throw new ParseError(res.status, 'That API key was refused. Check it at parse.bot/settings.')
