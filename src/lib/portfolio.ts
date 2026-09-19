@@ -15,8 +15,19 @@ export function holdingKey(h: Pick<Holding, 'name' | 'set' | 'number' | 'grader'
  * Per-unit value. A holding with no observation anywhere is left unvalued
  * rather than falling back to cost basis, which would invent a 0% return.
  */
+/**
+ * What one of these is worth right now.
+ *
+ * The last completed eBay sale of that exact card at that exact grade — the
+ * price it actually changed hands for, rather than an average. Where there is
+ * no eBay sale on record the median of recent sales stands in, so a card that
+ * only ever sells at auction houses is still valued rather than dropped.
+ *
+ * Market value, unrealized and return all run through here, so the whole
+ * portfolio is measured the same way.
+ */
 export function unitValue(analysis?: ItemAnalysis): number | null {
-  return analysis?.fmv.fmv ?? null
+  return analysis?.lastSale?.price ?? analysis?.fmv.fmv ?? null
 }
 
 export function analyzeHoldings(

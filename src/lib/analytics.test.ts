@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
-  LISTING_HAIRCUT, SIX_MONTH_DAYS, TREND_FLAT_BAND, analyzeItem, buildSeries, compute52WeekRange, computeEntry, computeFmv, computeRange, computeTrend,
+  LISTING_HAIRCUT, SIX_MONTH_DAYS, TREND_FLAT_BAND, analyzeItem, buildSeries, compute52WeekRange, computeEntry, computeFmv, computeRange, computeTrend, lastSaleAt,
 } from './analytics'
 import type { PricePoint, PriceSeries } from './types'
 
@@ -418,5 +418,47 @@ describe('six-month and yearly highs per card', () => {
 
   it('reports no high at all when there is nothing in the window', () => {
     expect(computeRange(from([['2023-01-01', 500]]), null, NOW, SIX_MONTH_DAYS).high).toBeNull()
+  })
+})
+
+describe('market value from the last eBay sale', () => {
+  const NOW = new Date('2026-09-19T00:00:00Z')
+  const series = (pts: [string, number, string | undefined][]) => ({
+    key: 'k',
+    points: pts.map(([date, price, venue]) => ({ date, price, source: 'sale' as const, venue })),
+  })
+
+  it('takes the most recent eBay sale, not the most recent sale anywhere', () => {
+    // An auction-house result carries a premium and a different audience, so
+    // it is not the answer to "what did it last go for on eBay".
+    const s = series([
+      ['2026-09-01', 4100, 'ebay'],
+      ['2026-09-10', 4400, 'ebay'],
+      ['2026-09-18', 9900, 'fanatics'],
+    ])
+    const last = lastSaleAt(s, 'ebay', NOW)
+    expect(last).toMatchObject({ price: 4400, date: '2026-09-10', venue: 'ebay' })
+  })
+
+  it('reports how stale it is, so an old price can be seen to be old', () => {
+    expect(lastSaleAt(series([['2026-08-20', 900, 'ebay']]), 'ebay', NOW)!.ageDays).toBe(30)
+  })
+
+  it('has nothing to say when the card has never sold on eBay', () => {
+    expect(lastSaleAt(series([['2026-09-18', 9900, 'fanatics']]), 'ebay', NOW)).toBeNull()
+  })
+
+  it('ignores eBay sales older than the valuation window', () => {
+    expect(lastSaleAt(series([['2024-01-01', 500, 'ebay']]), 'ebay', NOW)).toBeNull()
+  })
+
+  it('leaves FMV alone — the median still spans every venue', () => {
+    const s = series([
+      ['2026-09-01', 4000, 'ebay'],
+      ['2026-09-05', 4200, 'fanatics'],
+      ['2026-09-10', 4400, 'ebay'],
+    ])
+    expect(computeFmv(s, NOW).fmv).toBe(4200)
+    expect(lastSaleAt(s, 'ebay', NOW)!.price).toBe(4400)
   })
 })

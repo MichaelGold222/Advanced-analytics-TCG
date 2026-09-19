@@ -96,6 +96,26 @@ export function batchCerts(certs: CertRequest[], size = planBatchSize(certs.leng
  * valuation takes a median over. Records without a usable date and a positive
  * price are dropped rather than guessed at.
  */
+/**
+ * Which marketplace a sale happened on, from its link.
+ *
+ * Kept because the venues are not interchangeable: an auction-house result
+ * carries a buyer's premium and a different audience, so "what it last sold
+ * for on eBay" is a question the data can only answer if this survives.
+ */
+export function venueOf(sale: CardLadderSale): string | undefined {
+  const raw = sale.platform ?? sale.url
+  if (!raw) return undefined
+  const host = /^https?:/i.test(raw) ? (raw.split('/')[2] ?? '') : raw
+  const h = host.toLowerCase()
+  if (h.includes('ebay')) return 'ebay'
+  if (h.includes('fanatics')) return 'fanatics'
+  if (h.includes('goldin')) return 'goldin'
+  if (h.includes('pwcc')) return 'pwcc'
+  if (h.includes('heritage') || h.includes('ha.com')) return 'heritage'
+  return h.replace(/^www\./, '') || undefined
+}
+
 export function salesToPricePoints(sales: CardLadderSale[] | undefined): PricePoint[] {
   if (!Array.isArray(sales)) return []
   const seen = new Set<string>()
@@ -108,7 +128,7 @@ export function salesToPricePoints(sales: CardLadderSale[] | undefined): PricePo
     const sig = `${date}|${s.price}`
     if (seen.has(sig)) continue
     seen.add(sig)
-    points.push({ date, price: s.price, source: 'sale' })
+    points.push({ date, price: s.price, source: 'sale', venue: venueOf(s) })
   }
   return points.sort((a, b) => a.date.localeCompare(b.date))
 }

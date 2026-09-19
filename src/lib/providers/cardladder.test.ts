@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   CALL_OVERHEAD_MS, CREDITS_PER_CALL, FETCH_CONCURRENCY, MAX_CERTS_PER_CALL, MIN_BATCH_SIZE, MS_PER_CERT,
   batchCerts, buildFeed, estimateFetch, isSupportedGrader, parseBulkResponse, planBatchSize,
-  salesToPricePoints,
+  salesToPricePoints, venueOf,
 } from './cardladder'
 import { computeFmv } from '../analytics'
 
@@ -39,8 +39,8 @@ describe('salesToPricePoints', () => {
 
   it('normalizes ISO timestamps to dates and sorts oldest first', () => {
     const points = salesToPricePoints(LIVE_BULK.data.results[0].recent_sales)
-    expect(points[0]).toEqual({ date: '2026-03-16', price: 6300, source: 'sale' })
-    expect(points.at(-1)).toEqual({ date: '2026-09-07', price: 21000, source: 'sale' })
+    expect(points[0]).toEqual({ date: '2026-03-16', price: 6300, source: 'sale', venue: 'fanatics' })
+    expect(points.at(-1)).toEqual({ date: '2026-09-07', price: 21000, source: 'sale', venue: 'fanatics' })
   })
 
   it('drops records it cannot use rather than inventing values', () => {
@@ -51,7 +51,7 @@ describe('salesToPricePoints', () => {
       { date: 'not a date', price: 300 },
       { date: '2026-09-09T00:00:00Z', price: 0 },
       { date: '2026-09-10T00:00:00Z', price: -5 },
-    ])).toEqual([{ date: '2026-09-07', price: 100, source: 'sale' }])
+    ])).toEqual([{ date: '2026-09-07', price: 100, source: 'sale', venue: undefined }])
   })
 
   it('collapses the same sale appearing twice', () => {
@@ -220,5 +220,30 @@ describe('planning the calls', () => {
 
   it('handles an empty collection without dividing by zero', () => {
     expect(planBatchSize(0)).toBe(MIN_BATCH_SIZE)
+  })
+})
+
+describe('where a sale happened', () => {
+  it('reads the marketplace from the link', () => {
+    expect(venueOf({ url: 'https://www.ebay.com/itm/287456192405' })).toBe('ebay')
+    expect(venueOf({ url: 'https://www.fanaticscollect.com/weekly/8b379e50' })).toBe('fanatics')
+    expect(venueOf({ url: 'https://goldin.co/item/123' })).toBe('goldin')
+  })
+
+  it('falls back to a platform field, and to the host for anything else', () => {
+    expect(venueOf({ platform: 'eBay' })).toBe('ebay')
+    expect(venueOf({ url: 'https://www.someauction.io/lot/9' })).toBe('someauction.io')
+  })
+
+  it('says nothing rather than guessing when there is no link', () => {
+    expect(venueOf({})).toBeUndefined()
+  })
+
+  it('keeps the venue on every point, which is what market value needs', () => {
+    const points = salesToPricePoints([
+      { date: '2026-09-07T00:00:00Z', price: 100, url: 'https://www.ebay.com/itm/1' },
+      { date: '2026-09-08T00:00:00Z', price: 200, url: 'https://www.fanaticscollect.com/weekly/2' },
+    ])
+    expect(points.map((p) => p.venue)).toEqual(['ebay', 'fanatics'])
   })
 })

@@ -13,7 +13,7 @@ import {
   recencyWeight, rejectOutliers, slope, toISODate,
 } from './stats'
 import type {
-  Confidence, EntryResult, EntryVerdict, FmvResult, ItemAnalysis, PricePoint,
+  Confidence, EntryResult, EntryVerdict, FmvResult, ItemAnalysis, LastSale, PricePoint,
   PriceSeries, RangeResult,
 } from './types'
 
@@ -375,6 +375,7 @@ export function analyzeItem(series: PriceSeries, askingPrice?: number | null, no
   const entry = computeEntry(fmv, range, series, reference, now)
   return {
     key: series.key, fmv, range, sixMonthRange, entry, referencePrice: reference,
+    lastSale: lastSaleAt(series, 'ebay', now),
     quote: series.quote, quoteExcluded: series.quoteExcluded,
   }
 }
@@ -510,4 +511,22 @@ export function computeTrend(series: PriceSeries, now = new Date()): TrendResult
       ? `The last ${sales.length} ${observed} moved ${moved} across ${spanDays} days — inside the ${(TREND_FLAT_BAND * 100).toFixed(0)}% band that counts as flat for a sample this small.`
       : `The last ${sales.length} ${observed} trend ${moved} across ${spanDays} days, about ${Math.abs(perMonthPct * 100).toFixed(1)}% a month.`,
   }
+}
+
+/**
+ * The most recent completed sale on a given marketplace.
+ *
+ * Distinct from FMV on purpose. FMV is the median of the last few sales, which
+ * is deliberately resistant to one unusual result; this is the literal last
+ * price the exact card changed hands for. The median is the better estimate of
+ * what a card is worth, and this is the better answer to "what did it go for".
+ * Showing both means neither has to pretend to be the other.
+ */
+export function lastSaleAt(series: PriceSeries, venue = 'ebay', now = new Date()): LastSale | null {
+  const sales = pointsInWindow(series.points, now)
+    .filter((p) => p.source === 'sale' && p.venue === venue && p.price > 0)
+    .sort((a, b) => b.date.localeCompare(a.date))
+  const latest = sales[0]
+  if (!latest) return null
+  return { price: latest.price, date: latest.date, venue, ageDays: daysAgo(latest.date, now) }
 }

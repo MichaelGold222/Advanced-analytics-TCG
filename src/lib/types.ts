@@ -73,6 +73,8 @@ export interface PricePoint {
   source: PriceSource
   /** Units transacted, when the source reports it. Used to volume-weight. */
   volume?: number
+  /** Where the sale happened: 'ebay', 'fanatics', 'goldin', or a host. */
+  venue?: string
 }
 
 export type PriceSource =
@@ -156,6 +158,15 @@ export interface EntryResult {
   rationale: string[]
 }
 
+export interface LastSale {
+  price: number
+  date: string
+  /** Marketplace it sold on, e.g. 'ebay'. */
+  venue: string
+  /** Days since it sold, so a stale market value can be seen to be stale. */
+  ageDays: number
+}
+
 export interface ItemAnalysis {
   key: string
   fmv: FmvResult
@@ -163,6 +174,8 @@ export interface ItemAnalysis {
   range: RangeResult
   /** The same over six months, which turns sooner than the yearly figure. */
   sixMonthRange: RangeResult
+  /** The last completed eBay sale, which drives market value. */
+  lastSale: LastSale | null
   entry: EntryResult
   referencePrice: number | null
   /** The provider's live quote, whether or not it fed the valuation. */

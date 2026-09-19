@@ -80,7 +80,7 @@ export function HoldingsTable({ holdings, analyses, onOverride, onRemove }: Prop
               <th className="num" title="Lowest this card has traded in the last 6 months">6-mo low</th>
               <th className="num" title="Highest this card has traded in the last 6 months">6-mo high</th>
               <th className="num" title="Highest this card has traded in the last 12 months">Yearly high</th>
-              <th className="num">Market value</th>
+              <th className="num" title="The last completed eBay sale of this exact card at this grade">Market value</th>
               <th className="num">Unrealized</th>
               <th className="num">Return</th>
               <th aria-label="Actions" />
@@ -106,7 +106,20 @@ export function HoldingsTable({ holdings, analyses, onOverride, onRemove }: Prop
                   <td className="num"><LowCell range={a?.sixMonthRange} fmv={fmv} /></td>
                   <td className="num"><HighCell range={a?.sixMonthRange} fmv={fmv} /></td>
                   <td className="num"><HighCell range={a?.range} fmv={fmv} /></td>
-                  <td className="num tabular font-medium">{money(value)}</td>
+                  <td className="num tabular font-medium">
+                    {money(value)}
+                    {a?.lastSale
+                      ? (
+                        <div className="text-[11px] muted font-normal" title={`Sold on eBay ${a.lastSale.date}`}>
+                          eBay · {a.lastSale.ageDays === 0 ? 'today' : `${a.lastSale.ageDays}d ago`}
+                        </div>
+                      )
+                      : value != null && (
+                        <div className="text-[11px] muted font-normal" title="No eBay sale on record, so the median of recent sales stands in.">
+                          median · no eBay sale
+                        </div>
+                      )}
+                  </td>
                   <td className="num tabular" style={{ color: unrealized == null ? undefined : unrealized >= 0 ? 'var(--delta-up)' : 'var(--delta-down)' }}>
                     {unrealized == null ? '—' : money(unrealized)}
                   </td>
