@@ -6,8 +6,7 @@ import { money, pct, plainPct } from '../lib/format'
 import { classify } from '../lib/classify'
 import { holdingKey } from '../lib/portfolio'
 import { SEGMENTS, SEGMENT_LABELS } from '../lib/types'
-import type { RangeResult } from '../lib/types'
-import type { Holding, ItemAnalysis, Segment } from '../lib/types'
+import type { Holding, ItemAnalysis, RangeResult, Segment } from '../lib/types'
 
 type SortKey = 'name' | 'value' | 'unrealized' | 'roi' | 'segment'
 
@@ -76,18 +75,18 @@ export function HoldingsTable({ holdings, analyses, onOverride, onRemove }: Prop
               <th>Item</th>
               <th>Segment</th>
               <th className="num">Invested</th>
-              <th className="num">FMV</th>
+              <th className="num" title="Median of the last 5 completed comps across every venue">Market value</th>
+              <th className="num" title="The last completed eBay sale of this exact card at this grade">Last sold</th>
               <th className="num" title="Lowest this card has traded in the last 6 months">6-mo low</th>
               <th className="num" title="Highest this card has traded in the last 6 months">6-mo high</th>
               <th className="num" title="Highest this card has traded in the last 12 months">Yearly high</th>
-              <th className="num" title="The last completed eBay sale of this exact card at this grade">Market value</th>
               <th className="num">Unrealized</th>
               <th className="num">Return</th>
               <th aria-label="Actions" />
             </tr>
           </thead>
           <tbody>
-            {rows.map(({ h, a, cost, fmv, value, unrealized, roi }) => {
+            {rows.map(({ h, a, cost, fmv, unrealized, roi }) => {
               const inferred = classify({ ...h, override: null }).segment
               return (
                 <tr key={h.id}>
@@ -103,23 +102,11 @@ export function HoldingsTable({ holdings, analyses, onOverride, onRemove }: Prop
                   </td>
                   <td className="num tabular">{money(cost)}</td>
                   <td className="num"><PriceCell analysis={a} /></td>
+                  <td className="num"><LastSoldCell analysis={a} /></td>
                   <td className="num"><LowCell range={a?.sixMonthRange} fmv={fmv} /></td>
                   <td className="num"><HighCell range={a?.sixMonthRange} fmv={fmv} /></td>
                   <td className="num"><HighCell range={a?.range} fmv={fmv} /></td>
-                  <td className="num tabular font-medium">
-                    {money(value)}
-                    {a?.lastSale
-                      ? (
-                        <div className="text-[11px] muted font-normal" title={`Sold on eBay ${a.lastSale.date}`}>
-                          eBay · {a.lastSale.ageDays === 0 ? 'today' : `${a.lastSale.ageDays}d ago`}
-                        </div>
-                      )
-                      : value != null && (
-                        <div className="text-[11px] muted font-normal" title="No eBay sale on record, so the median of recent sales stands in.">
-                          median · no eBay sale
-                        </div>
-                      )}
-                  </td>
+
                   <td className="num tabular" style={{ color: unrealized == null ? undefined : unrealized >= 0 ? 'var(--delta-up)' : 'var(--delta-down)' }}>
                     {unrealized == null ? '—' : money(unrealized)}
                   </td>
@@ -193,6 +180,36 @@ function LowCell({ range, fmv }: { range?: RangeResult; fmv: number | null }) {
       {above != null && above <= 0.001 && (
         <div className="text-[11px] tabular" style={{ color: 'var(--delta-down)' }}>at low</div>
       )}
+    </>
+  )
+}
+
+/**
+ * The last price this exact card actually changed hands for on eBay.
+ *
+ * Kept beside the median rather than folded into it: the median is the better
+ * estimate of what the card is worth, and this is the better answer to what it
+ * went for. The age matters as much as the price, so a sale from eight months
+ * ago cannot pass for a current one.
+ */
+function LastSoldCell({ analysis }: { analysis?: ItemAnalysis }) {
+  const last = analysis?.lastSale
+  if (!last) {
+    return (
+      <>
+        <span className="muted">—</span>
+        <div className="text-[11px] muted" title="Card Ladder has no eBay sale on record for this cert within the last year.">
+          no eBay sale
+        </div>
+      </>
+    )
+  }
+  return (
+    <>
+      <div className="tabular">{money(last.price)}</div>
+      <div className="text-[11px] muted" title={`Sold on eBay ${last.date}`}>
+        {last.ageDays === 0 ? 'today' : last.ageDays === 1 ? 'yesterday' : `${last.ageDays}d ago`}
+      </div>
     </>
   )
 }

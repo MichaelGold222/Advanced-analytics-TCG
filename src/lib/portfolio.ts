@@ -16,18 +16,19 @@ export function holdingKey(h: Pick<Holding, 'name' | 'set' | 'number' | 'grader'
  * rather than falling back to cost basis, which would invent a 0% return.
  */
 /**
- * What one of these is worth right now.
+ * What one of these is worth.
  *
- * The last completed eBay sale of that exact card at that exact grade — the
- * price it actually changed hands for, rather than an average. Where there is
- * no eBay sale on record the median of recent sales stands in, so a card that
- * only ever sells at auction houses is still valued rather than dropped.
+ * The median of the last five completed comps, which is resistant to a single
+ * unusual result in a way that one sale is not. Where there are too few comps
+ * to take a median, the last sale stands in rather than leaving the position
+ * unvalued.
  *
  * Market value, unrealized and return all run through here, so the whole
- * portfolio is measured the same way.
+ * portfolio is measured the same way. The last sale is carried separately and
+ * shown beside it — see `ItemAnalysis.lastSale`.
  */
 export function unitValue(analysis?: ItemAnalysis): number | null {
-  return analysis?.lastSale?.price ?? analysis?.fmv.fmv ?? null
+  return analysis?.fmv.fmv ?? analysis?.lastSale?.price ?? null
 }
 
 export function analyzeHoldings(

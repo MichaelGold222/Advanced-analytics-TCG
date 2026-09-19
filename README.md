@@ -42,17 +42,16 @@ grade**. Nothing to upload but your own collection sheet.
 
 Two numbers, because they answer different questions:
 
-- **Market value** is the last completed **eBay** sale — the price the card
-  actually changed hands for. Auction-house results carry a buyer's premium and
-  a different audience, so they are not the answer to "what did it go for". A
-  card that has never sold on eBay falls back to the median rather than going
-  unvalued, and the table says which it used.
-- **FMV** is the median of the last five sales across every venue, which is
-  resistant to one unusual result and is the better estimate of what the card
-  is worth.
+- **Market value** is the median of the last five completed comps across every
+  venue. One sale can be an outlier; five cannot all be, so this is what the
+  portfolio is measured on — unrealized and return both run off it.
+- **Last sold** is the last completed **eBay** sale: the price this exact card
+  actually changed hands for, with how long ago beside it. Auction-house
+  results carry a buyer's premium and a different audience, so they are not the
+  answer to "what did it go for".
 
-Unrealized and return run off market value, so the whole portfolio is measured
-the same way.
+A card with too few comps to take a median falls back to its last sale rather
+than going unvalued.
 
 Source: Card Ladder, reached through [Parse](https://parse.bot), via its
 `get_cert_values_bulk` endpoint. Sales carry ISO dates and prices and come from

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { analyzeHoldings, buildValueTrend, computePortfolioStats, holdingKey } from './portfolio'
+import { analyzeHoldings, buildValueTrend, computePortfolioStats, holdingKey, unitValue } from './portfolio'
 import type { Holding, PricePoint, PriceSeries, Segment } from './types'
 
 const NOW = new Date('2026-09-18T00:00:00Z')
@@ -143,5 +143,31 @@ describe('buildValueTrend', () => {
   it('carries the cost basis through for the baseline rule', () => {
     const series = new Map([seriesFor(h, [{ date: daysBack(5), price: 300, source: 'sale' }])])
     expect(buildValueTrend([h], series, 365, NOW)[0].costBasis).toBe(2000)
+  })
+})
+
+describe('what drives market value', () => {
+  const analysis = (fmv: number | null, lastSale: number | null) => ({
+    key: 'k',
+    fmv: { fmv, confidence: 'medium' as const, agreement: 1, stalenessDays: 1, sampleSize: 5, contributors: [], rationale: [] },
+    range: { high: null, low: null, position: null, coverageDays: 0, sampleSize: 0, confidence: 'none' as const, estimated: true },
+    sixMonthRange: { high: null, low: null, position: null, coverageDays: 0, sampleSize: 0, confidence: 'none' as const, estimated: true },
+    lastSale: lastSale == null ? null : { price: lastSale, date: '2026-09-18', venue: 'ebay', ageDays: 1 },
+    entry: {} as never,
+    referencePrice: null,
+  })
+
+  it('uses the median of recent comps, not the single last sale', () => {
+    // One sale can be an outlier; the median of five is what the portfolio is
+    // measured on.
+    expect(unitValue(analysis(4200, 9900))).toBe(4200)
+  })
+
+  it('falls back to the last sale when there are too few comps to median', () => {
+    expect(unitValue(analysis(null, 9900))).toBe(9900)
+  })
+
+  it('leaves a position unvalued when there is neither', () => {
+    expect(unitValue(analysis(null, null))).toBeNull()
   })
 })
