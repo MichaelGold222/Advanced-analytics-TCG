@@ -1,8 +1,9 @@
-# Diagnostic: can Card Hedge's API drive this dashboard?
+# Diagnostic: read Card Hedge's OpenAPI spec.
 #
-# Decisive question: does it return individual completed sales (date + price,
-# per grade), or only an aggregate estimate? The valuation here is a median of
-# the last five real sales, so an aggregate alone cannot feed it.
+# It lists every endpoint and response field, which settles the decisive
+# question: does the API serve individual completed sales (date + price per
+# grade), or only an aggregate price? The valuation here is a median of the
+# last five real sales, so an aggregate alone cannot feed it.
 #
 # Run from the Actions tab → "Price API check" → Run workflow.
 name: Price API check
@@ -13,51 +14,52 @@ jobs:
   check:
     runs-on: ubuntu-latest
     steps:
-      - name: Does the advertised API host exist?
+      - name: Fetch the OpenAPI spec
         run: |
-          for host in cardhedge-api.com api.cardhedger.com ai.cardhedger.com cardhedger.com; do
-            printf '%-24s ' "$host"
-            if getent hosts "$host" >/dev/null 2>&1; then
-              echo "resolves -> $(getent hosts "$host" | head -1 | awk '{print $1}')"
-            else
-              echo "DOES NOT RESOLVE"
-            fi
+          for u in 'https://ai.cardhedger.com/v1/agent/docs' \
+                   'https://ai.cardhedger.com/v1/agent/openapi.json' \
+                   'https://ai.cardhedger.com/openapi.json'; do
+            printf '%-52s -> %s\n' "$u" \
+              "$(curl -sSL -m 15 -o /tmp/try.json -w '%{http_code}' -H 'Accept: application/json' "$u" 2>/dev/null || echo err)"
+            if head -c 1 /tmp/try.json 2>/dev/null | grep -q '{'; then cp /tmp/try.json /tmp/spec.json; echo "  ^ JSON captured"; fi
           done
 
-      - name: Try the plausible API bases
+      - name: Every endpoint the spec declares
         run: |
-          probe() {
-            code=$(curl -sSL -m 15 -o /tmp/r.txt -w '%{http_code}' \
-              -H 'User-Agent: Mozilla/5.0' -H 'Accept: application/json' "$1" 2>/dev/null) || code=unreachable
-            printf '%-58s -> %s\n' "$1" "$code"
-            [ -f /tmp/r.txt ] && head -c 220 /tmp/r.txt | tr -d '\n' && echo && echo
-            rm -f /tmp/r.txt
-          }
-          probe 'https://api.cardhedger.com/v1/cards/search?q=charizard'
-          probe 'https://api.cardhedger.com/v1/cards'
-          probe 'https://api.cardhedger.com/docs'
-          probe 'https://api.cardhedger.com/openapi.json'
-          probe 'https://cardhedger.com/api/v1/cards/search?q=charizard'
-
-      - name: Read the API page text, styles stripped
-        run: |
-          curl -sSL -o /tmp/docs.html -H 'User-Agent: Mozilla/5.0' 'https://api.cardhedger.com/' || true
-          tr '\n' ' ' < /tmp/docs.html \
-            | sed -e 's/<style[^>]*>[^<]*<\/style>/ /g' -e 's/<script[^>]*>.*\?<\/script>/ /g' \
-            | sed -e 's/<[^>]*>/\n/g' \
-            | sed -e 's/&amp;/\&/g' -e 's/&#39;/'"'"'/g' -e 's/&quot;/"/g' \
-            | grep -vE '^[[:space:]]*$' | grep -vE '^[[:space:]]*[.#@{}]' | head -80
-
-      - name: Endpoints and sales-related wording
-        run: |
-          echo "=== paths referenced ==="
-          grep -oiE '/(v[0-9]+|api)/[a-z0-9/_{}-]+' /tmp/docs.html | sort -u | head -30
+          if [ ! -s /tmp/spec.json ]; then echo "no JSON spec retrieved"; exit 0; fi
+          echo "=== paths ==="
+          jq -r '.paths | keys[]' /tmp/spec.json 2>/dev/null | head -40 || echo "not an OpenAPI doc"
           echo
-          echo "=== hostnames referenced ==="
-          grep -oiE 'https?://[a-z0-9.-]+' /tmp/docs.html | sort -u | head -20
+          echo "=== summaries ==="
+          jq -r '.paths | to_entries[] | "\(.key): \(.value | to_entries[0].value.summary // "")"' /tmp/spec.json 2>/dev/null | head -40 || true
+
+      - name: Does any response carry individual sales?
+        run: |
+          if [ ! -s /tmp/spec.json ]; then echo "no spec"; exit 0; fi
+          echo "=== schema property names mentioning sales, dates or grades ==="
+          jq -r '[paths(scalars) as $p | $p | join(".")] | .[]' /tmp/spec.json 2>/dev/null \
+            | grep -oiE '[a-z_]*(sale|sold|history|transaction|date|grade|psa|cert)[a-z_]*' \
+            | sort -u | head -40 || echo "none"
           echo
-          echo "=== keyword counts ==="
-          for kw in 'sales history' 'recent sales' 'last sale' 'sold' 'transaction' \
-                    'psa' 'grade' 'population' 'price' 'api key' 'coming soon' 'waitlist'; do
-            printf '%-16s %s\n' "$kw" "$(grep -oic "$kw" /tmp/docs.html || echo 0)"
+          echo "=== raw keyword counts in the spec ==="
+          for kw in sale sold history transaction date grade cert population price; do
+            printf '%-14s %s\n' "$kw" "$(grep -oic "$kw" /tmp/spec.json || echo 0)"
           done
+
+      - name: Pricing tiers, and can a browser call it?
+        run: |
+          echo "=== /v1/agent/pricing ==="
+          curl -sSL -m 15 -H 'Accept: application/json' 'https://ai.cardhedger.com/v1/agent/pricing' | head -c 900; echo
+          echo
+          echo "=== prices-by-cert without a key ==="
+          curl -sSL -m 15 -o /tmp/c.json -w 'HTTP %{http_code}\n' \
+            'https://ai.cardhedger.com/v1/agent/cards/prices-by-cert?cert=12345678' || true
+          head -c 300 /tmp/c.json; echo
+          echo
+          echo "=== CORS preflight ==="
+          curl -sS -m 15 -D - -o /dev/null -X OPTIONS \
+            -H 'Origin: https://michaelgold222.github.io' \
+            -H 'Access-Control-Request-Method: GET' \
+            -H 'Access-Control-Request-Headers: authorization' \
+            'https://ai.cardhedger.com/v1/agent/cards/prices-by-cert' | tr -d '\r' \
+            | grep -iE '^(HTTP/|access-control-)' || echo "  none -> needs a server to relay"
