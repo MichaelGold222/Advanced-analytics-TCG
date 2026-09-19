@@ -169,6 +169,17 @@ export function DataPanel({
               {usage.creditsLimit != null && ` of ${usage.creditsLimit.toLocaleString()}`}
             </p>
           )}
+          {/* The allowance that actually runs out first, and the one a refresh
+              was failing on with nothing on screen to explain it. */}
+          {usage?.dailyRemaining != null && (
+            <p
+              className="text-xs mt-1 tabular"
+              style={{ color: usage.dailyRemaining <= 10 ? 'var(--serious)' : undefined }}
+            >
+              {usage.dailyRemaining} request{usage.dailyRemaining === 1 ? '' : 's'} left today
+              {usage.dailyRemaining <= 10 && ' — a full refresh needs about 6'}
+            </p>
+          )}
           {gradedRefresh.failed.length > 0 && (
             <p className="text-xs mt-2 leading-relaxed" style={{ color: 'var(--serious)' }}>
               {gradedRefresh.failed.length} slab{gradedRefresh.failed.length === 1 ? '' : 's'} could not be
