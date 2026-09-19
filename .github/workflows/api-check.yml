@@ -268,3 +268,27 @@ jobs:
                   print('  cert_number =', r.get('cert_number'), '| grading_company =', r.get('grading_company'))
                   print('  name =', str(r.get('name') or r.get('card_name'))[:70])
           " || true
+
+      - name: Do the picture URLs actually serve?
+        env:
+          KEY: ${{ secrets.PARSE_API_KEY }}
+        run: |
+          [ -n "$KEY" ] || exit 0
+          [ -s blk.json ] || { echo "no bulk response to read"; exit 0; }
+          python3 -c "
+          import json
+          d = json.load(open('blk.json'))
+          urls = []
+          for r in (d.get('data') or {}).get('results') or []:
+              for k in ('image', 'thumbnail'):
+                  v = r.get(k)
+                  if isinstance(v, str) and v.startswith('http'):
+                      urls.append(k + ' ' + v)
+          open('urls.txt', 'w').write(chr(10).join(urls))
+          print('found', len(urls), 'picture urls')
+          "
+          while read -r kind url; do
+            [ -n "$url" ] || continue
+            code=$(curl -sS -m 30 -o /dev/null -L -w '%{http_code} %{content_type} %{size_download}' "$url" || echo "curl-failed")
+            printf '%-10s %s\n            %s\n' "$kind" "$code" "${url:0:110}"
+          done < urls.txt
