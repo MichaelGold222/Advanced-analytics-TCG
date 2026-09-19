@@ -73,7 +73,7 @@ export default function App() {
     const key = holdingKey(h)
     const s = series.get(key)
     if (!s) return []
-    const uv = unitValue(holdingAnalyses.get(key))
+    const uv = unitValue(holdingAnalyses.get(key), h.userPrice)
     return [{
       key: h.id,
       name: h.name,
@@ -86,7 +86,7 @@ export default function App() {
   const topHoldings = useMemo<HoldingBar[]>(() => {
     const byName = new Map<string, HoldingBar>()
     for (const h of holdings) {
-      const uv = unitValue(holdingAnalyses.get(holdingKey(h)))
+      const uv = unitValue(holdingAnalyses.get(holdingKey(h)), h.userPrice)
       if (uv == null) continue
       const value = uv * h.quantity
       const label = h.set ? `${h.name} · ${h.set}` : h.name
@@ -309,6 +309,7 @@ export default function App() {
           <HoldingsTable
             holdings={holdings} analyses={holdingAnalyses}
             onOverride={(id, s) => store.setSegmentOverride(id, s, 'holding')}
+            onSetValue={(id, v) => store.setHoldingValue(id, v)}
             onRemove={store.removeHolding}
           />
         ) : tab === 'watchlist' ? (

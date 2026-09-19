@@ -4,7 +4,7 @@ import { PriceCell } from './PriceCell'
 import { SegmentPicker } from './SegmentPicker'
 import { money, pct, plainPct } from '../lib/format'
 import { classify } from '../lib/classify'
-import { holdingKey } from '../lib/portfolio'
+import { holdingKey, unitValue } from '../lib/portfolio'
 import { SEGMENTS, SEGMENT_LABELS } from '../lib/types'
 import type { Holding, ItemAnalysis, RangeResult, Segment } from '../lib/types'
 
@@ -14,10 +14,11 @@ interface Props {
   holdings: Holding[]
   analyses: Map<string, ItemAnalysis>
   onOverride: (id: string, segment: Segment | null) => void
+  onSetValue: (id: string, value: number | null) => void
   onRemove: (id: string) => void
 }
 
-export function HoldingsTable({ holdings, analyses, onOverride, onRemove }: Props) {
+export function HoldingsTable({ holdings, analyses, onOverride, onSetValue, onRemove }: Props) {
   const [query, setQuery] = useState('')
   const [segment, setSegment] = useState<Segment | 'all'>('all')
   const [sort, setSort] = useState<SortKey>('value')
@@ -30,7 +31,8 @@ export function HoldingsTable({ holdings, analyses, onOverride, onRemove }: Prop
       .map((h) => {
         const a = analyses.get(holdingKey(h))
         const fmv = a?.fmv.fmv ?? null
-        const value = fmv == null ? null : fmv * h.quantity
+        const uv = unitValue(a, h.userPrice)
+        const value = uv == null ? null : uv * h.quantity
         const cost = h.costBasis * h.quantity
         return { h, a, fmv, value, cost, unrealized: value == null ? null : value - cost, roi: value == null || cost <= 0 ? null : (value - cost) / cost }
       })
@@ -77,6 +79,7 @@ export function HoldingsTable({ holdings, analyses, onOverride, onRemove }: Prop
               <th className="num">Invested</th>
               <th className="num" title="Median of the last 5 completed comps across every venue. A steadier estimate than any one sale, shown for reference.">Median of 5</th>
               <th className="num" title="The most recent completed sale of this exact card at this grade">Last sold</th>
+              <th className="num" title="A value you type in. It outranks the fetched prices for this card.">Your value</th>
               <th className="num" title="Lowest this card has traded in the last 6 months">6-mo low</th>
               <th className="num" title="Highest this card has traded in the last 6 months">6-mo high</th>
               <th className="num" title="Highest this card has traded in the last 12 months">Yearly high</th>
@@ -103,6 +106,9 @@ export function HoldingsTable({ holdings, analyses, onOverride, onRemove }: Prop
                   <td className="num tabular">{money(cost)}</td>
                   <td className="num"><PriceCell analysis={a} /></td>
                   <td className="num"><LastSoldCell analysis={a} /></td>
+                  <td className="num">
+                    <ValueInput value={h.userPrice ?? null} onChange={(v) => onSetValue(h.id, v)} />
+                  </td>
                   <td className="num"><LowCell range={a?.sixMonthRange} fmv={fmv} /></td>
                   <td className="num"><HighCell range={a?.sixMonthRange} fmv={fmv} /></td>
                   <td className="num"><HighCell range={a?.range} fmv={fmv} /></td>
@@ -225,5 +231,42 @@ function LastSoldCell({ analysis }: { analysis?: ItemAnalysis }) {
         {where ? `${where} · ${when}` : when}
       </div>
     </>
+  )
+}
+
+/**
+ * A price typed in by hand.
+ *
+ * Kept as text while being edited so a half-typed number is not parsed and
+ * bounced back; it is committed on blur or Enter. Empty clears the override
+ * and the fetched price takes over again, which is the only way back.
+ */
+function ValueInput({ value, onChange }: { value: number | null; onChange: (v: number | null) => void }) {
+  const [text, setText] = useState(value == null ? '' : String(value))
+  const [editing, setEditing] = useState(false)
+  // Follow the stored value unless the field is being typed in.
+  if (!editing) {
+    const shown = value == null ? '' : String(value)
+    if (shown !== text) setText(shown)
+  }
+
+  const commit = () => {
+    setEditing(false)
+    const n = Number(text.replace(/[^0-9.-]/g, ''))
+    onChange(text.trim() === '' || !Number.isFinite(n) || n <= 0 ? null : n)
+  }
+
+  return (
+    <input
+      className="input tabular text-right w-24 px-2 py-1"
+      inputMode="decimal"
+      placeholder="—"
+      aria-label="Your value for this card"
+      value={text}
+      onFocus={() => setEditing(true)}
+      onChange={(e) => setText(e.target.value)}
+      onBlur={commit}
+      onKeyDown={(e) => { if (e.key === 'Enter') e.currentTarget.blur() }}
+    />
   )
 }

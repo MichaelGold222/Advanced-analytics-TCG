@@ -75,6 +75,8 @@ interface AppState extends PersistedState {
   removeWatchItem(id: string): void
   updateWatchItem(id: string, patch: Partial<WatchItem>): void
   setSegmentOverride(id: string, segment: Segment | null, kind: 'holding' | 'watch'): void
+  /** A value typed in by hand, which outranks anything fetched. Null clears it. */
+  setHoldingValue(id: string, value: number | null): void
   removeHolding(id: string): void
   refreshPrices(provider?: PriceProvider): Promise<void>
   refreshGraded(opts?: { onlyMissing?: boolean }): Promise<void>
@@ -311,6 +313,15 @@ export const useStore = create<AppState>((setState, getState) => ({
         const merged = { ...w, ...patch }
         return { ...merged, ...reclassify(merged) }
       }),
+    })
+    scheduleSave(getState())
+  },
+
+  setHoldingValue(id, value) {
+    setState({
+      holdings: getState().holdings.map((h) =>
+        h.id === id ? { ...h, userPrice: value == null || !(value > 0) ? undefined : value } : h,
+      ),
     })
     scheduleSave(getState())
   },

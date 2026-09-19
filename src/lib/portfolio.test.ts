@@ -169,3 +169,40 @@ describe('what drives market value', () => {
     expect(unitValue(analysis(null, null))).toBeNull()
   })
 })
+
+describe('a value typed in by hand', () => {
+  const a = (fmv: number | null, last: number | null) => ({
+    key: 'k',
+    fmv: { fmv, confidence: 'medium' as const, agreement: 1, stalenessDays: 1, sampleSize: 5, contributors: [], rationale: [] },
+    range: { high: null, low: null, position: null, coverageDays: 0, sampleSize: 0, confidence: 'none' as const, estimated: true },
+    sixMonthRange: { high: null, low: null, position: null, coverageDays: 0, sampleSize: 0, confidence: 'none' as const, estimated: true },
+    lastSale: last == null ? null : { price: last, date: '2026-09-18', venue: 'ebay', ageDays: 1 },
+    entry: {} as never,
+    referencePrice: null,
+  })
+
+  it('outranks both the last sale and the median', () => {
+    // Whoever typed it knows something the sales record does not.
+    expect(unitValue(a(4200, 9900), 12_000)).toBe(12_000)
+  })
+
+  it('values a card that has no sales at all', () => {
+    expect(unitValue(a(null, null), 500)).toBe(500)
+  })
+
+  it('is ignored when cleared, so the fetched price takes over again', () => {
+    expect(unitValue(a(4200, 9900), null)).toBe(9900)
+  })
+
+  it('ignores a zero or negative entry rather than valuing a card at nothing', () => {
+    expect(unitValue(a(4200, 9900), 0)).toBe(9900)
+    expect(unitValue(a(4200, 9900), -5)).toBe(9900)
+  })
+
+  it('counts toward the portfolio total, not just the row', () => {
+    const h = holding({ name: 'Charizard', segment: 'vintage', userPrice: 12_000, costBasis: 5000 })
+    const stats = computePortfolioStats([h], new Map([[holdingKey(h), a(4200, 9900)]]))
+    expect(stats.marketValue).toBe(12_000)
+    expect(stats.unrealized).toBe(7000)
+  })
+})

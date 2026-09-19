@@ -27,7 +27,11 @@ export function holdingKey(h: Pick<Holding, 'name' | 'set' | 'number' | 'grader'
  * and the per-position figures agree. Where nothing has sold inside the window
  * the median stands in rather than leaving the position unvalued.
  */
-export function unitValue(analysis?: ItemAnalysis): number | null {
+export function unitValue(analysis?: ItemAnalysis, manual?: number | null): number | null {
+  // A value typed in by hand outranks anything fetched: whoever entered it
+  // knows something the sales record does not, and silently overruling them
+  // would make the number they typed look broken.
+  if (manual != null && manual > 0) return manual
   return analysis?.lastSale?.price ?? analysis?.fmv.fmv ?? null
 }
 
@@ -67,7 +71,7 @@ export function computePortfolioStats(
 
   for (const h of holdings) {
     const seg = bySegment.get(h.segment)!
-    const uv = unitValue(analyses.get(holdingKey(h)))
+    const uv = unitValue(analyses.get(holdingKey(h)), h.userPrice)
     const positionCost = h.costBasis * h.quantity
     const positionValue = uv != null ? uv * h.quantity : null
 
