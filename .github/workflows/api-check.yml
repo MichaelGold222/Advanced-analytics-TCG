@@ -397,32 +397,69 @@ jobs:
                       print('    body', ct, json.dumps(spec.get('schema'))[:300])
           " || true
 
-          CARD_ID=$(python3 -c "
-          import json
-          try:
-              d = json.load(open('blk.json'))
-          except Exception:
-              raise SystemExit
-          for r in (d.get('data') or {}).get('results') or []:
-              if isinstance(r, dict) and r.get('id'):
-                  print(r['id']); break
-          " || true)
-          echo "  card id from the bulk search: ${CARD_ID:-none}"
+          # Both sales endpoints want a `card_id`, and the `id` the bulk search
+          # returns is not it — the upstream answered "Card with id ... not
+          # found" and named Firestore in the error. The picture URL carries
+          # the Firestore document id in its path (.../o/cards%2F<id>?alt=media),
+          # so that is the candidate worth trying. Every other id-ish field on
+          # a result is printed alongside, in case this guess is wrong.
+          echo
+          echo "=== every id-ish field the responses carry ==="
+          python3 -c "
+          import json, re, urllib.parse
+          cands = []
+          def scan(path, node):
+              if isinstance(node, dict):
+                  for k, v in node.items(): scan(path + '/' + str(k), v)
+              elif isinstance(node, list):
+                  for i, v in enumerate(node[:2]): scan(path + '[%d]' % i, v)
+              elif isinstance(node, str):
+                  if re.search(r'(^|_)id$', path.rsplit('/', 1)[-1], re.I):
+                      cands.append((path, node))
+                  m = re.search(r'/o/cards%2F([^?/]+)', node)
+                  if m: cands.append((path + ' (from the picture URL)', urllib.parse.unquote(m.group(1))))
+          for f in ('blk.json', 'prof2.json'):
+              try: scan(f, json.load(open(f)))
+              except Exception: pass
+          seen = set()
+          out = []
+          for p, v in cands:
+              if v in seen: continue
+              seen.add(v); out.append(v)
+              print('  %-55s = %s' % (p, v))
+          open('ids.txt', 'w').write(chr(10).join(out))
+          " || true
 
-          if [ -n "$CARD_ID" ]; then
-            for q in "card_id=$CARD_ID" "id=$CARD_ID" "cert_number=$ONE&grading_company=$GRADER"; do
-              printf '\n  --- GET get_card_sales?%s ---\n' "$q"
-              code=$(curl -sS -m 120 -o sales.json -w '%{http_code}' -D sales.head \
-                -H "X-API-Key: $KEY" "$BASE/scraper/$SCR/get_card_sales?$q" || echo 000)
-              echo "  HTTP $code"
-              tr -d '\r' < sales.head | grep -iE '^x-credits-charged' | sed 's/^/  /' || true
-              if [ "$code" = "200" ]; then
-                python3 depth.py sales.json 'get_card_sales' sales
-                python3 depth.py sales.json 'get_card_sales' sale_records
-                python3 depth.py sales.json 'get_card_sales' recent_sales
-                head -c 300 sales.json | sed 's/^/  /'; echo
-                break
-              fi
+          while read -r CARD_ID; do
+            [ -n "$CARD_ID" ] || continue
+            printf '\n  --- GET get_card_sales?card_id=%s ---\n' "$CARD_ID"
+            code=$(curl -sS -m 120 -o sales.json -w '%{http_code}' -D sales.head \
+              -H "X-API-Key: $KEY" "$BASE/scraper/$SCR/get_card_sales?card_id=$CARD_ID" || echo 000)
+            echo "  HTTP $code"
+            tr -d '\r' < sales.head | grep -iE '^x-credits-charged' | sed 's/^/  /' || true
+            if [ "$code" != "200" ]; then
               head -c 200 sales.json | sed 's/^/  /'; echo
+              continue
+            fi
+            for k in sales sale_records recent_sales results data; do
+              python3 depth.py sales.json "get_card_sales/$k" "$k"
             done
-          fi
+            head -c 400 sales.json | sed 's/^/  /'; echo
+
+            # The paginated twin. If a page of 200 comes back full, the depth is
+            # however many pages there are, and the five-sale ceiling is gone.
+            printf '\n  --- GET get_card_sales_detail?card_id=%s&limit=200&page=1 ---\n' "$CARD_ID"
+            code=$(curl -sS -m 120 -o det.json -w '%{http_code}' -D det.head \
+              -H "X-API-Key: $KEY" "$BASE/scraper/$SCR/get_card_sales_detail?card_id=$CARD_ID&limit=200&page=1" || echo 000)
+            echo "  HTTP $code"
+            tr -d '\r' < det.head | grep -iE '^x-credits-charged' | sed 's/^/  /' || true
+            if [ "$code" = "200" ]; then
+              for k in sales sale_records recent_sales results data; do
+                python3 depth.py det.json "get_card_sales_detail/$k" "$k"
+              done
+              head -c 400 det.json | sed 's/^/  /'; echo
+            else
+              head -c 200 det.json | sed 's/^/  /'; echo
+            fi
+            break
+          done < ids.txt
