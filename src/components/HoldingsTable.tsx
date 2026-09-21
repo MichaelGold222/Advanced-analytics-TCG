@@ -103,9 +103,9 @@ export function HoldingsTable({
               <th className="num">Invested</th>
               <th className="num" title="Median of the last 5 completed comps across every venue. A steadier estimate than any one sale, shown for reference.">Median of 5</th>
               <th className="num" title="The most recent completed sale of this exact card at this grade">Last sold</th>
-              <th className="num" title="Lowest this card has traded in the last 6 months">6-mo low</th>
-              <th className="num" title="Highest this card has traded in the last 6 months">6-mo high</th>
-              <th className="num" title="Highest this card has traded in the last 12 months">Yearly high</th>
+              <th className="num" title="Lowest this card has traded in the last 6 months. Where the sales on record do not reach back that far, the actual span is shown under the figure.">6-mo low</th>
+              <th className="num" title="Highest this card has traded in the last 6 months. Where the sales on record do not reach back that far, the actual span is shown under the figure.">6-mo high</th>
+              <th className="num" title="Highest this card has traded in the last 12 months. Where the sales on record do not reach back that far, the actual span is shown under the figure — a 12-month label over three months of sales is not a yearly high.">Yearly high</th>
               <th className="num" title="Last sold minus what you paid">Unrealized</th>
               <th className="num" title="Unrealized gain over what you paid">Return</th>
               <th aria-label="Actions" />
@@ -215,6 +215,41 @@ export function HoldingsTable({
 }
 
 /**
+ * What the band actually spans, when that is less than the window it is named
+ * after.
+ *
+ * The graded feed returns only the newest few sales per certificate — five,
+ * measured — so a card that trades often has a record going back a couple of
+ * months and no further. The high of those is a real high and worth seeing;
+ * calling it a yearly high is not. Nor can the app tell "nothing older traded"
+ * from "we were not told about it", so it reports the span and leaves the
+ * conclusion alone.
+ */
+function CoverageNote({ range }: { range: RangeResult }) {
+  if (range.sampleSize === 0) return null
+  if (range.coversWindow) {
+    return range.estimated ? (
+      <div
+        className="text-[11px] muted"
+        title={`Only ${range.sampleSize} observation${range.sampleSize === 1 ? '' : 's'} across ${Math.round(range.coverageDays)} days.`}
+      >
+        thin data
+      </div>
+    ) : null
+  }
+  const days = Math.round(range.coverageDays)
+  return (
+    <div
+      className="text-[11px]"
+      style={{ color: 'var(--warn, var(--text-muted))' }}
+      title={`${range.sampleSize} sale${range.sampleSize === 1 ? '' : 's'} on record, the oldest from ${range.oldest}. Nothing older is on file, so this is the high and low of ${days} days rather than of the full window.`}
+    >
+      {days === 0 ? 'one day only' : `${days} days of sales`}
+    </div>
+  )
+}
+
+/**
  * A high-water mark, with how far under it the card currently sits.
  *
  * The gap is the point: a high on its own says nothing about whether now is
@@ -236,11 +271,7 @@ function HighCell({ range, fmv }: { range?: RangeResult; fmv: number | null }) {
       {below != null && below <= 0.001 && (
         <div className="text-[11px] tabular" style={{ color: 'var(--delta-up)' }}>at high</div>
       )}
-      {range?.estimated && (
-        <div className="text-[11px] muted" title={`Only ${range.sampleSize} observation${range.sampleSize === 1 ? '' : 's'} across ${range.coverageDays} days, so this is the highest seen rather than a full-window high.`}>
-          thin data
-        </div>
-      )}
+      {range && <CoverageNote range={range} />}
     </>
   )
 }
@@ -265,6 +296,7 @@ function LowCell({ range, fmv }: { range?: RangeResult; fmv: number | null }) {
       {above != null && above <= 0.001 && (
         <div className="text-[11px] tabular" style={{ color: 'var(--delta-down)' }}>at low</div>
       )}
+      {range && <CoverageNote range={range} />}
     </>
   )
 }

@@ -41,6 +41,17 @@ export const FMV_HALF_LIFE_DAYS = 45
 export const WINDOW_DAYS = 365
 
 /**
+ * How much of a window the sales must span before the band may be called by
+ * that window's name.
+ *
+ * Three quarters of a year of sales is a 52-week high in every sense that
+ * matters; a quarter of one is not, however many sales are in it. The bar is
+ * about the calendar the band spans, never the number of points — five sales
+ * across eleven months say more about the year than thirty across a fortnight.
+ */
+export const WINDOW_COVERED_FRACTION = 0.75
+
+/**
  * How many recent sales the median is taken over.
  *
  * For graded cards this is the method that matters: a median of the last few
@@ -243,6 +254,7 @@ export function computeRange(
     return {
       high: null, low: null, position: null, coverageDays: 0, sampleSize: 0,
       confidence: 'none', estimated: true, fromTrades: false,
+      windowDays, oldest: null, newest: null, coversWindow: false,
     }
   }
   const prices = windowed.map(effectivePrice)
@@ -257,11 +269,24 @@ export function computeRange(
 
   const position = reference != null && high > low ? clamp01((reference - low) / (high - low)) : reference != null ? 0.5 : null
 
+  const oldest = windowed[0].date
+  const newest = windowed[windowed.length - 1].date
+
   return {
     high, low, position, coverageDays, sampleSize: windowed.length, confidence,
     // A band with no trades under it is indicative whatever its coverage.
     estimated: !fromTrades || wide < 0.25 || windowed.length < 8,
     fromTrades,
+    windowDays,
+    oldest,
+    newest,
+    // The graded feed hands back only the newest few sales per certificate —
+    // five, measured — so asking for a year and getting three months of them
+    // is the ordinary case, not an edge case. When that happens the band is
+    // the high and low of those three months, and there is no way to tell
+    // "nothing older traded" from "we were not told about it". Either way it
+    // is not a 52-week high, and the label has to stop saying so.
+    coversWindow: daysAgo(oldest, now) >= windowDays * WINDOW_COVERED_FRACTION,
   }
 }
 

@@ -153,6 +153,7 @@ describe('buildValueTrend', () => {
 const EMPTY_RANGE = {
   high: null, low: null, fromTrades: false, position: null, coverageDays: 0, sampleSize: 0,
   confidence: 'none' as const, estimated: true,
+  windowDays: 365, oldest: null, newest: null, coversWindow: false,
 }
 
 describe('what drives market value', () => {

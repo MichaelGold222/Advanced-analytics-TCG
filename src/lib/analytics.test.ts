@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
-  LISTING_HAIRCUT, SIX_MONTH_DAYS, TREND_FLAT_BAND, analyzeItem, buildSeries, compute52WeekRange,
+  LISTING_HAIRCUT, SIX_MONTH_DAYS, TREND_FLAT_BAND, WINDOW_DAYS, analyzeItem, buildSeries, compute52WeekRange,
   computeEntry, computeFmv, computeRange, computeTrend, gradedPricingNote, lastSaleAt,
 } from './analytics'
 import type { PricePoint, PriceSeries } from './types'
@@ -633,5 +633,63 @@ describe('an entry price the market would actually meet', () => {
 
   it('still ranks a cheaper ask above a dearer one', () => {
     expect(entryFor(900).entry.score).toBeGreaterThan(entryFor(1300).entry.score)
+  })
+})
+
+describe('a band that does not span the window it is named after', () => {
+  const NOW_ = new Date('2026-09-19T00:00:00Z')
+  const back = (n: number) => new Date(NOW_.getTime() - n * 86_400_000).toISOString().slice(0, 10)
+  const sale = (daysAgo: number, price: number): PricePoint => ({ date: back(daysAgo), price, source: 'sale' })
+
+  // The five sales the live API returned for cert 93083876, measured.
+  const truncated: PriceSeries = {
+    key: 'k',
+    points: [sale(96, 9800), sale(66, 11200), sale(26, 21600), sale(12, 21000), sale(4, 20500)],
+  }
+
+  it('says so, rather than passing three months off as a year', () => {
+    const r = computeRange(truncated, 21000, NOW_, WINDOW_DAYS)
+    expect(r.high).toBe(21600)
+    expect(r.coversWindow).toBe(false)
+    expect(Math.round(r.coverageDays)).toBe(92)
+    expect(r.oldest).toBe(back(96))
+    expect(r.newest).toBe(back(4))
+  })
+
+  it('accepts a window the sales genuinely reach across', () => {
+    const full: PriceSeries = {
+      key: 'k',
+      points: [sale(350, 9800), sale(200, 11200), sale(100, 21600), sale(4, 21000)],
+    }
+    expect(computeRange(full, 21000, NOW_, WINDOW_DAYS).coversWindow).toBe(true)
+  })
+
+  it('judges coverage on the calendar, not on how many sales are in it', () => {
+    // Thirty sales inside a fortnight still say nothing about the year.
+    const dense: PriceSeries = {
+      key: 'k',
+      points: Array.from({ length: 30 }, (_, i) => sale(i, 1000 + i * 10)),
+    }
+    const r = computeRange(dense, 1000, NOW_, WINDOW_DAYS)
+    expect(r.sampleSize).toBe(30)
+    expect(r.coversWindow).toBe(false)
+  })
+
+  it('reports the window that was asked for, so a caller can word it', () => {
+    expect(computeRange(truncated, null, NOW_, 182).windowDays).toBe(182)
+    expect(computeRange(truncated, null, NOW_, WINDOW_DAYS).windowDays).toBe(WINDOW_DAYS)
+  })
+
+  it('covers a short window it does span, with the same sales', () => {
+    // 92 days of sales is a six-month band that falls short and a three-month
+    // band that does not: the same record, judged against what was claimed.
+    expect(computeRange(truncated, null, NOW_, 182).coversWindow).toBe(false)
+    expect(computeRange(truncated, null, NOW_, 100).coversWindow).toBe(true)
+  })
+
+  it('has nothing to cover when there are no points', () => {
+    const r = computeRange({ key: 'k', points: [] }, null, NOW_, WINDOW_DAYS)
+    expect(r.coversWindow).toBe(false)
+    expect(r.oldest).toBeNull()
   })
 })

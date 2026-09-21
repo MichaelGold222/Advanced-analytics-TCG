@@ -292,3 +292,137 @@ jobs:
             code=$(curl -sS -m 30 -o /dev/null -L -w '%{http_code} %{content_type} %{size_download}' "$url" || echo "curl-failed")
             printf '%-10s %s\n            %s\n' "$kind" "$code" "${url:0:110}"
           done < urls.txt
+
+      # The bulk price endpoint returns the newest five sales per cert, which
+      # is three months of history on a card that trades monthly — and the app
+      # was calling the high of those five a 52-week high. This asks every
+      # endpoint that carries sales how deep its history actually goes, so the
+      # answer comes from the API rather than from an assumption about it.
+      - name: How far back does the sales history go?
+        env:
+          KEY: ${{ secrets.PARSE_API_KEY }}
+          CERT: ${{ inputs.cert }}
+          GRADER: ${{ inputs.grader }}
+        run: |
+          [ -n "$KEY" ] || exit 0
+          [ -s detail.json ] || { echo "no scraper resolved earlier"; exit 0; }
+          SCR=$(python3 -c "
+          import json
+          d = json.load(open('detail.json'))
+          print(d.get('result_scraper_id') or d.get('scraper_id') or '')
+          ")
+          [ -n "$SCR" ] || exit 0
+          ONE=$(python3 -c "
+          import os
+          print([c.strip() for c in os.environ['CERT'].replace(chr(10), ',').split(',') if c.strip()][0])
+          ")
+
+          cat > depth.py <<'PY'
+          import json, sys, re
+          from datetime import datetime, timezone
+
+          def parse(d):
+              if not isinstance(d, str): return None
+              try:
+                  return datetime.fromisoformat(d.replace('Z', '+00:00'))
+              except ValueError:
+                  return None
+
+          def summarise(label, sales):
+              if not isinstance(sales, list) or not sales:
+                  print('  %-22s no sales array' % label); return
+              dates = sorted(x for x in (parse(s.get('date') or s.get('sale_date') or s.get('sold_date'))
+                                         for s in sales if isinstance(s, dict)) if x)
+              if not dates:
+                  print('  %-22s %d entries, no readable dates' % (label, len(sales))); return
+              span = (dates[-1] - dates[0]).days
+              age = (datetime.now(timezone.utc) - dates[0]).days
+              print('  %-22s %3d sales | oldest %s (%d days ago) | newest %s | spans %d days'
+                    % (label, len(sales), dates[0].date(), age, dates[-1].date(), span))
+
+          def dig(node, key):
+              """Every list stored under `key`, however deep."""
+              out = []
+              if isinstance(node, dict):
+                  for k, v in node.items():
+                      if k == key and isinstance(v, list): out.append(v)
+                      else: out.extend(dig(v, key))
+              elif isinstance(node, list):
+                  for v in node: out.extend(dig(v, key))
+              return out
+
+          path, label, key = sys.argv[1], sys.argv[2], sys.argv[3]
+          try:
+              d = json.load(open(path))
+          except Exception as e:
+              print('  %-22s unreadable (%s)' % (label, e)); raise SystemExit
+          lists = dig(d, key)
+          if not lists:
+              print('  %-22s no "%s" anywhere; top-level keys %s'
+                    % (label, key, sorted(d) if isinstance(d, dict) else type(d).__name__))
+          for i, sales in enumerate(lists[:3]):
+              summarise(label + ('' if len(lists) == 1 else '[%d]' % i), sales)
+          PY
+
+          echo "=== what the bulk price call already gave us ==="
+          [ -s bulk.json ] && python3 depth.py bulk.json get_cert_values_bulk recent_sales || echo "  no bulk.json"
+
+          echo
+          echo "=== does the bulk SEARCH carry deeper history? (1 credit, 200 certs) ==="
+          [ -s blk.json ] && python3 depth.py blk.json search_by_certs_bulk recent_sales || echo "  no blk.json"
+
+          echo
+          echo "=== the per-cert profile ==="
+          curl -sS -m 120 -o prof2.json -H "X-API-Key: $KEY" \
+            "$BASE/scraper/$SCR/get_cert_full_profile?cert_number=$ONE&grading_company=$GRADER" || true
+          python3 depth.py prof2.json 'profile sale_records' sale_records
+          python3 depth.py prof2.json 'profile recent_sales' recent_sales
+
+          echo
+          echo "=== get_card_sales: what does it take? ==="
+          python3 -c "
+          import json
+          try:
+              d = json.load(open('spec.json'))
+          except Exception:
+              print('  no spec'); raise SystemExit
+          for p, ops in sorted(d.get('paths', {}).items()):
+              if 'card_sales' not in p and 'sales' not in p: continue
+              print(' ', p)
+              for verb, op in ops.items():
+                  params = [(q.get('name'), q.get('in'), q.get('required')) for q in op.get('parameters', [])]
+                  print('   ', verb.upper(), 'params:', params or 'none in spec')
+                  body = (op.get('requestBody') or {}).get('content', {})
+                  for ct, spec in body.items():
+                      print('    body', ct, json.dumps(spec.get('schema'))[:300])
+          " || true
+
+          CARD_ID=$(python3 -c "
+          import json
+          try:
+              d = json.load(open('blk.json'))
+          except Exception:
+              raise SystemExit
+          for r in (d.get('data') or {}).get('results') or []:
+              if isinstance(r, dict) and r.get('id'):
+                  print(r['id']); break
+          " || true)
+          echo "  card id from the bulk search: ${CARD_ID:-none}"
+
+          if [ -n "$CARD_ID" ]; then
+            for q in "card_id=$CARD_ID" "id=$CARD_ID" "cert_number=$ONE&grading_company=$GRADER"; do
+              printf '\n  --- GET get_card_sales?%s ---\n' "$q"
+              code=$(curl -sS -m 120 -o sales.json -w '%{http_code}' -D sales.head \
+                -H "X-API-Key: $KEY" "$BASE/scraper/$SCR/get_card_sales?$q" || echo 000)
+              echo "  HTTP $code"
+              tr -d '\r' < sales.head | grep -iE '^x-credits-charged' | sed 's/^/  /' || true
+              if [ "$code" = "200" ]; then
+                python3 depth.py sales.json 'get_card_sales' sales
+                python3 depth.py sales.json 'get_card_sales' sale_records
+                python3 depth.py sales.json 'get_card_sales' recent_sales
+                head -c 300 sales.json | sed 's/^/  /'; echo
+                break
+              fi
+              head -c 200 sales.json | sed 's/^/  /'; echo
+            done
+          fi

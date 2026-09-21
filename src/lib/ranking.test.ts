@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { analyzeItem } from './analytics'
-import { drawdownFromHigh, rankItem, rankWatchlist, recentTrend } from './ranking'
+import { DEEP_RECORD_DAYS, drawdownFromHigh, rankItem, rankWatchlist, recentTrend } from './ranking'
 import type { ItemAnalysis, PricePoint, PriceSeries, WatchItem } from './types'
 
 const day = 86_400_000
@@ -137,6 +137,28 @@ describe('what the ranking refuses to do', () => {
 
   it('warns when the all-time high rests on almost nothing', () => {
     const r = rank('a', [[300, 1000], [150, 1400], [20, 900]])
+    // Three sales across 280 days. The record is what is thin, and saying how
+    // far back it goes is more use than saying how many points are in it.
+    expect(r.warnings.join(' ')).toMatch(/record only goes back/i)
+    expect(r.warnings.join(' ')).toMatch(/280 days, 3 sales/)
+  })
+
+  it('names the drawdown as the thing a shallow record gets wrong', () => {
+    // Drawdown carries the most weight in the score and is measured against
+    // the all-time high, so a record that starts after the peak scores the
+    // card as sitting at its high. That has to be said next to the number.
+    const r = rank('a', [[90, 1000], [45, 1100], [10, 1050]])
+    expect(r.warnings.join(' ')).toMatch(/drawdown may be understated/i)
+  })
+
+  it('stops warning once the record spans a year', () => {
+    const r = rank('a', [[700, 4000], [500, 3000], [300, 3500], [150, 3200], [20, 3100]])
+    expect(r.analysis!.allTimeRange.coverageDays).toBeGreaterThan(DEEP_RECORD_DAYS)
+    expect(r.warnings.join(' ')).not.toMatch(/record only goes back|short time/i)
+  })
+
+  it('still counts the points when the record is long but nearly empty', () => {
+    const r = rank('a', [[700, 4000], [400, 3000], [20, 3100]])
     expect(r.warnings.join(' ')).toMatch(/all time. is a short time/i)
   })
 

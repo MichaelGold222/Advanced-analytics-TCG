@@ -12,7 +12,7 @@ import { importWorkbook, mergeHistory, reclassify } from './ingest'
 import { itemKey } from './key'
 import { holdingAsWatchItem } from './portfolio'
 import { refreshQuotes, type PriceProvider, type RefreshTarget } from './pricing'
-import { isSupportedGrader, type PriceFeed } from './providers/cardladder'
+import { isSupportedGrader, mergeSalePoints, type PriceFeed } from './providers/cardladder'
 import {
   fetchCertImages, fetchCertPrices, getParseKey, ParseError, type UsageInfo,
 } from './providers/cardladder-client'
@@ -251,8 +251,15 @@ export const useStore = create<AppState>((setState, getState) => ({
         onProgress: (done, total) => setState({ gradedRefresh: { ...getState().gradedRefresh, done, total } }),
       })
 
+      // Union, not replace. The upstream returns only the newest few sales
+      // per cert, so overwriting discarded everything that had since aged out
+      // of its window — the record got shallower the more often it was
+      // refreshed. See mergeSalePoints.
       const certSales = { ...getState().certSales }
-      for (const p of prices) if (p.points.length > 0) certSales[p.cert] = p.points
+      for (const p of prices) {
+        if (p.points.length === 0) continue
+        certSales[p.cert] = mergeSalePoints(certSales[p.cert] ?? [], p.points)
+      }
 
       const priced = prices.filter((p) => p.points.length > 0).length
       setState({

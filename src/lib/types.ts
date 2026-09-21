@@ -149,6 +149,18 @@ export interface RangeResult {
   confidence: Confidence
   /** True when the window is too thin to be a real 52-week high. */
   estimated: boolean
+  /** The window that was asked for, in days. */
+  windowDays: number
+  /** The oldest and newest points the band rests on. */
+  oldest: string | null
+  newest: string | null
+  /**
+   * True when the sales actually reach back far enough to justify the window's
+   * name. When it is false the band is still correct — it is the high and low
+   * of what traded — but it is the high of `coverageDays`, not of the year,
+   * and calling it a 52-week high overstates it.
+   */
+  coversWindow: boolean
 }
 
 export type EntryVerdict = 'strong_buy' | 'buy' | 'fair' | 'rich' | 'overpriced' | 'unknown'

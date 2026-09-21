@@ -148,6 +148,12 @@ const pct = (x: number) => `${Math.round(x * 100)}%`
  */
 const rate = (logRate: number) => `${Math.round(Math.expm1(logRate) * 100)}%`
 
+/**
+ * How much calendar a record needs before its maximum counts as an all-time
+ * high. A year: less than that and the phrase is claiming more than it knows.
+ */
+export const DEEP_RECORD_DAYS = 365
+
 /** How far below its all-time high a card currently sits. */
 export function drawdownFromHigh(analysis: ItemAnalysis): number | null {
   const high = analysis.allTimeRange.high
@@ -287,8 +293,25 @@ export function rankItem(
   } else if (analysis.forecast.shrunk) {
     warnings.push('Its record is thin enough that the forecast leans mostly on its segment rather than on this card.')
   }
-  if (analysis.allTimeRange.sampleSize < 5) {
-    warnings.push(`The all-time high rests on ${analysis.allTimeRange.sampleSize} observations, so "all time" is a short time.`)
+  // Drawdown is the heaviest thing in this score, and it is measured against
+  // the all-time high — so how far back the record goes decides the number.
+  // The graded feed hands back the newest five sales per slab, which on an
+  // actively traded card is a few months: a card that peaked eighteen months
+  // ago and has halved since reads as sitting at its all-time high and scores
+  // zero on the one component that was asked for. Say so, rather than letting
+  // a confident number rest on a quarter of history.
+  //
+  // Measured on the calendar rather than on `coversWindow`: the all-time band
+  // asks for a decade, which no record here covers, so that flag would fire on
+  // every card and mean nothing. A year of sales is the bar at which "all-time
+  // high" stops being a figure of speech.
+  const all = analysis.allTimeRange
+  if (all.sampleSize > 0 && all.coverageDays < DEEP_RECORD_DAYS) {
+    warnings.push(
+      `The record only goes back to ${all.oldest} — ${Math.round(all.coverageDays)} days, ${all.sampleSize} sale${all.sampleSize === 1 ? '' : 's'}. The "all-time high" is the high of that, so a peak before it is invisible here and the drawdown may be understated.`,
+    )
+  } else if (all.sampleSize < 5) {
+    warnings.push(`The all-time high rests on ${all.sampleSize} observations, so "all time" is a short time.`)
   }
 
   const reasons = [...components]

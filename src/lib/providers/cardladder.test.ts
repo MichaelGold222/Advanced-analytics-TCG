@@ -2,10 +2,11 @@ import { describe, expect, it } from 'vitest'
 import {
   CALL_OVERHEAD_MS, CREDITS_PER_CALL, FETCH_CONCURRENCY, MAX_CERTS_PER_CALL, MIN_BATCH_SIZE, MS_PER_CERT,
   TARGET_CALLS,
-  batchCerts, buildFeed, estimateFetch, isSupportedGrader, parseBulkResponse, planBatchSize,
-  parseCertImages, salesToPricePoints, venueOf,
+  batchCerts, buildFeed, estimateFetch, isSupportedGrader, mergeSalePoints, parseBulkResponse,
+  planBatchSize, parseCertImages, salesToPricePoints, venueOf,
 } from './cardladder'
 import { computeFmv } from '../analytics'
+import type { PricePoint } from '../types'
 
 /** A verbatim response from the live API, used as the fixture. */
 const LIVE_BULK = {
@@ -326,5 +327,35 @@ describe('pictures of the slabs', () => {
   it('survives a response of the wrong shape', () => {
     expect(parseCertImages({}, asked)).toEqual([])
     expect(parseCertImages(null, asked)).toEqual([])
+  })
+})
+
+describe('folding a fetch into what is already held', () => {
+  const p = (date: string, price: number): PricePoint => ({ date, price, source: 'sale' })
+
+  it('keeps sales that have aged out of the upstream window', () => {
+    // The bulk endpoint returns the newest five. Three fetches over a busy
+    // card used to leave five sales on record; now it leaves all of them.
+    const first = [p('2026-01-10', 100), p('2026-02-10', 110), p('2026-03-10', 120)]
+    const second = [p('2026-03-10', 120), p('2026-04-10', 130), p('2026-05-10', 140)]
+    const merged = mergeSalePoints(first, second)
+    expect(merged.map((x) => x.date)).toEqual([
+      '2026-01-10', '2026-02-10', '2026-03-10', '2026-04-10', '2026-05-10',
+    ])
+  })
+
+  it('does not count the overlap twice', () => {
+    const same = [p('2026-03-10', 120), p('2026-04-10', 130)]
+    expect(mergeSalePoints(same, same)).toHaveLength(2)
+  })
+
+  it('keeps two sales of the same card on the same day at different prices', () => {
+    // Two copies can trade on one day, and they are two observations.
+    const merged = mergeSalePoints([p('2026-03-10', 120)], [p('2026-03-10', 180)])
+    expect(merged).toHaveLength(2)
+  })
+
+  it('starts from nothing without complaint', () => {
+    expect(mergeSalePoints([], [p('2026-03-10', 120)])).toHaveLength(1)
   })
 })

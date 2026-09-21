@@ -135,6 +135,32 @@ export function salesToPricePoints(sales: CardLadderSale[] | undefined): PricePo
   return points.sort((a, b) => a.date.localeCompare(b.date))
 }
 
+/**
+ * Fold a freshly fetched sales list into the one already held.
+ *
+ * The bulk endpoint returns only the newest few sales per certificate — five,
+ * measured against the live API — so its window slides forward as the card
+ * trades. Replacing the stored list with each response therefore threw away
+ * every sale that had aged out of it: after three fetches the app knew less
+ * about a busy card than it had after one, and the "52-week high" was the high
+ * of whatever the last few weeks happened to contain.
+ *
+ * Keeping the union costs nothing and the record only deepens. Duplicates come
+ * back on every call by construction, so they are matched on date and price —
+ * the same pair the parser already dedupes within one response.
+ */
+export function mergeSalePoints(existing: PricePoint[], incoming: PricePoint[]): PricePoint[] {
+  const seen = new Set<string>()
+  const out: PricePoint[] = []
+  for (const p of [...existing, ...incoming]) {
+    const sig = `${p.date}|${p.price}`
+    if (seen.has(sig)) continue
+    seen.add(sig)
+    out.push(p)
+  }
+  return out.sort((a, b) => a.date.localeCompare(b.date))
+}
+
 export interface CertPrices {
   cert: string
   grader: string

@@ -332,12 +332,18 @@ function Reasoning({
             <tr><th>Window</th><th className="num">Low</th><th className="num">High</th></tr>
           </thead>
           <tbody>
-            <BandRow label="6 months" r={analysis.sixMonthRange} />
-            <BandRow label="1 year" r={range} />
-            <BandRow label="2 years" r={analysis.twoYearRange} />
-            <BandRow label="All time" r={analysis.allTimeRange} />
+            {bandRows(analysis).map((b) => <BandRow key={b.label} label={b.label} note={b.note} r={b.r} />)}
           </tbody>
         </table>
+        {!range.coversWindow && range.sampleSize > 0 && (
+          <p className="text-xs muted mb-2">
+            Only {Math.round(range.coverageDays)} days of sales are on record — the oldest is
+            from {range.oldest}. Every window above therefore rests on the same{' '}
+            {range.sampleSize} sale{range.sampleSize === 1 ? '' : 's'}, and none of them is
+            a 52-week high. The graded feed returns the newest few sales per slab, so the
+            record deepens each time it is fetched.
+          </p>
+        )}
         <dl className="text-sm space-y-1.5">
           <Row label="Position in the year's band" value={range.position == null ? '—' : plainPct(range.position, 0)} />
           <Row label="History covered" value={`${Math.round(analysis.allTimeRange.coverageDays)} days · ${analysis.allTimeRange.sampleSize} points`} />
@@ -401,14 +407,42 @@ function Reasoning({
   )
 }
 
-function BandRow({ label, r }: { label: string; r: RangeResult }) {
+function BandRow({ label, note, r }: { label: string; note: string | null; r: RangeResult }) {
   return (
     <tr>
-      <td className="secondary">{label}</td>
+      <td className="secondary">
+        {label}
+        {note && <span className="muted"> · {note}</span>}
+      </td>
       <td className="num tabular">{r.low == null ? '—' : money(r.low)}</td>
       <td className="num tabular">{r.high == null ? '—' : money(r.high)}</td>
     </tr>
   )
+}
+
+/**
+ * The windows worth showing, which is fewer than four.
+ *
+ * Six months, a year, two years and all time over the same five sales are four
+ * identical rows, and four identical rows read as four separate measurements
+ * agreeing rather than as one measurement repeated. A window is kept only when
+ * it widens the band; the shortest one that produced it keeps the label, since
+ * that is the shortest period the numbers are true of.
+ */
+function bandRows(analysis: ItemAnalysis) {
+  const windows = [
+    { label: '6 months', r: analysis.sixMonthRange },
+    { label: '1 year', r: analysis.range },
+    { label: '2 years', r: analysis.twoYearRange },
+    { label: 'All time', r: analysis.allTimeRange },
+  ].filter((w) => w.r.sampleSize > 0)
+
+  return windows
+    .filter((w, i) => i === 0 || w.r.low !== windows[i - 1].r.low || w.r.high !== windows[i - 1].r.high)
+    .map((w) => ({
+      ...w,
+      note: w.r.coversWindow ? null : `${Math.round(w.r.coverageDays)} days of sales`,
+    }))
 }
 
 function Row({ label, value }: { label: string; value: string }) {

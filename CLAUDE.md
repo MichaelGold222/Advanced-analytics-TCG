@@ -70,8 +70,33 @@ either is telling them to wait forever. They are told apart by
 `X-Credits-Remaining` and `X-RateLimit-Daily-Remaining` — note that
 `Number(null)` is 0, so an absent header must not be read as none left.
 
-**Endpoints.** `get_cert_values_bulk` (POST, 3 credits) returns up to ten
-recent sales per cert. `search_by_certs_bulk` (POST, 1 credit) returns
+**The history is five sales deep, and it slides.** `get_cert_values_bulk`
+returned exactly **5** `recent_sales` for every cert asked about — measured, run
+27 of the API check. On a card that trades monthly that is three months of
+history, and it is the *newest* five, so the window slides forward and whatever
+falls off the back is gone unless the app kept it. Two consequences, both of
+which were live bugs:
+
+- The 52-week, two-year and all-time bands were the same five points, so all
+  three showed the identical number and the "yearly high" was the high of a
+  quarter. `RangeResult.coversWindow` now says when the sales do not reach back
+  far enough to justify the window's name, and the UI prints the real span
+  instead of the label. `WINDOW_COVERED_FRACTION` judges the *calendar* a band
+  spans, never how many sales are in it — thirty sales inside a fortnight say
+  nothing about the year.
+- Every refresh overwrote the stored list, so the record got *shallower* the
+  more often it was fetched. `mergeSalePoints` keeps the union, deduped on
+  date and price. Depth now accrues: fetch monthly and after a year the
+  52-week high is real.
+
+Whether any endpoint carries more than five is unmeasured — `get_card_sales`
+has never been called, and `get_cert_full_profile` carries `sale_records` whose
+depth the picture probe never counted. The API check now asks all of them
+(step: "How far back does the sales history go?"). Answer that before building
+anything on top of the current five.
+
+**Endpoints.** `get_cert_values_bulk` (POST, 3 credits) returns five recent
+sales per cert. `search_by_certs_bulk` (POST, 1 credit) returns
 `image` and `thumbnail` per cert; both serve publicly, no token, and render in
 a browser. `get_cert_full_profile` carries the same pictures but takes one
 cert per call, which is why the bulk search is used instead. All of them
@@ -394,6 +419,26 @@ ten-year projection silently moves the one-month band.
 A delete is now ~110ms. If this regresses, measure `analyzeHoldings` first: it
 is where a stray forecast, or anything else per-card and expensive, will show
 up immediately.
+
+### Three ways a page moves under the person using it
+
+All three were reported as one thing — "the page is kinda glitching out" — and
+each was reproduced and measured in a browser before and after.
+
+- **Sorting a list by a value the list lets you edit.** The watchlist is ranked
+  partly on asking price, so typing one digit moved the row from third place to
+  fourteenth while the field still had focus. `useFrozenOrder` snapshots the
+  order when focus lands inside and releases it when focus leaves *altogether*
+  — not when it moves between fields, which would re-sort between two
+  keystrokes of one edit. Scores and verdicts stay live; only the position
+  waits.
+- **A `colSpan` cell still votes on column widths.** Expanding a row moved it
+  26px and resized every column (Item 255px → 183px), because the ten-column
+  detail cell was measured like any other. Its contents go in a
+  `width: 0; min-width: 100%` div, which takes it out of the calculation.
+- **A bulk-action bar inserted above a table pushes the table down.** Ticking a
+  checkbox moved the row the cursor was on by 79px. It belongs *below* the
+  table, stuck to the bottom of the viewport.
 
 ### Stored state is older than the code
 
