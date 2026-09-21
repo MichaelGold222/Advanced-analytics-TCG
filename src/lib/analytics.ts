@@ -395,7 +395,12 @@ export function analyzeItem(
   const entry = computeEntry(fmv, range, series, reference, now)
   // Forecast from what it last went for, the same basis market value uses.
   const lastSale = lastSaleAt(series, now)
-  const forecast = computeForecast(series.points, lastSale?.price ?? fmv.fmv, { index })
+  // Returns are figured against what a buyer would actually pay: the asking
+  // price when there is one, otherwise what the card is worth.
+  const forecast = computeForecast(series.points, lastSale?.price ?? fmv.fmv, {
+    index,
+    basis: reference ?? lastSale?.price ?? fmv.fmv,
+  })
   return {
     key: series.key, fmv, range, sixMonthRange, twoYearRange, allTimeRange, entry, referencePrice: reference,
     lastSale,

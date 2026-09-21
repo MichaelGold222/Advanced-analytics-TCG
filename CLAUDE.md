@@ -121,6 +121,59 @@ made of. Market quotes, asks, midpoints and this app's own snapshots are
 opinions rather than prices paid, and snapshots would manufacture a repeat sale
 every time the page was opened.
 
+## The long view, and the buy ranking
+
+**Projections (1, 5, 10 years).** The trend decays with a two-year half-life
+(`DRIFT_HALF_LIFE_DAYS`). Without it a measured 20% a year compounds to seven
+times the money over a decade, which is not a forecast anyone should publish off
+nine sales. The decay caps what a trend can ever contribute at about eighteen
+months of it; the first year barely changes, the decade changes entirely.
+Long horizons step monthly from a pooled set of thirty-day sums rather than
+walking 3,650 days per path — the draws are independent, so pooling is exact and
+keeps the bootstrap's fat tails, which a normal approximation would discard.
+
+Returns are annualized against `basis`, which is the **asking price** when there
+is one, not the card's value. "What do I get if I pay what they are asking" is
+the question; measuring from fair value would flatter every overpriced card.
+
+**The ranking** (`ranking.ts`) weighs four things and shows all four: distance
+below the all-time high (0.30), expected one-year return (0.30), asking price
+against the entry target (0.25), and which way the latest sales point (0.15).
+Weights renormalize over whatever could be measured.
+
+The drawdown was the thing asked for and is the trap: the cards furthest below
+their peak are disproportionately the ones that deserve to be. Three things
+guard against it, and two were added only after watching a falling knife rank
+fourth:
+
+- **The recent trend is counted in sales, not days.** Every fixed window fails
+  the same way — ninety days needs three sales in a quarter, nine months needs
+  three in nine — and a thinly traded card has too few in either, so the guard
+  goes missing exactly when it matters. Worse, the remaining weights then
+  renormalize and the card is scored purely on being cheap. Six sales adapts to
+  whatever cadence the card trades at, and the span is reported in the wording.
+- **A falling card is flagged whether or not it is far off its high.** Tying the
+  warning to a deep drawdown let a card sliding from near its peak pass in
+  silence while the panel displayed the slide two lines above it.
+- **A forecast that disagrees with the card's own sales says so.** Beta means a
+  falling card in a rising market can show a positive expected return, because
+  its own decline was shrunk as too thinly evidenced. Defensible arithmetic,
+  and indefensible to leave unsaid next to a green number.
+
+Nothing here knows about reprints, grading populations, or sets going in and out
+of fashion. It is a screen over the sales record, and the UI says so.
+
+### A trap worth remembering
+
+`npx tsc --noEmit` at the repo root checks **nothing** — the root tsconfig is
+`{"files": [], "references": [...]}`, so it compiles zero files and exits 0.
+Use `npm run typecheck` (or `npm run build`, which runs `tsc -b`). A duplicate
+identifier and a `Date` compared against a `number` both sat there clean.
+
+Drift is in **logs** everywhere internally. Printing it as a percentage without
+`Math.expm1` understates every fast mover: a card at 1.25 in logs is up 249% a
+year, not 125%.
+
 ### What is still missing
 
 Nothing measures whether the 80% bands actually contain the price 80% of the

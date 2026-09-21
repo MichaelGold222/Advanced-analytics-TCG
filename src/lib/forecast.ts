@@ -31,7 +31,7 @@
  */
 import { type MarketBeta, type MarketIndex, estimateBeta } from './marketindex'
 import { clamp, daysBetween, mean, median, stdev } from './stats'
-import type { ForecastResult, PricePoint } from './types'
+import type { ForecastResult, PricePoint, Projection } from './types'
 
 /** Below this many usable returns, a forecast would be arithmetic on noise. */
 export const MIN_RETURNS_FOR_FORECAST = 4
@@ -67,11 +67,57 @@ export const PRIOR_DRIFT_SPREAD = 0.2
  */
 export const PRIOR_IDIOSYNCRATIC = 0.32
 
+/**
+ * How long a measured trend keeps half its force when carried forward.
+ *
+ * Two years. Without a decay, a trend compounds without limit and the long
+ * horizons turn to fiction: twenty per cent a year, carried honestly for a
+ * decade, is seven times the money, which is not a forecast anyone should
+ * publish off nine sales. Nothing sustains a rate like that for a decade, and
+ * a two-year record cannot tell you which rare thing will.
+ *
+ * Decaying it toward nothing caps the total a trend can ever contribute at
+ * about eighteen months of it, however far out the horizon runs. The near
+ * term barely changes — the first year keeps most of its trend — and what
+ * changes is the decade, which is exactly where a straight extrapolation is
+ * most confidently wrong.
+ */
+export const DRIFT_HALF_LIFE_DAYS = 730
+
+/** Horizons for the long view, in years. */
+export const PROJECTION_YEARS = [1, 5, 10]
+
+/** Days per step when projecting years out. Daily steps are needless here. */
+const PROJECTION_STEP_DAYS = 30
+
 export interface ForecastOptions {
   horizons?: number[]
   prior?: number
   /** The collection's index, and this card's relationship to it. */
   index?: MarketIndex | null
+  /**
+   * What a buyer would pay today, against which returns are figured. Defaults
+   * to the price the forecast starts from.
+   */
+  basis?: number | null
+  projectionYears?: number[]
+}
+
+/**
+ * Trend accumulated between two days, with its force decaying as it goes.
+ *
+ * The closed form of a half-life decay, so a path does not have to be walked
+ * to know what the trend contributed over a stretch of it.
+ */
+export function cumulativeDrift(
+  driftPerDay: number,
+  fromDay: number,
+  toDay: number,
+  halfLifeDays = DRIFT_HALF_LIFE_DAYS,
+): number {
+  if (!(halfLifeDays > 0)) return driftPerDay * (toDay - fromDay)
+  const k = halfLifeDays / Math.LN2
+  return driftPerDay * k * (2 ** (-fromDay / halfLifeDays) - 2 ** (-toDay / halfLifeDays))
 }
 
 export interface DailyReturn {
@@ -269,7 +315,10 @@ export function computeForecast(
   from: number | null,
   options: ForecastOptions = {},
 ): ForecastResult | null {
-  const { horizons = [30, 90, 180, 365], prior = PRIOR_VOLATILITY, index = null } = options
+  const {
+    horizons = [30, 90, 180, 365], prior = PRIOR_VOLATILITY, index = null,
+    basis = null, projectionYears = PROJECTION_YEARS,
+  } = options
   if (from == null || !(from > 0)) return null
   const returns = dailyReturns(points)
   if (returns.length < MIN_RETURNS_FOR_FORECAST) return null
@@ -302,18 +351,17 @@ export function computeForecast(
     : drawsAt(returns.map((r) => r.rate), volatility)
 
   const rand = seededRandom(Math.round(from * 1000) + returns.length * 7919)
+  const pick = (pool: number[]) => pool[Math.floor(rand() * pool.length) % pool.length]
+  const shock = () => pick(draws) + (marketDraws ? split!.beta * pick(marketDraws) : 0)
 
   const bands = horizons.map((horizonDays) => {
     const ends: number[] = []
+    // The trend's contribution per day, weakening as it goes. Computed once
+    // rather than per path, since every path carries the same trend.
+    const perDay = Array.from({ length: horizonDays }, (_, d) => cumulativeDrift(driftPerDay, d, d + 1))
     for (let path = 0; path < SIM_PATHS; path++) {
       let logPrice = Math.log(from)
-      for (let day = 0; day < horizonDays; day++) {
-        const own = draws[Math.floor(rand() * draws.length) % draws.length]
-        const market = marketDraws
-          ? split!.beta * marketDraws[Math.floor(rand() * marketDraws.length) % marketDraws.length]
-          : 0
-        logPrice += driftPerDay + own + market
-      }
+      for (let day = 0; day < horizonDays; day++) logPrice += perDay[day] + shock()
       ends.push(Math.exp(logPrice))
     }
     ends.sort((a, b) => a - b)
@@ -327,7 +375,59 @@ export function computeForecast(
     }
   })
 
+  // Drift is a log rate. Said aloud as a percentage it has to be converted, or
+  // a card compounding at 1.25 in logs is reported as rising 125% a year when
+  // it is really rising 249%.
   const asPct = (x: number) => `${Math.round(x * 100)}%`
+  const asRate = (logRate: number) => `${Math.round(Math.expm1(logRate) * 100)}%`
+  // The long view. Walking ten years a day at a time, two thousand times over,
+  // for every card in a collection is seconds of work for an answer no more
+  // precise: the draws are independent, so a month of them can be pooled once
+  // and drawn from thereafter. The pool keeps the bootstrap's fat tails, which
+  // a normal approximation would quietly throw away.
+  const maxYears = Math.max(...projectionYears)
+  const steps = Math.ceil((maxYears * 365) / PROJECTION_STEP_DAYS)
+  const monthlyPool = Array.from({ length: 600 }, () => {
+    let sum = 0
+    for (let d = 0; d < PROJECTION_STEP_DAYS; d++) sum += shock()
+    return sum
+  })
+  const stepDrift = Array.from({ length: steps }, (_, i) =>
+    cumulativeDrift(driftPerDay, i * PROJECTION_STEP_DAYS, (i + 1) * PROJECTION_STEP_DAYS))
+  const wanted = projectionYears.map((y) => ({
+    years: y,
+    step: Math.min(steps, Math.round((y * 365) / PROJECTION_STEP_DAYS)),
+  }))
+  const endsByYear = new Map<number, number[]>(wanted.map((w) => [w.years, []]))
+  for (let path = 0; path < SIM_PATHS; path++) {
+    let logPrice = Math.log(from)
+    let next = 0
+    for (let i = 0; i < steps; i++) {
+      logPrice += stepDrift[i] + monthlyPool[Math.floor(rand() * monthlyPool.length) % monthlyPool.length]
+      while (next < wanted.length && wanted[next].step === i + 1) {
+        endsByYear.get(wanted[next].years)!.push(Math.exp(logPrice))
+        next++
+      }
+    }
+  }
+
+  const basisPrice = basis != null && basis > 0 ? basis : from
+  const projections: Projection[] = wanted.map(({ years }) => {
+    const ends = (endsByYear.get(years) ?? []).sort((a, b) => a - b)
+    const at = (q: number) => ends[Math.min(ends.length - 1, Math.floor(q * ends.length))]
+    const low = at(0.1)
+    const mid = at(0.5)
+    const high = at(0.9)
+    const roi = (end: number) => (end / basisPrice) ** (1 / years) - 1
+    return {
+      years,
+      low, mid, high,
+      roiLow: roi(low), roiMid: roi(mid), roiHigh: roi(high),
+      chanceUp: ends.filter((e) => e > from).length / ends.length,
+      chanceAboveBasis: ends.filter((e) => e > basisPrice).length / ends.length,
+    }
+  })
+
   const rationale: string[] = [
     `Built from ${returns.length} price moves on this card, resampled rather than assumed to be bell-shaped.`,
   ]
@@ -339,7 +439,7 @@ export function computeForecast(
       } the market, at ${beta.beta.toFixed(2)} times it.`
       : "The market's path across this card's sales was too straight to tell its sensitivity apart from its own drift, so it is taken to move with the market.")
 
-    rationale.push(`The market's own trend of ${asPct(split.marketDriftPerDay * 365)} a year comes from ${
+    rationale.push(`The market's own trend of ${asRate(split.marketDriftPerDay * 365)} a year comes from ${
       index.pairCount
     } paired prices across ${index.cardCount} cards, which is why it survives a scrutiny this card's own handful does not.`)
 
@@ -352,18 +452,18 @@ export function computeForecast(
     const alpha = split.alphaPerDay * 365
     const ownPart = Math.abs(alpha) < 0.01
       ? `nothing of its own worth carrying, since ${spanLabel(beta.spanDays)}`
-      : `${asPct(alpha)} a year of its own${
+      : `${asRate(alpha)} a year of its own${
         driftKept < 0.9 ? `, itself cut down because ${spanLabel(beta.spanDays)}` : ''
       }`
-    rationale.push(`Trend of ${asPct(driftPerDay * 365)} a year: the market's, scaled to this card, plus ${ownPart}.`)
+    rationale.push(`Trend of ${asRate(driftPerDay * 365)} a year: the market's, scaled to this card, plus ${ownPart}.`)
   } else {
     rationale.push(weight < 0.5
       ? `Its own history is thin, so volatility of ${asPct(volatility)} leans mostly on what its segment typically does.`
       : `Volatility of ${asPct(volatility)} a year across its whole history, pulled slightly toward its segment. The entry call quotes the last year alone, so the two figures differ.`)
 
-    rationale.push(`Trend of ${asPct(driftPerDay * 365)} a year, the median of every pair of sales${
+    rationale.push(`Trend of ${asRate(driftPerDay * 365)} a year, the median of every pair of sales${
       driftKept < 0.9
-        ? ` — cut from ${asPct(rawDrift * 365)}, because ${spanLabel(spanDays)}`
+        ? ` — cut from ${asRate(rawDrift * 365)}, because ${spanLabel(spanDays)}`
         : ''
     }.`)
   }
@@ -378,6 +478,8 @@ export function computeForecast(
     driftShrunk: driftKept < 0.9,
     sampleSize: returns.length,
     bands,
+    projections,
+    basis: basisPrice,
     market: split && beta && index
       ? {
         beta: split.beta,

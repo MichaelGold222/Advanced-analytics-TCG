@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
-  MIN_RETURNS_FOR_FORECAST, PRIOR_VOLATILITY, computeForecast, dailyReturns, robustDrift, shrunkDrift,
-  shrunkVolatility,
+  MIN_RETURNS_FOR_FORECAST, PRIOR_VOLATILITY, computeForecast, cumulativeDrift, dailyReturns,
+  robustDrift, shrunkDrift, shrunkVolatility,
 } from './forecast'
 import { buildRepeatSalesIndex } from './marketindex'
 import type { PricePoint, PriceSeries } from './types'
@@ -289,5 +289,71 @@ describe('forecasting against a market index', () => {
     const a = computeForecast(rider, 2000, { index })!
     const b = computeForecast(rider, 2000, { index })!
     expect(a.bands).toEqual(b.bands)
+  })
+})
+
+describe('the long view', () => {
+  it('refuses to compound a measured trend for a decade', () => {
+    // RISING measures a strong climb. Carried straight, ten years of it would
+    // be several times the money; the decay caps what a trend can ever add.
+    const f = computeForecast(RISING, 1000)!
+    const ten = f.projections.find((p) => p.years === 10)!
+    expect(ten.mid / 1000).toBeLessThan(3)
+  })
+
+  it('caps the trend rather than merely slowing it', () => {
+    // Whatever the horizon, a decaying trend converges on a finite total. Ten
+    // years and twenty add almost the same amount from the trend alone.
+    const decade = cumulativeDrift(0.0005, 0, 3650)
+    const score = cumulativeDrift(0.0005, 0, 7300)
+    expect(score - decade).toBeLessThan(decade * 0.1)
+  })
+
+  it('still carries most of the trend through the first year', () => {
+    const year = cumulativeDrift(0.0005, 0, 365)
+    expect(year).toBeGreaterThan(0.0005 * 365 * 0.75)
+  })
+
+  it('widens with the horizon, because a random walk does', () => {
+    const f = computeForecast(RISING, 1000)!
+    const [one, five, ten] = f.projections
+    const width = (p: typeof one) => Math.log(p.high / p.low)
+    expect(width(five)).toBeGreaterThan(width(one))
+    expect(width(ten)).toBeGreaterThan(width(five))
+  })
+
+  it('reports a return against what a buyer would actually pay', () => {
+    const cheap = computeForecast(RISING, 1000, { basis: 800 })!
+    const dear = computeForecast(RISING, 1000, { basis: 1400 })!
+    const roi = (f: typeof cheap) => f.projections.find((p) => p.years === 5)!.roiMid
+    expect(roi(cheap)).toBeGreaterThan(roi(dear))
+    expect(cheap.basis).toBe(800)
+  })
+
+  it('falls back to the starting price when no asking price is known', () => {
+    const f = computeForecast(RISING, 1000)!
+    expect(f.basis).toBe(1000)
+    // Paying exactly what it is worth, the five-year odds of being ahead and
+    // of being above the basis are the same question.
+    const five = f.projections.find((p) => p.years === 5)!
+    expect(five.chanceUp).toBe(five.chanceAboveBasis)
+  })
+
+  it('is harder to make money on when you overpay', () => {
+    const f = computeForecast(RISING, 1000, { basis: 2000 })!
+    const five = f.projections.find((p) => p.years === 5)!
+    expect(five.chanceAboveBasis).toBeLessThan(five.chanceUp)
+  })
+
+  it('annualizes the return rather than reporting the whole gain', () => {
+    const f = computeForecast(RISING, 1000)!
+    const five = f.projections.find((p) => p.years === 5)!
+    // The rate, compounded five times, has to land back on the value.
+    expect(1000 * (1 + five.roiMid) ** 5).toBeCloseTo(five.mid, 0)
+  })
+
+  it('gives the same projections twice', () => {
+    expect(computeForecast(RISING, 1000)!.projections)
+      .toEqual(computeForecast(RISING, 1000)!.projections)
   })
 })

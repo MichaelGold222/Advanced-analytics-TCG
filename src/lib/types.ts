@@ -177,6 +177,22 @@ export interface ForecastBand {
   chanceUp: number
 }
 
+/** Where a card might be years out, and what that would return on today's price. */
+export interface Projection {
+  years: number
+  low: number
+  mid: number
+  high: number
+  /** Annualized return from the basis price to each of the three, as a rate. */
+  roiLow: number
+  roiMid: number
+  roiHigh: number
+  /** Chance of ending above the price it starts from. */
+  chanceUp: number
+  /** Chance of at least getting back what a buyer pays today. */
+  chanceAboveBasis: number
+}
+
 /** How a forecast split the card's future between the market and the card. */
 export interface ForecastMarket {
   /** Sensitivity to the market, shrunk toward one. */
@@ -209,6 +225,10 @@ export interface ForecastResult {
   bands: ForecastBand[]
   /** Present when the forecast was built against a market index. */
   market?: ForecastMarket
+  /** The long view: one, five and ten years, and what each would return. */
+  projections: Projection[]
+  /** The price returns are figured against — what a buyer would pay today. */
+  basis: number
   rationale: string[]
 }
 

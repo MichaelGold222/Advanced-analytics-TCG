@@ -324,7 +324,7 @@ export default function App() {
           />
         ) : tab === 'watchlist' ? (
           <WatchlistPanel
-            watchlist={watchlist} analyses={watchAnalyses}
+            watchlist={watchlist} analyses={watchAnalyses} series={series}
             onAdd={store.addWatchItem} onRemove={store.removeWatchItem}
             onOverride={(id, s) => store.setSegmentOverride(id, s, 'watch')}
             onUpdate={store.updateWatchItem}
