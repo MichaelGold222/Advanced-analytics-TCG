@@ -208,6 +208,30 @@ so a sheet with "Card Name" beside "Subject" has two names and can use one.
 anything unrecognised, because "not recognised" should mean a column might be
 getting missed, and nothing else.
 
+### "Upload a watchlist" means nothing lands in holdings
+
+Four reports of the watchlist reaching holdings, four different causes. The
+last one: a **multi-tab workbook**. With more than one sheet, tab names decided
+routing — so a workbook uploaded through the watchlist zone with a tab called
+"Collection" put that tab into holdings, where it counted toward portfolio
+value. The mode was right, the file was right, and the tab name overruled both.
+
+`routeSheet` now returns early for watchlist mode. A workbook uploaded there
+may hold any number of tabs; they are all things being watched, whatever one of
+them is called. The portfolio zone keeps the multi-tab routing, since it is the
+general-purpose import and its own wording offers it.
+
+Reproducing it needs a workbook the content check cannot save: **no price
+columns at all**, so `looksLikeWatchlist` has nothing to judge on. With an
+asking price present the override already caught it, which is why the first
+reproduction attempt passed on both builds and proved nothing.
+
+**An import now says where its rows went**, on screen, with a button to move
+them if it is wrong (`ImportResultBanner`). Four rounds were slow for one
+reason: the app made a routing decision and said nothing, so the only way to
+learn the answer was to go looking. The fix for a wrong routing should be a
+button, not a bug report.
+
 ### The upload that was never routed at all
 
 Three reports of "my watchlist went to holdings" had three different causes,

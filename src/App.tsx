@@ -12,6 +12,7 @@ import { TopHoldings, type HoldingBar } from './components/TopHoldings'
 import { UploadZone } from './components/UploadZone'
 import { ValueTrend } from './components/ValueTrend'
 import { ErrorBoundary } from './components/ErrorBoundary'
+import { ImportResultBanner } from './components/ImportResultBanner'
 import { MisplacedRows } from './components/MisplacedRows'
 import { WatchlistPanel } from './components/WatchlistPanel'
 import { useTheme } from './hooks/useTheme'
@@ -81,6 +82,10 @@ export default function App() {
   // Rows counting toward the portfolio total with nothing to say they were
   // ever bought. Offered for moving rather than moved.
   const misplaced = useMemo(() => suspectedWatchItems(holdings), [holdings])
+
+  // The most recent import, so the banner can say where its rows landed. Kept
+  // until dismissed or superseded, since the answer matters most right after.
+  const lastImport = store.importLog[store.importLog.length - 1]
   // Stored holdings keep whatever they were parsed as, so an importer fix only
   // reaches a sheet that is uploaded again. Say so rather than showing zeros.
   const costMissing = holdings.length > 0 && stats.costBasis === 0
@@ -239,6 +244,16 @@ export default function App() {
             </span>
           </div>
         )}
+
+        <ImportResultBanner
+          entry={lastImport}
+          onGoToWatchlist={() => setTab('watchlist')}
+          onGoToHoldings={() => setTab('holdings')}
+          onMoveHoldingsToWatchlist={() => {
+            store.moveToWatchlist(holdings.map((h) => h.id))
+            setTab('watchlist')
+          }}
+        />
 
         {/* A crash while drawing one tab must not black out the whole app. Keyed
             by tab so moving to another gives the broken one a fresh start. */}

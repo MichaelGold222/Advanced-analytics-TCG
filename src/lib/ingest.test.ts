@@ -493,10 +493,22 @@ describe('routing a file to the right tab', () => {
     expect(r.holdings.flatMap((h) => h.items)).toHaveLength(0)
   })
 
-  it('still routes by tab name inside a workbook holding several', () => {
+  it('routes by tab name inside a workbook uploaded as a portfolio', () => {
     const tab = (name: string): RawSheet => ({ name, rows: WATCH_ROWS })
     expect(routeSheet(tab('Watchlist'), 'portfolio', 2)).toBe('watchlist')
-    expect(routeSheet(tab('Portfolio'), 'watchlist', 2)).toBe('holdings')
+    expect(routeSheet(tab('Portfolio'), 'portfolio', 2)).toBe('holdings')
+  })
+
+  it('never puts anything in holdings when the watchlist zone was used', () => {
+    // The last hole: the mode was right and a tab called "Collection"
+    // overruled it anyway. A watchlist upload is a promise that nothing in the
+    // file is counted as owned, however many tabs it has.
+    const tab = (name: string): RawSheet => ({ name, rows: WATCH_ROWS })
+    for (const name of ['Collection', 'Portfolio', 'Holdings', 'Inventory', 'Owned', 'Sheet1']) {
+      for (const count of [1, 2, 5]) {
+        expect(routeSheet(tab(name), 'watchlist', count)).toBe('watchlist')
+      }
+    }
   })
 
   it('does not read a watchlist as price history just for matching a word', async () => {
@@ -553,13 +565,22 @@ describe('a workbook tab does not overrule the button either', () => {
   })
 
   it('reads the tab names once a workbook holds more than one', () => {
+    // Only for a portfolio upload. The watchlist zone promises that nothing
+    // lands in holdings, so no tab name overrules it there.
     expect(routeSheet(tab('Watchlist'), 'portfolio', 3)).toBe('watchlist')
-    expect(routeSheet(tab('Portfolio'), 'watchlist', 3)).toBe('holdings')
+    expect(routeSheet(tab('Portfolio'), 'portfolio', 3)).toBe('holdings')
+    expect(routeSheet(tab('Portfolio'), 'watchlist', 3)).toBe('watchlist')
   })
 
   it('falls back to the button for a tab whose name says nothing', () => {
     expect(routeSheet(tab('Sheet2'), 'watchlist', 3)).toBe('watchlist')
     expect(routeSheet(tab('Sheet2'), 'portfolio', 3)).toBe('holdings')
+  })
+
+  it('sends a Watchlist tab to the watchlist from a portfolio upload', () => {
+    // The general-purpose import keeps its multi-tab routing, which is what
+    // its own wording offers.
+    expect(routeSheet(tab('Watchlist'), 'portfolio', 2)).toBe('watchlist')
   })
 
   it('never reads a CSV filename as a tab name, however many were found', () => {

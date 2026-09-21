@@ -691,6 +691,18 @@ export function routeSheet(
   sheetCount: number,
 ): SheetTarget {
   const chosen: SheetTarget = mode === 'watchlist' ? 'watchlist' : 'holdings'
+
+  // "Upload a watchlist" is a promise, and the promise is that nothing in the
+  // file ends up counted as owned. A workbook uploaded there can hold as many
+  // tabs as it likes — they are all things being watched, whatever one of them
+  // happens to be called. This was the last way a watchlist reached holdings:
+  // the mode was right, the file was right, and a tab named "Collection"
+  // overruled both.
+  //
+  // The portfolio zone keeps the multi-tab routing, because that is the
+  // general-purpose import and its own wording offers it.
+  if (chosen === 'watchlist') return 'watchlist'
+
   // A CSV has no tabs; the name was made up from the filename.
   const deliberate = sheet.nameIsFilename !== true && sheetCount > 1
   if (!deliberate) return chosen
