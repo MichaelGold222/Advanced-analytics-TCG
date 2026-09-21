@@ -531,11 +531,15 @@ jobs:
           PY2
           python3 ids.py || true
 
-          while read -r CARD_ID; do
-            [ -n "$CARD_ID" ] || continue
-            printf '\n  --- GET get_card_sales?card_id=%s ---\n' "$CARD_ID"
+          # NOT named CARD_ID: that is the env var holding an id given by the
+          # caller, and this loop overwrote it with its own last candidate —
+          # so a card id taken from a URL was silently replaced by a thumbnail
+          # slug before anything could use it.
+          while read -r CERT_CAND; do
+            [ -n "$CERT_CAND" ] || continue
+            printf '\n  --- GET get_card_sales?card_id=%s ---\n' "$CERT_CAND"
             code=$(curl -sS -m 120 -o sales.json -w '%{http_code}' -D sales.head \
-              -H "X-API-Key: $KEY" "$BASE/scraper/$SCR/get_card_sales?card_id=$CARD_ID" || echo 000)
+              -H "X-API-Key: $KEY" "$BASE/scraper/$SCR/get_card_sales?card_id=$CERT_CAND" || echo 000)
             echo "  HTTP $code"
             tr -d '\r' < sales.head | grep -iE '^x-credits-charged' | sed 's/^/  /' || true
             if [ "$code" != "200" ]; then
@@ -549,9 +553,9 @@ jobs:
 
             # The paginated twin. If a page of 200 comes back full, the depth is
             # however many pages there are, and the five-sale ceiling is gone.
-            printf '\n  --- GET get_card_sales_detail?card_id=%s&limit=200&page=1 ---\n' "$CARD_ID"
+            printf '\n  --- GET get_card_sales_detail?card_id=%s&limit=200&page=1 ---\n' "$CERT_CAND"
             code=$(curl -sS -m 120 -o det.json -w '%{http_code}' -D det.head \
-              -H "X-API-Key: $KEY" "$BASE/scraper/$SCR/get_card_sales_detail?card_id=$CARD_ID&limit=200&page=1" || echo 000)
+              -H "X-API-Key: $KEY" "$BASE/scraper/$SCR/get_card_sales_detail?card_id=$CERT_CAND&limit=200&page=1" || echo 000)
             echo "  HTTP $code"
             tr -d '\r' < det.head | grep -iE '^x-credits-charged' | sed 's/^/  /' || true
             if [ "$code" = "200" ]; then
