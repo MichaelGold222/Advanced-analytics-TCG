@@ -645,6 +645,43 @@ save a credit; it would only throw away the sales in the reply.
 Pinned in tests (`what a full refresh costs`), because the ordering is worth
 real money and an innocent-looking edit could reverse it.
 
+### The lookup is by name, not by certificate
+
+Measured across runs 31-37. The chain that works:
+
+```
+search_cards?query=<name>   1 credit  ->  cards[], each with its own id AND grade
+get_card_sales?card_id=<id> 1 credit  ->  the whole price history of that card
+```
+
+A `search_cards` hit looks like this, and carries everything needed to match a
+row in the collection without any certificate at all:
+
+```json
+{"id": "ePSC20G9FDYBEGwAMVq5",
+ "label": "2000 Pokemon Gym Challenge Blaine's Charizard 1st Edition Holo #2 PSA 10",
+ "slug": "2000-pokemon-gym-challenge-blaines-charizard-1-st-edition-holo-2-psa-10",
+ "set": "Pokemon Gym Challenge", "number": "2", "variation": "1st Edition Holo",
+ "condition": "PSA 10", "num_sales": 206, "pop": 421, "market_value": 25551}
+```
+
+**`condition` is part of the card record**, so a card id is a card *at a
+grade* — which is why `get_card_sales` for one answers with some other slab's
+cert number. Every PSA 10 of a card shares one history, and that is the right
+unit for a price series.
+
+**Going in by certificate was the mistake, and it fails for real cards.** Cert
+77865285 returns a 40-character hash where a card id should be, and its only
+photograph is a listing photo, so there is no id to be had from it — both
+candidates answered 422 "Card with id ... not found". The app was right to
+skip it and right to spend nothing, but a cert whose slab is not catalogued
+can never be reached that way, however well catalogued the card is. The
+collection already holds name, set, number, variation and grade for every row;
+that is what the lookup should use.
+
+Failed lookups are charged **0 credits**, so trying several spellings is free.
+Only a search that answers 200 costs anything.
+
 ### The whole history of a card is one call and one credit
 
 Measured, run 31. `get_card_sales?card_id=...` answered with **627 dated
