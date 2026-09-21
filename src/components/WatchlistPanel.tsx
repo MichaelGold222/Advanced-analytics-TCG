@@ -11,6 +11,8 @@ import { classify } from '../lib/classify'
 import { money, plainPct, shortDate } from '../lib/format'
 import { itemKey } from '../lib/key'
 import { GRADED_QUOTE_NOTE } from '../lib/analytics'
+import { SelectionBar, TickBox } from './SelectionBar'
+import { useSelection } from '../hooks/useSelection'
 import { rankWatchlist, type RankedItem } from '../lib/ranking'
 import type {
   ForecastResult, ItemAnalysis, PriceSeries, RangeResult, Segment, WatchItem,
@@ -25,12 +27,13 @@ interface Props {
   onOverride: (id: string, segment: Segment | null) => void
   onUpdate: (id: string, patch: Partial<WatchItem>) => void
   onImport: (file: File) => Promise<void>
+  onRemoveMany: (ids: string[]) => void
 }
 
 const EMPTY_FORM = { name: '', set: '', number: '', condition: '', cert: '', askingPrice: '', targetPrice: '' }
 
 export function WatchlistPanel({
-  watchlist, analyses, series, onAdd, onRemove, onOverride, onUpdate, onImport,
+  watchlist, analyses, series, onAdd, onRemove, onRemoveMany, onOverride, onUpdate, onImport,
 }: Props) {
   const [form, setForm] = useState(EMPTY_FORM)
   const [expanded, setExpanded] = useState<string | null>(null)
@@ -46,6 +49,9 @@ export function WatchlistPanel({
       place: r.verdict === 'no data' ? null : i + 1,
     }))
   }, [watchlist, analyses, series])
+
+  const visibleIds = useMemo(() => rows.map((r) => r.w.id), [rows])
+  const selection = useSelection(visibleIds)
 
   function submit(e: React.FormEvent) {
     e.preventDefault()
@@ -86,10 +92,24 @@ export function WatchlistPanel({
       </section>
 
       {rows.length > 0 && (
+        <>
+        <SelectionBar
+          selected={selection.selected} noun="watch item"
+          onDelete={() => { onRemoveMany(selection.selected); selection.clear() }}
+          onClear={selection.clear}
+        />
+
         <section className="card overflow-auto">
           <table className="data w-full">
             <thead>
               <tr>
+                <th style={{ width: 28 }}>
+                  <TickBox
+                    checked={selection.allSelected} indeterminate={selection.someSelected}
+                    onChange={selection.toggleAll}
+                    label={selection.allSelected ? 'Clear the selection' : 'Select every card shown'}
+                  />
+                </th>
                 <th style={{ width: 28 }} aria-label="Expand" />
                 <th className="num" style={{ width: 44 }}>#</th>
                 <th>Item</th>
@@ -110,7 +130,14 @@ export function WatchlistPanel({
                 const inferred = classify({ ...w, override: null }).segment
                 return (
                   <Fragment key={w.id}>
-                    <tr>
+                    <tr style={selection.isSelected(w.id) ? { background: 'var(--surface-2)' } : undefined}>
+                      <td>
+                        <TickBox
+                          checked={selection.isSelected(w.id)}
+                          onChange={() => selection.toggle(w.id)}
+                          label={`Select ${w.name}`}
+                        />
+                      </td>
                       <td>
                         <button
                           type="button" className="btn px-1 py-1" onClick={() => setExpanded(open ? null : w.id)}
@@ -160,7 +187,7 @@ export function WatchlistPanel({
                     </tr>
                     {open && (
                       <tr>
-                        <td colSpan={12} style={{ background: 'var(--surface-2)' }}>
+                        <td colSpan={13} style={{ background: 'var(--surface-2)' }}>
                           <Reasoning item={w} analysis={a} rank={rank} />
                         </td>
                       </tr>
@@ -171,6 +198,7 @@ export function WatchlistPanel({
             </tbody>
           </table>
         </section>
+        </>
       )}
     </div>
   )

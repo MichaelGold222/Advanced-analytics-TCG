@@ -333,12 +333,15 @@ export default function App() {
               onSetValue={(id, v) => store.setHoldingValue(id, v)}
               images={store.certImages}
               onRemove={store.removeHolding}
+              onRemoveMany={store.removeHoldings}
+              onMoveToWatchlist={store.moveToWatchlist}
             />
           </div>
         ) : tab === 'watchlist' ? (
           <WatchlistPanel
             watchlist={watchlist} analyses={watchAnalyses} series={series}
             onAdd={store.addWatchItem} onRemove={store.removeWatchItem}
+            onRemoveMany={store.removeWatchItems}
             onOverride={(id, s) => store.setSegmentOverride(id, s, 'watch')}
             onUpdate={store.updateWatchItem}
             onImport={(f) => store.importFile(f, 'watchlist')}

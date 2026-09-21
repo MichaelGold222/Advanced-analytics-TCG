@@ -85,6 +85,9 @@ interface AppState extends PersistedState {
   /** A value typed in by hand, which outranks anything fetched. Null clears it. */
   setHoldingValue(id: string, value: number | null): void
   removeHolding(id: string): void
+  /** Remove several holdings in one update, rather than one re-analysis each. */
+  removeHoldings(ids: string[]): void
+  removeWatchItems(ids: string[]): void
   /** Move holdings to the watchlist, keeping any prices already fetched. */
   moveToWatchlist(ids: string[]): void
   refreshPrices(provider?: PriceProvider): Promise<void>
@@ -436,6 +439,28 @@ export const useStore = create<AppState>((setState, getState) => ({
 
   removeHolding(id) {
     setState({ holdings: getState().holdings.filter((h) => h.id !== id) })
+    scheduleSave(getState())
+  },
+
+  /**
+   * Remove several at once, in a single update.
+   *
+   * Not a loop over `removeHolding`: each call sets state, and every state
+   * change re-analyses the collection. Deleting twenty rows one at a time
+   * would pay that twenty times over for nineteen intermediate lists nobody
+   * sees.
+   */
+  removeHoldings(ids) {
+    if (ids.length === 0) return
+    const gone = new Set(ids)
+    setState({ holdings: getState().holdings.filter((h) => !gone.has(h.id)) })
+    scheduleSave(getState())
+  },
+
+  removeWatchItems(ids) {
+    if (ids.length === 0) return
+    const gone = new Set(ids)
+    setState({ watchlist: getState().watchlist.filter((w) => !gone.has(w.id)) })
     scheduleSave(getState())
   },
 

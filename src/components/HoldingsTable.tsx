@@ -1,7 +1,9 @@
 import { useMemo, useState } from 'react'
-import { Pencil, Trash2 } from 'lucide-react'
+import { ArrowRight, Pencil, Trash2 } from 'lucide-react'
 import { PriceCell } from './PriceCell'
 import { SegmentPicker } from './SegmentPicker'
+import { SelectionBar, TickBox } from './SelectionBar'
+import { useSelection } from '../hooks/useSelection'
 import { money, pct, plainPct } from '../lib/format'
 import { classify } from '../lib/classify'
 import { holdingKey, unitValue } from '../lib/portfolio'
@@ -18,9 +20,13 @@ interface Props {
   /** Pictures by cert, where one has been fetched. */
   images: Record<string, { image: string | null; thumbnail: string | null }>
   onRemove: (id: string) => void
+  onRemoveMany: (ids: string[]) => void
+  onMoveToWatchlist: (ids: string[]) => void
 }
 
-export function HoldingsTable({ holdings, analyses, images, onOverride, onSetValue, onRemove }: Props) {
+export function HoldingsTable({
+  holdings, analyses, images, onOverride, onSetValue, onRemove, onRemoveMany, onMoveToWatchlist,
+}: Props) {
   // Which row is being edited, if any. Opened from the pencil in that row.
   const [editingId, setEditingId] = useState<string | null>(null)
   const [query, setQuery] = useState('')
@@ -53,6 +59,11 @@ export function HoldingsTable({ holdings, analyses, images, onOverride, onSetVal
     })
   }, [holdings, analyses, query, segment, sort])
 
+  // Selection runs over the rows actually on screen. Select-all with a filter
+  // applied means "all of these", not every holding hidden behind it.
+  const visibleIds = useMemo(() => rows.map((r) => r.h.id), [rows])
+  const selection = useSelection(visibleIds)
+
   return (
     <section className="card">
       <div className="flex flex-wrap items-center gap-2 p-3 border-b" style={{ borderColor: 'var(--border)' }}>
@@ -74,10 +85,30 @@ export function HoldingsTable({ holdings, analyses, images, onOverride, onSetVal
         <span className="text-xs muted tabular ml-auto">{rows.length} of {holdings.length}</span>
       </div>
 
+      <SelectionBar
+        selected={selection.selected} noun="holding"
+        onDelete={() => { onRemoveMany(selection.selected); selection.clear() }}
+        onClear={selection.clear}
+      >
+        <button
+          type="button" className="btn"
+          onClick={() => { onMoveToWatchlist(selection.selected); selection.clear() }}
+        >
+          Move {selection.count} to the watchlist <ArrowRight className="size-3.5" aria-hidden />
+        </button>
+      </SelectionBar>
+
       <div className="overflow-auto">
         <table className="data w-full">
           <thead>
             <tr>
+              <th style={{ width: 28 }}>
+                <TickBox
+                  checked={selection.allSelected} indeterminate={selection.someSelected}
+                  onChange={selection.toggleAll}
+                  label={selection.allSelected ? 'Clear the selection' : 'Select every holding shown'}
+                />
+              </th>
               <th>Item</th>
               <th>Segment</th>
               <th className="num">Invested</th>
@@ -95,7 +126,14 @@ export function HoldingsTable({ holdings, analyses, images, onOverride, onSetVal
             {rows.map(({ h, a, cost, fmv, unrealized, roi }) => {
               const inferred = classify({ ...h, override: null }).segment
               return (
-                <tr key={h.id}>
+                <tr key={h.id} style={selection.isSelected(h.id) ? { background: 'var(--surface-2)' } : undefined}>
+                  <td>
+                    <TickBox
+                      checked={selection.isSelected(h.id)}
+                      onChange={() => selection.toggle(h.id)}
+                      label={`Select ${h.name}`}
+                    />
+                  </td>
                   <td>
                     <div className="flex items-start gap-3">
                       <CardThumb src={h.cert ? images[h.cert]?.thumbnail ?? images[h.cert]?.image ?? null : null} name={h.name} />

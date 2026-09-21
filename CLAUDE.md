@@ -222,6 +222,22 @@ deleted freely and the prices are still there when the right sheet arrives.
 "Clear all data" is none of these: it takes the snapshots and the photographs
 with it.
 
+### Selecting rows
+
+`useSelection` over the ids currently on screen, so select-all under a filter
+means "all of these" rather than everything hidden behind it, and a ticked row
+that then leaves — deleted, filtered out, replaced by a re-import — stops being
+counted. A set trusted as stored would make the bar promise to act on rows that
+no longer exist.
+
+Bulk removal is `removeHoldings` / `removeWatchItems`, one state update for the
+lot. A loop over the single-row version would re-analyse the collection once
+per row for intermediate lists nobody sees.
+
+The delete confirmation remembers the *selection* it was agreed for, not a
+flag. Resetting on the count alone would leave it armed after one row was
+unticked and another ticked in its place — same number, different cards.
+
 ### Why the app was slow, and what keeps it fast
 
 Deleting one holding from a 90-slab collection took **12.7 seconds** in a real
