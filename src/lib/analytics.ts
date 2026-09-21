@@ -200,8 +200,19 @@ function weightedBlend(windowed: PricePoint[], now: Date): FmvResult {
   return { fmv, confidence, agreement, stalenessDays, sampleSize: kept.length, contributors, rationale }
 }
 
-/** Half a year, for the shorter of the two high-water marks. */
+/** Half a year, for the shorter of the high-water marks. */
 export const SIX_MONTH_DAYS = 182
+
+/** Two years, long enough to hold a full cycle for most modern cards. */
+export const TWO_YEAR_DAYS = 730
+
+/**
+ * Everything on record.
+ *
+ * Not literally unbounded: a window is a number of days, and a century is
+ * past any date a Pokémon card could carry while staying a finite number.
+ */
+export const ALL_TIME_DAYS = 36_500
 
 /**
  * High, low, and where the current price sits between them.
@@ -372,9 +383,11 @@ export function analyzeItem(series: PriceSeries, askingPrice?: number | null, no
   const reference = askingPrice ?? null
   const range = compute52WeekRange(series, reference ?? fmv.fmv, now)
   const sixMonthRange = computeRange(series, reference ?? fmv.fmv, now, SIX_MONTH_DAYS)
+  const twoYearRange = computeRange(series, reference ?? fmv.fmv, now, TWO_YEAR_DAYS)
+  const allTimeRange = computeRange(series, reference ?? fmv.fmv, now, ALL_TIME_DAYS)
   const entry = computeEntry(fmv, range, series, reference, now)
   return {
-    key: series.key, fmv, range, sixMonthRange, entry, referencePrice: reference,
+    key: series.key, fmv, range, sixMonthRange, twoYearRange, allTimeRange, entry, referencePrice: reference,
     lastSale: lastSaleAt(series, now),
     quote: series.quote, quoteExcluded: series.quoteExcluded,
   }

@@ -174,6 +174,10 @@ export interface ItemAnalysis {
   range: RangeResult
   /** The same over six months, which turns sooner than the yearly figure. */
   sixMonthRange: RangeResult
+  /** Two years: long enough to hold a full cycle for most modern cards. */
+  twoYearRange: RangeResult
+  /** Every sale on record — the all-time high and low. */
+  allTimeRange: RangeResult
   /** The most recent completed sale, shown beside market value. */
   lastSale: LastSale | null
   entry: EntryResult

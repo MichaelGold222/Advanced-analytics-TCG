@@ -146,12 +146,19 @@ describe('buildValueTrend', () => {
   })
 })
 
+const EMPTY_RANGE = {
+  high: null, low: null, position: null, coverageDays: 0, sampleSize: 0,
+  confidence: 'none' as const, estimated: true,
+}
+
 describe('what drives market value', () => {
   const analysis = (fmv: number | null, lastSale: number | null) => ({
     key: 'k',
     fmv: { fmv, confidence: 'medium' as const, agreement: 1, stalenessDays: 1, sampleSize: 5, contributors: [], rationale: [] },
-    range: { high: null, low: null, position: null, coverageDays: 0, sampleSize: 0, confidence: 'none' as const, estimated: true },
-    sixMonthRange: { high: null, low: null, position: null, coverageDays: 0, sampleSize: 0, confidence: 'none' as const, estimated: true },
+    range: EMPTY_RANGE,
+    sixMonthRange: EMPTY_RANGE,
+    twoYearRange: EMPTY_RANGE,
+    allTimeRange: EMPTY_RANGE,
     lastSale: lastSale == null ? null : { price: lastSale, date: '2026-09-18', venue: 'ebay', ageDays: 1 },
     entry: {} as never,
     referencePrice: null,
@@ -174,8 +181,10 @@ describe('a value typed in by hand', () => {
   const a = (fmv: number | null, last: number | null) => ({
     key: 'k',
     fmv: { fmv, confidence: 'medium' as const, agreement: 1, stalenessDays: 1, sampleSize: 5, contributors: [], rationale: [] },
-    range: { high: null, low: null, position: null, coverageDays: 0, sampleSize: 0, confidence: 'none' as const, estimated: true },
-    sixMonthRange: { high: null, low: null, position: null, coverageDays: 0, sampleSize: 0, confidence: 'none' as const, estimated: true },
+    range: EMPTY_RANGE,
+    sixMonthRange: EMPTY_RANGE,
+    twoYearRange: EMPTY_RANGE,
+    allTimeRange: EMPTY_RANGE,
     lastSale: last == null ? null : { price: last, date: '2026-09-18', venue: 'ebay', ageDays: 1 },
     entry: {} as never,
     referencePrice: null,
