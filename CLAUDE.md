@@ -208,6 +208,30 @@ so a sheet with "Card Name" beside "Subject" has two names and can use one.
 anything unrecognised, because "not recognised" should mean a column might be
 getting missed, and nothing else.
 
+### The upload that was never routed at all
+
+Three reports of "my watchlist went to holdings" had three different causes,
+and the third was not routing. The empty state — `isEmpty && tab !== 'data'` —
+stands in for **every** tab while both lists are bare, and its upload zone was
+hard-coded to `'portfolio'`. So on the Watchlist tab, with nothing imported
+yet, the only box on screen filed the file under holdings. The mode was already
+wrong before any routing rule ran, which is why fixing the routing twice
+changed nothing.
+
+Worse, the advice for recovering made it recur: emptying holdings put both
+lists back to bare, which brought the empty state back, which sent the next
+upload to holdings again.
+
+The empty state now uploads into the tab it is standing in for, and says which.
+
+**And contents now overrule the button where they are unambiguous**
+(`looksLikeWatchlist`): nothing paid in any row, some price being asked, is a
+list of candidates under every reading. Judged on values rather than headers,
+because a watchlist copied from a holdings template carries an empty
+"Investment" column and a header alone would read that as a record of what was
+paid. One-directional only — a watchlist may legitimately carry costs, so a
+sheet with costs is left to the button.
+
 ### Routing a sheet to the right tab
 
 The button the person pressed outranks any guess made from a name. It did not

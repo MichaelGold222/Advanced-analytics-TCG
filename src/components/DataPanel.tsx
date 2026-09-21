@@ -404,6 +404,7 @@ export function DataPanel({
                         <strong style={{ color: r.to === 'holdings' ? 'var(--seq-550)' : 'var(--seq-450)' }}>
                           {r.to}
                         </strong>
+                        {r.because && <span className="secondary"> — {r.because}</span>}
                       </div>
                     ))}
                   </div>

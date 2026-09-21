@@ -615,7 +615,51 @@ export interface WorkbookImport {
    * watchlist to my holdings" into one line naming the sheet and the
    * destination.
    */
-  routed: { sheet: string; to: 'holdings' | 'watchlist' | 'price history' }[]
+  routed: {
+    sheet: string
+    to: 'holdings' | 'watchlist' | 'price history'
+    /** Set when the contents overruled the button, so the log can say why. */
+    because?: string
+  }[]
+}
+
+/**
+ * Whether a sheet's contents say it is a list of things not yet owned.
+ *
+ * Judged on values, not headers. A watchlist copied from a holdings template
+ * carries an "Investment" column with nothing under it, and a header alone
+ * would read that as a record of what was paid. A column nobody filled in is
+ * not evidence of ownership.
+ *
+ * The test is deliberately one-directional. Nothing paid anywhere, and a price
+ * being asked somewhere, is a list of candidates — there is no reading of that
+ * which is a collection. The reverse is not true: a watchlist may perfectly
+ * well carry costs, so a sheet with costs is left to the button.
+ */
+export function looksLikeWatchlist(sheet: RawSheet): boolean {
+  const headerRow = findHeaderRow(sheet.rows)
+  if (headerRow < 0) return false
+  const map = mapColumns(sheet.rows[headerRow].map((c) => toText(c) ?? ''))
+
+  const anyValueIn = (fields: FieldName[]) => {
+    for (let r = headerRow + 1; r < sheet.rows.length; r++) {
+      const row = sheet.rows[r]
+      if (!row) continue
+      for (const f of fields) {
+        const col = map[f]
+        if (col == null) continue
+        const n = toNumber(row[col])
+        if (n != null && n > 0) return true
+        // A purchase date is ownership even without a price against it.
+        if (f === 'purchaseDate' && toDate(row[col])) return true
+      }
+    }
+    return false
+  }
+
+  const owned = anyValueIn(['costBasis', 'investment', 'purchaseDate'])
+  const wanted = anyValueIn(['askingPrice', 'targetPrice'])
+  return !owned && wanted
 }
 
 export type SheetTarget = 'holdings' | 'watchlist'
@@ -689,11 +733,25 @@ export async function importWorkbook(file: File, mode: 'portfolio' | 'watchlist'
       }
     }
 
-    if (routeSheet(sheet, mode, sheets.length) === 'watchlist') {
+    let target = routeSheet(sheet, mode, sheets.length)
+    // Contents overrule the button in the one case where they are unambiguous.
+    // Landing a watchlist in holdings counts it as owned and turns asking
+    // prices into portfolio value, so a sheet that cannot be a collection is
+    // not filed as one however it arrived.
+    const overridden = target === 'holdings' && looksLikeWatchlist(sheet)
+    if (overridden) target = 'watchlist'
+
+    if (target === 'watchlist') {
       const r = rowsToWatchItems(sheet)
       result.watchlist.push(r)
       mergeHistory(result.priceHistory, r.priceHistory)
-      result.routed.push({ sheet: sheet.name, to: 'watchlist' })
+      result.routed.push({
+        sheet: sheet.name,
+        to: 'watchlist',
+        because: overridden
+          ? 'no row records a cost and some record an asking price, so it cannot be a list of things owned'
+          : undefined,
+      })
     } else {
       const r = rowsToHoldings(sheet)
       result.holdings.push(r)

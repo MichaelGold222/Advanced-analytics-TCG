@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
-  findHeaderRow, importWorkbook, mapColumns, routeSheet, rowsToHoldings, rowsToPriceHistory,
-  rowsToWatchItems,
+  findHeaderRow, importWorkbook, looksLikeWatchlist, mapColumns, routeSheet, rowsToHoldings,
+  rowsToPriceHistory, rowsToWatchItems,
 } from './ingest'
 import type { Cell, RawSheet } from './ingest'
 import { itemKey } from './key'
@@ -485,15 +485,18 @@ describe('routing a file to the right tab', () => {
     }
   })
 
-  it('still honours a tab the owner deliberately named', async () => {
+  it('lets unambiguous contents overrule even the portfolio button', async () => {
+    // These rows ask prices and record no cost, so they cannot be a collection
+    // however they arrived. This used to land in holdings on the mode alone.
     const r = await importWorkbook(csv('anything', WATCH_ROWS), 'portfolio')
-    // A CSV has no tabs, so the mode decides and this lands in holdings.
-    expect(r.holdings.flatMap((h) => h.items)).toHaveLength(1)
+    expect(r.watchlist.flatMap((w) => w.items)).toHaveLength(1)
+    expect(r.holdings.flatMap((h) => h.items)).toHaveLength(0)
+  })
 
-    // A real workbook tab named Watchlist does outrank the mode.
-    const sheets: RawSheet[] = [{ name: 'Watchlist', rows: WATCH_ROWS }]
-    const routed = sheets.map((sh) => (/watch/i.test(sh.name) ? 'watchlist' : 'portfolio'))
-    expect(routed).toEqual(['watchlist'])
+  it('still routes by tab name inside a workbook holding several', () => {
+    const tab = (name: string): RawSheet => ({ name, rows: WATCH_ROWS })
+    expect(routeSheet(tab('Watchlist'), 'portfolio', 2)).toBe('watchlist')
+    expect(routeSheet(tab('Portfolio'), 'watchlist', 2)).toBe('holdings')
   })
 
   it('does not read a watchlist as price history just for matching a word', async () => {
@@ -623,5 +626,61 @@ describe('columns a grader’s export carries', () => {
   it('still flags a header that matches nothing at all', () => {
     const r = rowsToWatchItems(sheetOf(['Card Name', 'Binder Slot'], ['Charizard', 'A3']))
     expect(r.unmappedHeaders).toEqual(['Binder Slot'])
+  })
+})
+
+describe('contents overrule the button when they are unambiguous', () => {
+  const asSheet = (rows: Cell[][]): RawSheet => ({ name: 'anything', rows, nameIsFilename: true })
+
+  /** A watchlist copied from a holdings template: the cost columns are empty. */
+  const WATCHLIST_SHAPED: Cell[][] = [
+    ['Card Name', 'Investment', 'Potential Profit', 'Asking Price'],
+    ['Charizard', '', '', 24000],
+    ['Lugia', '', '', 3100],
+  ]
+
+  it('sees an empty cost column for what it is: no cost', () => {
+    // The header alone would read as a record of what was paid.
+    expect(looksLikeWatchlist(asSheet(WATCHLIST_SHAPED))).toBe(true)
+  })
+
+  it('sends it to the watchlist even when the portfolio button was pressed', async () => {
+    const csv = new File(
+      [WATCHLIST_SHAPED.map((r) => r.join(',')).join('\n')],
+      'cards.csv', { type: 'text/csv' },
+    )
+    const r = await importWorkbook(csv, 'portfolio')
+    expect(r.watchlist.flatMap((w) => w.items)).toHaveLength(2)
+    expect(r.holdings.flatMap((h) => h.items)).toHaveLength(0)
+    expect(r.routed[0].because).toMatch(/cannot be a list of things owned/i)
+  })
+
+  it('leaves a sheet with real costs to the button', () => {
+    expect(looksLikeWatchlist(asSheet([
+      ['Card Name', 'Cost Basis', 'Asking Price'],
+      ['Charizard', 12000, 24000],
+    ]))).toBe(false)
+  })
+
+  it('treats a purchase date as ownership even with no price beside it', () => {
+    expect(looksLikeWatchlist(asSheet([
+      ['Card Name', 'Purchase Date', 'Asking Price'],
+      ['Charizard', '2025-03-04', 24000],
+    ]))).toBe(false)
+  })
+
+  it('does not reach for a sheet that says nothing either way', () => {
+    // No costs and no asking prices: nothing to conclude, so the button holds.
+    expect(looksLikeWatchlist(asSheet([['Card Name', 'Set'], ['Charizard', 'Base Set']]))).toBe(false)
+  })
+
+  it('never pushes a real collection into the watchlist', async () => {
+    const csv = new File([[
+      ['Card Name', 'Cost Basis', 'Quantity'],
+      ['Charizard', 12000, 1],
+    ].map((r) => r.join(',')).join('\n')], 'mine.csv', { type: 'text/csv' })
+    const r = await importWorkbook(csv, 'portfolio')
+    expect(r.holdings.flatMap((h) => h.items)).toHaveLength(1)
+    expect(r.watchlist).toHaveLength(0)
   })
 })

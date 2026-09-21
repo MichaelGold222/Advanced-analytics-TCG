@@ -243,21 +243,36 @@ export default function App() {
         {/* A crash while drawing one tab must not black out the whole app. Keyed
             by tab so moving to another gives the broken one a fresh start. */}
         <ErrorBoundary key={tab} label={TABS.find((t) => t.id === tab)?.label}>
+        {/* The empty state stands in for every tab while both lists are bare, so
+            it has to upload into the tab it is standing in for. Hard-coding it
+            to the portfolio meant the Watchlist tab offered a box that quietly
+            filed the file under holdings — and emptying holdings to fix that
+            brought the empty state straight back, so it happened again. */}
         {isEmpty && tab !== 'data' ? (
           <div className="card p-8 max-w-3xl mx-auto mt-6">
-            <h2 className="text-xl font-semibold mb-2">Start with your collection sheet</h2>
+            <h2 className="text-xl font-semibold mb-2">
+              {tab === 'watchlist' ? 'Start with what you are watching' : 'Start with your collection sheet'}
+            </h2>
             <p className="text-sm secondary mb-6 leading-relaxed">
-              Drop in an Excel or CSV export and it is broken down into sealed, vintage, modern and Pikachu promos.
-              Nothing is uploaded anywhere — the file is read in this browser and stored on this device.
+              {tab === 'watchlist'
+                ? 'Drop in an Excel or CSV of the cards you are considering. This goes to the watchlist — nothing here is counted as owned or added to your portfolio value.'
+                : 'Drop in an Excel or CSV export and it is broken down into sealed, vintage, modern and Pikachu promos.'}
+              {' '}Nothing is uploaded anywhere — the file is read in this browser and stored on this device.
             </p>
             <UploadZone
-              label="Choose a file"
-              hint="Any .xlsx or .csv with a header row. Column names are matched for you, so “Paid”, “Purchase Price” and “Cost Basis” all work."
-              onFile={(f) => store.importFile(f, 'portfolio')}
+              label={tab === 'watchlist' ? 'Choose a watchlist file' : 'Choose a file'}
+              hint={tab === 'watchlist'
+                ? 'Any .xlsx or .csv with a header row. An asking price column is read if you have one.'
+                : 'Any .xlsx or .csv with a header row. Column names are matched for you, so “Paid”, “Purchase Price” and “Cost Basis” all work.'}
+              onFile={(f) => store.importFile(f, tab === 'watchlist' ? 'watchlist' : 'portfolio')}
             />
             <div className="flex flex-wrap gap-2 mt-5 justify-center">
               <button type="button" className="btn" onClick={handleTemplate}>Download a template</button>
-              <button type="button" className="btn" onClick={() => setTab('watchlist')}>Or add a card you are watching</button>
+              {tab === 'watchlist' ? (
+                <button type="button" className="btn" onClick={() => setTab('holdings')}>Or upload what you own</button>
+              ) : (
+                <button type="button" className="btn" onClick={() => setTab('watchlist')}>Or add a card you are watching</button>
+              )}
             </div>
           </div>
         ) : tab === 'dashboard' ? (

@@ -35,7 +35,7 @@ export interface ImportLogEntry {
   /** Recognised and set aside on purpose, as opposed to not understood. */
   ignoredHeaders: string[]
   /** Which tab each sheet's rows were sent to. */
-  routed: { sheet: string; to: 'holdings' | 'watchlist' | 'price history' }[]
+  routed: { sheet: string; to: 'holdings' | 'watchlist' | 'price history'; because?: string }[]
   issues: { row: number; message: string }[]
   historyPoints: number
 }
