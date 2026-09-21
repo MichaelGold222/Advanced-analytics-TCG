@@ -628,19 +628,92 @@ https://michaelgold222.github.io/Advanced-analytics-TCG/ on every push. The
 footer carries the build time, which is the way to tell a stale page from a
 current one — a browser will otherwise serve a cached copy indefinitely.
 
-Left unfinished on the night of 2026-09-19: the owner's 90-slab collection had
-30 priced and no pictures, with the upstream badly degraded and the day's
-request allowance nearly spent. Nothing was lost — prices, pictures, typed-in
-values and imported sheets all persist in the browser, and a refresh only ever
-asks about what is still missing. The next step is simply to press **Retry the
-N still missing** once, on a day when the allowance has reset.
+### Paused on 2026-09-21 with the credit balance at zero
 
-Two things worth knowing before debugging anything here again:
+**Nothing is broken and nothing is lost.** Prices, pictures, typed-in values
+and imported sheets all persist in the browser. The app is green: 500 tests,
+typecheck, lint and build all clean, working tree clean, everything pushed.
 
+The balance is at zero because **four diagnostic runs of the API check in ten
+minutes spent roughly 95 credits of a 200-a-month plan** — `get_cert_full_profile`
+turns out to cost 10 a call, not the 3 that was assumed, and it was being
+called twice per run. Half of it re-asked picture questions that run 27 had
+already answered and written into this file. That is the single most expensive
+mistake of the session and the reason the check's probes are now opt-in.
+Read this file before asking the API anything.
+
+### The one question to settle when credits reset
+
+**Does `get_card_sales_detail` return full sales history, and what does a call
+cost?** Everything downstream turns on it, it has never been called, and it can
+be answered for ~10 credits. Batch every other open question into the same run.
+
+- Card id: `search_by_certs_bulk` returns it as `id` for a card in the
+  catalogue (cert 141142901 → `Zrxi8aY5mAA6roFkKUVX`). A cert that is not
+  catalogued gets a 40-character hash there instead, which the upstream
+  rejects — that case needs its own answer.
+- Run it as: Actions → Price API check → Run workflow, branch
+  `claude/determined-gates-pl6w4q`, `probes: prices,depth`.
+
+Then the fork:
+
+- **If it returns full history** → one month of Parse's Hobby tier ($30, 1,000
+  credits, from the 402 body) backfills every card once. Because refreshes now
+  merge rather than overwrite, that is a **one-time** spend: afterwards the
+  1-credit bulk search keeps the record current for ~3 credits a month. Build
+  the backfill and an export before spending, so a paid backfill cannot be lost
+  to a cleared IndexedDB.
+- **If it caps too** → build the paste importer (below) for whatever cards the
+  history-gaps panel says actually need it.
+
+### What the owner actually asked for, and what is still owed
+
+"I just want the numbers to be accurate." Two separate failures stand between
+the app and that, and Data & settings now names them per card
+(`historygaps.ts`): a **thin** record is fixed once by getting history in; an
+**outpaced** card loses sales permanently between refreshes and is fixed only
+by refreshing more often. Start any future session by reading that panel — it
+turns "all 32 watchlist cards" into a short ordered list, and it may say the
+job is five cards.
+
+Designed and agreed, not built:
+
+- **A paste importer.** A box that takes messy pasted text — a sales table
+  copied off a screen — parses dates and prices out of it, shows what it read,
+  and lets it be corrected before it commits. Per card or in a batch. This is
+  the zero-credit route to correct numbers and it works today.
+- **A backfill + export path**, so deep history once fetched is written to a
+  file rather than living only in IndexedDB.
+
+### Where the data can and cannot come from
+
+- **Card Ladder has no public API.** They offer enterprise access to dealers.
+- **Their Terms of Use prohibit** using "any robot, spider... to retrieve,
+  index, 'scrape,' 'data mine'... without Company's express prior written
+  consent", and they may terminate a paid account without refund for it. A
+  Playwright scraper against the owner's own Pro login is not a workaround; it
+  risks the subscription. **Do not build one.** The clause names consent as the
+  mechanism — a paying subscriber asking them directly is the legitimate route
+  and has not been tried.
+- **Unexplored and legitimate:** eBay has an official API with sold-item data,
+  and most of what Card Ladder aggregates is eBay completed listings. PSA has
+  an API for cert lookup and population. Population is the one genuinely
+  exogenous signal the model still lacks.
+- **Eleven of the thirteen Parse endpoints have never been called.**
+  `get_index_history` and `list_indices` would give a real market index where
+  `buildRepeatSalesIndex` currently builds one from the owner's own cards;
+  `get_pokemon_set_psa_prices` may price a whole set at once.
+
+### Still outstanding from earlier
+
+- **Rotate the Parse key** — it was exposed in chat in an earlier session and
+  has not been rotated.
+- ~60 slabs remain unpriced. Press **Retry the N still missing** once the
+  allowance is back.
 - Holdings are stored exactly as they were parsed. An importer fix reaches a
   sheet only when it is uploaded again, so a column that now maps correctly
   will still read as it did until then.
 - `.github/workflows/browser-check.yml` drives the built app in a real browser
   against the live API and reports what reached storage and what drew on the
-  page. Several bugs this session looked like API failures and were not; that
-  check is what told them apart.
+  page. Several bugs have looked like API failures and were not; that check is
+  what tells them apart.
