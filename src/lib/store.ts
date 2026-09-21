@@ -126,6 +126,12 @@ interface AppState extends PersistedState {
   backfillHistory(): Promise<void>
   /** Add price history a person pasted in, for a card the API cannot reach. */
   addPastedHistory(key: string, points: PricePoint[]): void
+  /**
+   * Bind a cert to a Card Ladder card id taken from that site's URL, and
+   * fetch that card's history immediately. Resolves to what happened, so the
+   * paste box can appear only once the cheap route has actually been refused.
+   */
+  linkCardId(cert: string, cardId: string): Promise<'fetched' | 'refused' | 'no-key'>
   /** Empty holdings or the watchlist, keeping prices, photos and the other list. */
   clearList(kind: 'portfolio' | 'watchlist'): void
   clearAll(): Promise<void>
@@ -445,6 +451,54 @@ export const useStore = create<AppState>((setState, getState) => ({
     uploadedHistory[key] = mergeSalePoints(uploadedHistory[key] ?? [], points)
     setState({ uploadedHistory })
     scheduleSave(getState())
+  },
+
+  /**
+   * A card id handed over by hand, because the certificate route reaches
+   * almost nothing here.
+   *
+   * Measured: 31 of 32 watchlist certs come back from the bulk search with a
+   * 40-character hash rather than a card id. The site itself puts the id in
+   * the address bar of every card page, so one paste is all it takes — and a
+   * credit then buys that card's entire history, against typing its sales in
+   * by hand. Worth trying before any manual entry.
+   *
+   * It fetches straight away rather than waiting for the next refresh: the
+   * point is to find out whether this card is reachable at all, and a person
+   * who has just pasted a URL is owed that answer now. A refusal is recorded
+   * like any other, so the card is not asked again on every refresh.
+   */
+  async linkCardId(cert, cardId) {
+    const key = getParseKey()
+    if (!key) {
+      setState({ error: 'Add your Card Ladder API key in Data & settings first.' })
+      return 'no-key'
+    }
+    setState({ certCardIds: { ...getState().certCardIds, [cert]: cardId } })
+
+    try {
+      const { history, usage } = await fetchCardHistory([{ cert, cardId }], { key })
+      const got = history[0]
+      const certSales = { ...getState().certSales }
+      const certDeepFetched = { ...getState().certDeepFetched }
+      const at = new Date().toISOString()
+      if (got && got.sales.length > 0) {
+        certSales[cert] = mergeSalePoints(certSales[cert] ?? [], got.sales)
+      }
+      certDeepFetched[cert] = {
+        at, sales: got?.sales.length ?? 0,
+        unavailable: got?.unavailable ?? true, underlying: got?.underlying ?? 0,
+      }
+      setState({ certSales, certDeepFetched, usage: usage ?? getState().usage })
+      scheduleSave(getState())
+      return got && got.sales.length > 0 ? 'fetched' : 'refused'
+    } catch (err) {
+      setState({
+        error: err instanceof ParseError ? err.message
+          : `Could not fetch that card: ${err instanceof Error ? err.message : String(err)}`,
+      })
+      return 'refused'
+    }
   },
 
   async backfillHistory() {

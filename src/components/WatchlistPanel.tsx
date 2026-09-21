@@ -34,6 +34,8 @@ interface Props {
   onUpdate: (id: string, patch: Partial<WatchItem>) => void
   /** Price history pasted in for a card the API cannot reach. */
   onPasteHistory: (item: WatchItem, points: PricePoint[]) => void
+  /** Bind a Card Ladder card id to this card's cert and fetch its history. */
+  onLinkCardId: (item: WatchItem, cardId: string) => Promise<'fetched' | 'refused' | 'no-key'>
   onImport: (file: File) => Promise<void>
   onRemoveMany: (ids: string[]) => void
 }
@@ -42,7 +44,7 @@ const EMPTY_FORM = { name: '', set: '', number: '', condition: '', cert: '', ask
 
 export function WatchlistPanel({
   watchlist, analyses, series, images, onAdd, onRemove, onRemoveMany, onOverride, onUpdate, onImport,
-  onPasteHistory,
+  onPasteHistory, onLinkCardId,
 }: Props) {
   const [form, setForm] = useState(EMPTY_FORM)
   const [expanded, setExpanded] = useState<string | null>(null)
@@ -221,6 +223,7 @@ export function WatchlistPanel({
                             <Reasoning
                               item={w} analysis={a} rank={rank} images={images}
                               onPasteHistory={(pts) => onPasteHistory(w, pts)}
+                              onLinkCardId={w.cert ? ((id) => onLinkCardId(w, id)) : undefined}
                             />
                           </div>
                         </td>
@@ -280,13 +283,14 @@ function BuyCase({ rank, place }: { rank: RankedItem; place: number | null }) {
 }
 
 function Reasoning({
-  item, analysis, rank, images, onPasteHistory,
+  item, analysis, rank, images, onPasteHistory, onLinkCardId,
 }: {
   item: WatchItem
   analysis?: ItemAnalysis
   rank: RankedItem
   images: Record<string, { image: string | null; thumbnail: string | null }>
   onPasteHistory: (points: PricePoint[]) => void
+  onLinkCardId?: (cardId: string) => Promise<'fetched' | 'refused' | 'no-key'>
 }) {
   if (!analysis) return <p className="text-sm muted p-2">No analysis yet — refresh prices or import comps.</p>
   const { fmv, range, entry, forecast } = analysis
@@ -363,7 +367,7 @@ function Reasoning({
         )}
         {!range.coversWindow && (
           <div className="mb-3 pb-3" style={{ borderBottom: '1px solid var(--border)' }}>
-            <PasteHistory name={item.name} onAdd={onPasteHistory} />
+            <PasteHistory name={item.name} onAdd={onPasteHistory} onLink={onLinkCardId} />
           </div>
         )}
         <dl className="text-sm space-y-1.5">

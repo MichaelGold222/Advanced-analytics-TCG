@@ -147,9 +147,14 @@ export function assessHistory(
 function blockedWord(blocked: HistoryGap['blocked']): string {
   switch (blocked) {
     case 'no-card-id':
-      return ' Its full history cannot be fetched: Card Ladder returned no card id for this'
-        + ' certificate, only an internal hash, which the sales endpoint rejects. That is why'
-        + ' pressing the button spends nothing on it.'
+      // The obvious question, asked as soon as this was shown: if it found
+      // five sales, why can it not find more? Because two different lookups
+      // are involved and only one of them worked.
+      return ' Those sales were found by CERTIFICATE — Card Ladder tracks what this slab sold'
+        + ' for and hands back the newest few. A full history is kept against the CARD instead,'
+        + ' and the certificate lookup returns an internal hash rather than a link to one, so'
+        + ' there is nothing to ask for the rest with. Open the card on Card Ladder and paste'
+        + ' its page URL below: the id is in the address, and one credit then buys the lot.'
     case 'already-fetched':
       return ' Its full history has already been fetched — this is everything Card Ladder holds.'
     case 'endpoint-refused':

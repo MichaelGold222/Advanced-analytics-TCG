@@ -403,6 +403,7 @@ export default function App() {
             onOverride={(id, s) => store.setSegmentOverride(id, s, 'watch')}
             onUpdate={store.updateWatchItem}
             onPasteHistory={(item, points) => store.addPastedHistory(itemKey(item), points)}
+            onLinkCardId={(item, cardId) => store.linkCardId(item.cert ?? '', cardId)}
             onImport={(f) => store.importFile(f, 'watchlist')}
           />
         ) : (

@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   CALL_OVERHEAD_MS, CREDITS_PER_CALL, FETCH_CONCURRENCY, MAX_CERTS_PER_CALL, MIN_BATCH_SIZE, MS_PER_CERT,
   TARGET_CALLS,
-  batchCerts, buildFeed, estimateFetch, isSupportedGrader, mergeFeeds, mergeSalePoints,
+  batchCerts, buildFeed, cardIdFromUrl, estimateFetch, isSupportedGrader, mergeFeeds, mergeSalePoints,
   parseBulkResponse, planBatchSize, parseCertImages, salesToPricePoints, venueOf,
 } from './cardladder'
 import type { PriceFeed } from './cardladder'
@@ -516,5 +516,39 @@ describe('what a full refresh costs', () => {
     expect(of({ current_value: 900, id: 'Zrxi8aY5mAA6roFkKUVX' }).clValue).toBe(900)
     expect(of({ market_value: 800, id: 'Zrxi8aY5mAA6roFkKUVX' }).clValue).toBe(800)
     expect(of({ cl_value: 0, market_value: 800, id: 'Zrxi8aY5mAA6roFkKUVX' }).clValue).toBe(800)
+  })
+})
+
+describe('the card id in a Card Ladder page URL', () => {
+  it('takes it out of the URL the site shows', () => {
+    expect(cardIdFromUrl('https://app.cardladder.com/card/aDzWNhB6zljWw619YHQd?profile=collection&showSales=true&backTo=Collection'))
+      .toBe('aDzWNhB6zljWw619YHQd')
+  })
+
+  it('does not mind the scheme, the subdomain or trailing junk', () => {
+    for (const u of [
+      'app.cardladder.com/card/aDzWNhB6zljWw619YHQd',
+      'http://www.cardladder.com/card/aDzWNhB6zljWw619YHQd/',
+      '  https://app.cardladder.com/card/aDzWNhB6zljWw619YHQd#sales  ',
+    ]) expect(cardIdFromUrl(u)).toBe('aDzWNhB6zljWw619YHQd')
+  })
+
+  it('accepts a bare id, which is what copying part of the URL gives', () => {
+    expect(cardIdFromUrl('aDzWNhB6zljWw619YHQd')).toBe('aDzWNhB6zljWw619YHQd')
+  })
+
+  it('refuses a link to somewhere else entirely', () => {
+    expect(cardIdFromUrl('https://www.ebay.com/itm/287456192405')).toBeNull()
+    expect(cardIdFromUrl('https://app.cardladder.com/collection')).toBeNull()
+  })
+
+  it('refuses the internal hash, which the sales endpoint rejects', () => {
+    expect(cardIdFromUrl('https://app.cardladder.com/card/d24b659737ee385b818f20eafd6b2fb5199b5837')).toBeNull()
+    expect(cardIdFromUrl('d24b659737ee385b818f20eafd6b2fb5199b5837')).toBeNull()
+  })
+
+  it('refuses nothing, and whitespace', () => {
+    expect(cardIdFromUrl('')).toBeNull()
+    expect(cardIdFromUrl('   ')).toBeNull()
   })
 })

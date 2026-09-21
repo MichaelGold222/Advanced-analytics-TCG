@@ -387,3 +387,29 @@ export function parseCertImages(body: unknown, asked: CertRequest[]): CertImage[
   })
   return out
 }
+
+/**
+ * The card id out of a Card Ladder page URL.
+ *
+ * `app.cardladder.com/card/aDzWNhB6zljWw619YHQd?profile=collection&...`
+ *
+ * Measured: 31 of 32 watchlist certs come back from the bulk search with a
+ * 40-character hash instead of a card id, so the certificate route reaches
+ * almost nothing in a collection of promos. The site itself puts the id in
+ * the address bar of every card page, which makes it something a person can
+ * hand over in one paste — and one credit then buys that card's whole
+ * history, against typing its sales in by hand.
+ *
+ * A bare id is accepted too, since that is what someone copying "the bit
+ * after /card/" will produce.
+ */
+export function cardIdFromUrl(input: string): string | null {
+  const text = input.trim()
+  if (!text) return null
+  const fromPath = text.match(/cardladder\.com\/card\/([^/?#\s]+)/i)
+  if (fromPath) return usableCardId(decodeURIComponent(fromPath[1]))
+  // Not a Card Ladder URL: only take it if it looks like a bare id, so a
+  // pasted eBay link is rejected rather than sent as a card id.
+  if (/^https?:/i.test(text) || text.includes('/')) return null
+  return usableCardId(text)
+}
