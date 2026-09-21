@@ -432,6 +432,8 @@ export const useStore = create<AppState>((setState, getState) => ({
     const now = new Date()
     const wanted: { cert: string; cardId: string }[] = []
     const seen = new Set<string>()
+    /** cardId -> every cert in the collection that shares that card. */
+    const byCard = new Map<string, string[]>()
     for (const item of [...state.holdings, ...state.watchlist]) {
       const cert = item.cert
       if (!cert || seen.has(cert)) continue
@@ -445,6 +447,12 @@ export const useStore = create<AppState>((setState, getState) => ({
       if (sales.length === 0) continue
       const oldest = sales.reduce((a, b) => (a.date <= b.date ? a : b)).date
       if (daysAgo(oldest, now) >= WINDOW_DAYS * WINDOW_COVERED_FRACTION) continue
+      // One call per CARD, not per slab. card_id identifies the card at a
+      // grade, so every PSA 10 of it shares one history — two copies in the
+      // collection, or a copy held and another watched, cost one credit
+      // between them rather than two. Both certs are recorded as fetched.
+      if (byCard.has(cardId)) { byCard.get(cardId)!.push(cert); continue }
+      byCard.set(cardId, [cert])
       wanted.push({ cert, cardId })
     }
     if (wanted.length === 0) return
@@ -466,10 +474,16 @@ export const useStore = create<AppState>((setState, getState) => ({
       const certSales = { ...getState().certSales }
       const certDeepFetched = { ...getState().certDeepFetched }
       const at = new Date().toISOString()
+      const cardOf = new Map(wanted.map((w) => [w.cert, w.cardId]))
       for (const h of history) {
-        if (h.sales.length > 0) certSales[h.cert] = mergeSalePoints(certSales[h.cert] ?? [], h.sales)
-        certDeepFetched[h.cert] = {
-          at, sales: h.sales.length, unavailable: h.unavailable, underlying: h.underlying,
+        // The history belongs to the card, so it goes to every cert that
+        // shares it — and each is marked fetched, so none is paid for twice.
+        const shared = byCard.get(cardOf.get(h.cert) ?? '') ?? [h.cert]
+        for (const cert of shared) {
+          if (h.sales.length > 0) certSales[cert] = mergeSalePoints(certSales[cert] ?? [], h.sales)
+          certDeepFetched[cert] = {
+            at, sales: h.sales.length, unavailable: h.unavailable, underlying: h.underlying,
+          }
         }
       }
       setState({ certSales, certDeepFetched, usage: usage ?? getState().usage })

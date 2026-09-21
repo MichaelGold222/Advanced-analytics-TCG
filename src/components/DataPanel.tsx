@@ -9,6 +9,8 @@ import {
 import { relativeTime } from '../lib/format'
 import { getParseKey, setParseKey } from '../lib/providers/cardladder-client'
 import { estimateFetch } from '../lib/providers/cardladder'
+import { describeCost } from '../lib/refreshcost'
+import type { RefreshCost } from '../lib/refreshcost'
 import type { UsageInfo } from '../lib/providers/cardladder-client'
 import type { ImportLogEntry, ImportMode, RefreshState } from '../lib/store'
 import type { HistoryGap } from '../lib/historygaps'
@@ -33,6 +35,8 @@ interface Props {
   holdingCount: number
   watchCount: number
   /** Cards whose record is too thin or too stale to trust, worst first. */
+  /** What pressing the button will cost, before it is pressed. */
+  cost: RefreshCost
   historyGaps: HistoryGap[]
   /** How many cards were assessed, so "6 of 32" can be said. */
   gapTotal: number
@@ -73,7 +77,7 @@ function ConfirmButton({
 export function DataPanel({
   importLog, refresh, gradedRefresh, certLastFetched, certCount, missingCerts, photoCount, usage,
   onImport, onTemplate, onExport, onClear, onClearList, onRefreshGraded,
-  holdingCount, watchCount, historyGaps, gapTotal,
+  holdingCount, watchCount, historyGaps, gapTotal, cost,
 }: Props) {
   const [key, setKey] = useState(getApiKey())
   const [saved, setSaved] = useState(false)
@@ -173,17 +177,28 @@ export function DataPanel({
           {gradedRefresh.running && <GradedProgress gradedRefresh={gradedRefresh} />}
 
           {!gradedRefresh.running && certCount > 0 && (() => {
-            const { ms, credits } = estimateFetch(certCount)
-            const short = usage?.creditsRemaining != null && credits > usage.creditsRemaining
+            // The old estimate assumed the price call led the refresh, which
+            // it no longer does, so it overstated by roughly four times. This
+            // one counts the passes that actually run.
+            const short = usage?.creditsRemaining != null && cost.total > usage.creditsRemaining
+            const { ms } = estimateFetch(cost.cards > 0 ? certCount : 0)
             return (
               <p className="text-xs muted mt-2 leading-relaxed">
-                Card Ladder prices each slab when asked rather than reading a stored number, so expect
-                about <span className="tabular">{formatDuration(ms)}</span> for {certCount} and about{' '}
-                <span className="tabular">{credits}</span> credits.
+                <strong>{describeCost(cost)}</strong>
+                {cost.history > 0 && (
+                  <>
+                    {' '}A card's whole price history is one call, so this is a one-off — afterwards a
+                    refresh of everything is {cost.search} credit{cost.search === 1 ? '' : 's'}.
+                    {ms > 0 && <> Expect a few minutes: Card Ladder prices on demand rather than reading a stored number.</>}
+                  </>
+                )}
+                {cost.history === 0 && cost.price === 0 && (
+                  <> Every card already has history reaching back a year, so nothing more is needed.</>
+                )}
                 {short && (
                   <span style={{ color: 'var(--serious)' }}>
                     {' '}That is more than the {usage.creditsRemaining?.toLocaleString()} you have left, so it
-                    will stop partway.
+                    will stop partway — and pick up where it stopped next time.
                   </span>
                 )}
               </p>

@@ -20,6 +20,7 @@ import { analyzeItem, computeTrend } from './lib/analytics'
 import { money, pct, relativeTime } from './lib/format'
 import { itemKey } from './lib/key'
 import { assessHistory, rankGaps } from './lib/historygaps'
+import { estimateRefresh } from './lib/refreshcost'
 import { buildRepeatSalesIndex } from './lib/marketindex'
 import {
   analyzeHoldings, buildValueTrend, computePortfolioStats, holdingKey, suspectedWatchItems, unitValue,
@@ -93,6 +94,12 @@ export default function App() {
     return out
   }, [holdings, watchlist, series, holdingAnalyses, watchAnalyses, store.certLastFetched])
   const historyGaps = useMemo(() => rankGaps(assessed), [assessed])
+  const refreshCost = useMemo(() => estimateRefresh({
+    certs: [...holdings, ...watchlist].map((i) => i.cert).filter((c): c is string => !!c),
+    certSales: store.certSales,
+    certCardIds: store.certCardIds,
+    certDeepFetched: store.certDeepFetched,
+  }), [holdings, watchlist, store.certSales, store.certCardIds, store.certDeepFetched])
   const gapTotal = assessed.length
 
   const stats = useMemo(() => computePortfolioStats(holdings, holdingAnalyses), [holdings, holdingAnalyses])
@@ -412,7 +419,7 @@ export default function App() {
                   .map((i) => i.cert),
               ).size
             }
-            historyGaps={historyGaps} gapTotal={gapTotal}
+            historyGaps={historyGaps} gapTotal={gapTotal} cost={refreshCost}
             usage={store.usage} onRefreshGraded={(o) => void store.refreshGraded(o)}
             onImport={store.importFile} onTemplate={handleTemplate} onExport={handleExport}
             onClear={() => void store.clearAll()}
