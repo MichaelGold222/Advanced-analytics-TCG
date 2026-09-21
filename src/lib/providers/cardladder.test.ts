@@ -359,3 +359,54 @@ describe('folding a fetch into what is already held', () => {
     expect(mergeSalePoints([], [p('2026-03-10', 120)])).toHaveLength(1)
   })
 })
+
+describe('the sales the picture search carries', () => {
+  // Verbatim from the live API, run 30: the bulk search returned ten sales for
+  // this cert where the three-credit price call returned five, and dated them
+  // properly where the price call dated all five to the day of the request.
+  const LIVE_SEARCH = {
+    status: 'success',
+    data: {
+      results: [{
+        cert_number: '141142901',
+        grading_company: 'psa',
+        id: 'Zrxi8aY5mAA6roFkKUVX',
+        image: 'https://firebasestorage.googleapis.com/v0/b/cardladder-71d53.appspot.com/o/cards%2FZrxi8aY5mAA6roFkKUVX?alt=media',
+        thumbnail: 'https://i.ebayimg.com/images/g/SvwAAeSwZXtqrtNF/s-l400.webp',
+        recent_sales: [
+          { date: '2026-09-21T00:00:00.000Z', price: 4250, url: 'https://www.ebay.com/itm/1' },
+          { date: '2026-09-19T00:00:00.000Z', price: 4100, url: 'https://www.ebay.com/itm/2' },
+          { date: '2026-09-12T00:00:00.000Z', price: 3900, url: 'https://www.ebay.com/itm/3' },
+        ],
+      }],
+    },
+  }
+  const asked = [{ cert_number: '141142901', grading_company: 'PSA' as const }]
+
+  it('reads them, instead of taking the pictures and dropping the rest', () => {
+    const [row] = parseCertImages(LIVE_SEARCH, asked)
+    expect(row.sales.map((s) => s.price)).toEqual([3900, 4100, 4250])
+    expect(row.sales.every((s) => s.source === 'sale')).toBe(true)
+  })
+
+  it('still reads the pictures', () => {
+    const [row] = parseCertImages(LIVE_SEARCH, asked)
+    expect(row.thumbnail).toContain('ebayimg.com')
+    expect(row.image).toContain('firebasestorage')
+  })
+
+  it('keeps a row that has sales but no photograph', () => {
+    // Previously a row with no picture was dropped outright, which would now
+    // throw its sales away with it.
+    const body = { data: { results: [{ cert_number: '1', recent_sales: [{ date: '2026-05-01', price: 10 }] }] } }
+    const rows = parseCertImages(body, [{ cert_number: '1', grading_company: 'PSA' }])
+    expect(rows).toHaveLength(1)
+    expect(rows[0].image).toBeNull()
+    expect(rows[0].sales).toHaveLength(1)
+  })
+
+  it('still drops a row with neither', () => {
+    const body = { data: { results: [{ cert_number: '1' }] } }
+    expect(parseCertImages(body, [{ cert_number: '1', grading_company: 'PSA' }])).toHaveLength(0)
+  })
+})

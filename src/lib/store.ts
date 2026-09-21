@@ -202,8 +202,20 @@ export const useStore = create<AppState>((setState, getState) => ({
       const { images } = await fetchCertImages(missing, { key })
       if (images.length === 0) return
       const certImages = { ...getState().certImages }
-      for (const img of images) certImages[img.cert] = { image: img.image, thumbnail: img.thumbnail }
-      setState({ certImages })
+      // The same response carries sales, and measured against the live API it
+      // carries MORE of them than the price call does, with better dates. They
+      // were being parsed for pictures and discarded. Merged, never replaced:
+      // this runs after the price fetch and must not narrow what that found.
+      const certSales = { ...getState().certSales }
+      for (const img of images) {
+        if (img.image || img.thumbnail) {
+          certImages[img.cert] = { image: img.image, thumbnail: img.thumbnail }
+        }
+        if (img.sales.length > 0) {
+          certSales[img.cert] = mergeSalePoints(certSales[img.cert] ?? [], img.sales)
+        }
+      }
+      setState({ certImages, certSales })
       scheduleSave(getState())
     } catch {
       /* a missing picture is cosmetic and must not disturb anything else */

@@ -272,6 +272,16 @@ export interface CertImage {
   image: string | null
   /** Smaller version of the same, which is what a table row wants. */
   thumbnail: string | null
+  /**
+   * Sales the search returned alongside the pictures.
+   *
+   * Measured: for cert 141142901 this call returned **ten** sales where the
+   * three-credit price call returned five, and the price call dated all five
+   * to the day of the request — a 0-day span — while these carried real dates
+   * across nine. Deeper, better dated, a third of the credits, and the app was
+   * already making the call for the photographs and throwing the sales away.
+   */
+  sales: PricePoint[]
 }
 
 /** Only pictures served over https are worth carrying into the page. */
@@ -302,8 +312,10 @@ export function parseCertImages(body: unknown, asked: CertRequest[]): CertImage[
     if (!cert) return
     const image = httpsUrl(r.image)
     const thumbnail = httpsUrl(r.thumbnail)
-    if (!image && !thumbnail) return
-    out.push({ cert, image, thumbnail })
+    const sales = salesToPricePoints(r.recent_sales as CardLadderSale[] | undefined)
+    // A row with sales and no photograph is still worth keeping now.
+    if (!image && !thumbnail && sales.length === 0) return
+    out.push({ cert, image, thumbnail, sales })
   })
   return out
 }

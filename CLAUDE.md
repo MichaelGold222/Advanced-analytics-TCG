@@ -89,11 +89,30 @@ which were live bugs:
   date and price. Depth now accrues: fetch monthly and after a year the
   52-week high is real.
 
-Whether any endpoint carries more than five is unmeasured — `get_card_sales`
-has never been called, and `get_cert_full_profile` carries `sale_records` whose
-depth the picture probe never counted. The API check now asks all of them
-(step: "How far back does the sales history go?"). Answer that before building
-anything on top of the current five.
+**`search_by_certs_bulk` is the better source of sales, and it was already
+being called.** Measured, run 30. For cert 141142901 it returned **ten** sales
+where `get_cert_values_bulk` returned five — and the price call dated all five
+to the day of the request, a 0-day span, while the search dated them properly
+across nine days. Deeper, better dated, **1 credit against 3**, and the app was
+making the call anyway for the photographs and discarding the sales. It now
+merges them (`parseCertImages` returns `sales`; `refreshImages` folds them in).
+For a cert with only five sales on record both return the same five, so this
+never narrows anything.
+
+Two caveats before leaning on it further: it has been seen to return ten, not
+proven to have no cap of its own, and the price call remains the source of
+`cl_value` and `last_sale_price`.
+
+**Deeper still, untested: `get_card_sales_detail`.** The spec lists it with
+`page`, `limit` and `card_id` — pagination, which means full history. Its
+`card_id` is a Firestore document id, and **`search_by_certs_bulk` already
+returns it as `id`** on a card in the catalogue (cert 141142901 →
+`Zrxi8aY5mAA6roFkKUVX`, the same id the picture URL carries). A cert that is
+not catalogued gets a 40-character hash there instead, which the upstream
+rejects with "Card with id ... not found". Untested only because the account's
+monthly credits ran out mid-probe — four diagnostic runs in ten minutes did
+it, so batch the questions into one run next time. This is the thing to try
+first when credits return.
 
 **Endpoints.** `get_cert_values_bulk` (POST, 3 credits) returns five recent
 sales per cert. `search_by_certs_bulk` (POST, 1 credit) returns
