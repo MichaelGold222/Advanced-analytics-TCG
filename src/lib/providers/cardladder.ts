@@ -311,6 +311,10 @@ export interface CertImage {
    * spent on one that cannot work.
    */
   cardId: string | null
+  /** Card Ladder's own value, which this call carries as well as the price call does. */
+  clValue: number | null
+  /** Population at this grade — exogenous, and free in this response. */
+  pop: number | null
   /**
    * Sales the search returned alongside the pictures.
    *
@@ -369,9 +373,12 @@ export function parseCertImages(body: unknown, asked: CertRequest[]): CertImage[
     const thumbnail = httpsUrl(r.thumbnail)
     const sales = salesToPricePoints(r.recent_sales as CardLadderSale[] | undefined)
     const cardId = usableCardId(r.id)
+    const num = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) && v > 0 ? v : null)
+    const clValue = num(r.cl_value) ?? num(r.current_value) ?? num(r.market_value)
+    const pop = typeof r.pop === 'number' && Number.isFinite(r.pop) ? r.pop : null
     // A row with sales or an id and no photograph is still worth keeping now.
     if (!image && !thumbnail && sales.length === 0 && !cardId) return
-    out.push({ cert, image, thumbnail, cardId, sales })
+    out.push({ cert, image, thumbnail, cardId, clValue, pop, sales })
   })
   return out
 }

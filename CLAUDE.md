@@ -613,6 +613,38 @@ rate, does one fetch still keep up?
 Typed figures are excluded from the rate: a `user` point says a price on a
 date, nothing about how often the card changes hands.
 
+### The expensive call was leading, and it returned less
+
+A full refresh of 122 slabs cost **12 credits and now costs 3**, for strictly
+more data. The waste was the order of two calls.
+
+| | credits per call | covers | sales | also carries |
+|---|---|---|---|---|
+| `get_cert_values_bulk` | 3 | 200 certs | 5 | `cl_value`, `last_sale_price` |
+| `search_by_certs_bulk` | **1** | 200 certs | **10** | `cl_value`, `current_value`, `market_value`, `pop`, pictures, **card id** |
+
+Measured, run 30. There is nothing the price call gives that the search does
+not, it returned twice the sales, and its dates were right where the price
+call dated all five of its own to the day of the request. Yet the price call
+led every refresh and the search ran afterwards as a cosmetic afterthought —
+9 credits of every 12, for less.
+
+The search now leads, and the price call runs **only for certs the search
+could not answer for**. On a collection it answers fully, the price call never
+runs at all.
+
+**The charge is per call, not per cert**, which is the thing to hold on to
+before optimising this further. One call covers up to 200 certs for 1 credit,
+so a collection of 122 costs the same 3 credits as a collection of 2 — and
+`refreshImages` therefore no longer skips certs that already have a
+photograph. It looks like paying for photos again and is the opposite: the
+call is being made for the *sales*, which do go stale, and the photograph
+rides along in the same response for nothing. Skipping those certs would not
+save a credit; it would only throw away the sales in the reply.
+
+Pinned in tests (`what a full refresh costs`), because the ordering is worth
+real money and an innocent-looking edit could reverse it.
+
 ### The button does the whole job, including the expensive half
 
 "I want it to do it automatically when I hit the button." So **Fetch sold

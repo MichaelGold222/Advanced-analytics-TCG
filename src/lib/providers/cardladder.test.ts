@@ -461,3 +461,60 @@ describe('a feed that is written every week', () => {
     expect(Object.keys(mergeFeeds(week1, week2).byCert).sort()).toEqual(['123', '789'])
   })
 })
+
+describe('what a full refresh costs', () => {
+  // Pinned because the ordering of the two bulk calls is worth real money and
+  // could be reversed by an innocent-looking edit. Measured against the live
+  // API: the price call is charged 3 credits, the bulk search 1, and each
+  // covers up to 200 certs — the charge is PER CALL, not per cert.
+  const SEARCH_CREDITS_PER_CALL = 1
+  const collection = 122 // 90 holdings + 32 watchlist
+
+  it('charges per call, so photos for 122 slabs cost no more than for 2', () => {
+    const two = batchCerts(Array.from({ length: 2 }, (_, i) => ({ cert_number: `${i}`, grading_company: 'PSA' as const })))
+    const many = batchCerts(Array.from({ length: collection }, (_, i) => ({ cert_number: `${i}`, grading_company: 'PSA' as const })))
+    expect(two.length * SEARCH_CREDITS_PER_CALL).toBe(1)
+    expect(many.length * SEARCH_CREDITS_PER_CALL).toBe(TARGET_CALLS)
+    // Three credits for the whole collection, photos included.
+    expect(many.length * SEARCH_CREDITS_PER_CALL).toBe(3)
+  })
+
+  it('is cheaper leading with the search than leading with the price call', () => {
+    const calls = batchCerts(
+      Array.from({ length: collection }, (_, i) => ({ cert_number: `${i}`, grading_company: 'PSA' as const })),
+    ).length
+    const searchLed = calls * SEARCH_CREDITS_PER_CALL          // and no price call at all
+    const priceLed = calls * CREDITS_PER_CALL + calls * SEARCH_CREDITS_PER_CALL
+    expect(searchLed).toBe(3)
+    expect(priceLed).toBe(12)
+    expect(priceLed / searchLed).toBe(4)
+  })
+
+  it('keeps every field the price call was being spent on', () => {
+    // If this ever stops holding, the price call has to come back.
+    const body = {
+      data: {
+        results: [{
+          cert_number: '141142901', id: 'Zrxi8aY5mAA6roFkKUVX', cl_value: 4000,
+          pop: 312, image: 'https://example.com/a.png',
+          recent_sales: [{ date: '2026-09-21', price: 4000 }],
+        }],
+      },
+    }
+    const [row] = parseCertImages(body, [{ cert_number: '141142901', grading_company: 'PSA' }])
+    expect(row.clValue).toBe(4000)
+    expect(row.pop).toBe(312)
+    expect(row.cardId).toBe('Zrxi8aY5mAA6roFkKUVX')
+    expect(row.sales).toHaveLength(1)
+  })
+
+  it('falls back to current_value or market_value when cl_value is absent', () => {
+    const of = (over: Record<string, unknown>) => parseCertImages(
+      { data: { results: [{ cert_number: '1', ...over }] } },
+      [{ cert_number: '1', grading_company: 'PSA' }],
+    )[0]
+    expect(of({ current_value: 900, id: 'Zrxi8aY5mAA6roFkKUVX' }).clValue).toBe(900)
+    expect(of({ market_value: 800, id: 'Zrxi8aY5mAA6roFkKUVX' }).clValue).toBe(800)
+    expect(of({ cl_value: 0, market_value: 800, id: 'Zrxi8aY5mAA6roFkKUVX' }).clValue).toBe(800)
+  })
+})

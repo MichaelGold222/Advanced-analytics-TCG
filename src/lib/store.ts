@@ -62,6 +62,8 @@ interface PersistedState {
   certSales: Record<string, PricePoint[]>
   /** Card Ladder's own id per cert, needed by the deep-history endpoint. */
   certCardIds: Record<string, string>
+  /** Value and population per cert, both free in the bulk search response. */
+  certFacts: Record<string, { clValue: number | null; pop: number | null }>
   /**
    * Certs whose full history has already been fetched, and how it went.
    *
@@ -132,6 +134,7 @@ const EMPTY: PersistedState = {
   lastRefresh: null,
   certSales: {},
   certCardIds: {},
+  certFacts: {},
   certDeepFetched: {},
   certLastFetched: null,
   certImages: {},
@@ -159,6 +162,7 @@ function migrate(saved: PersistedState): PersistedState {
     quotes: saved.quotes ?? {},
     certSales: saved.certSales ?? {},
     certCardIds: saved.certCardIds ?? {},
+    certFacts: saved.certFacts ?? {},
     certDeepFetched: saved.certDeepFetched ?? {},
     certLastFetched: saved.certLastFetched ?? null,
     certImages: saved.certImages ?? {},
@@ -185,6 +189,7 @@ function persistable(s: AppState): PersistedState {
     lastRefresh: s.lastRefresh,
     certSales: s.certSales,
     certCardIds: s.certCardIds,
+    certFacts: s.certFacts,
     certDeepFetched: s.certDeepFetched,
     certLastFetched: s.certLastFetched,
     certImages: s.certImages,
@@ -211,23 +216,29 @@ export const useStore = create<AppState>((setState, getState) => ({
   gradedRefresh: { running: false, done: 0, total: 0, unmatched: [], failed: [], startedAt: null },
 
   /**
-   * Price graded slabs from Card Ladder, by certificate number.
+   * The cheap call, and the one that does most of the work.
    *
-   * Runs in the browser: Parse serves CORS, and the key is the user's own,
-   * held on their device. One call covers 200 slabs.
+   * `search_by_certs_bulk` is 1 credit for up to 200 certs and carries sales,
+   * `cl_value`, population, pictures and the card id — measured returning
+   * more sales than the 3-credit price call, better dated. So this is the
+   * main pass of a refresh, not a cosmetic afterthought, which is why it no
+   * longer skips certs that already have a photograph: a picture does not go
+   * stale, but a price does, and the sales are the point.
+   *
+   * Still named for the pictures because renaming it is churn; read it as
+   * "refresh from the bulk search".
    */
   async refreshImages(certs) {
     const key = getParseKey()
     if (!key || certs.length === 0) return
-    const known = getState().certImages
-    const missing = certs.filter((c) => !known[c.cert_number])
-    if (missing.length === 0) return
 
     try {
-      const { images } = await fetchCertImages(missing, { key })
+      const { images, usage } = await fetchCertImages(certs, { key })
+      if (usage) setState({ usage })
       if (images.length === 0) return
       const certImages = { ...getState().certImages }
       const certCardIds = { ...getState().certCardIds }
+      const certFacts = { ...getState().certFacts }
       // The same response carries sales, and measured against the live API it
       // carries MORE of them than the price call does, with better dates. They
       // were being parsed for pictures and discarded. Merged, never replaced:
@@ -242,8 +253,16 @@ export const useStore = create<AppState>((setState, getState) => ({
         }
         // The id the deep-history endpoint needs, free in this response.
         if (img.cardId) certCardIds[img.cert] = img.cardId
+        // As are the value and the population, which the price call was being
+        // spent on separately.
+        if (img.clValue != null || img.pop != null) {
+          certFacts[img.cert] = {
+            clValue: img.clValue ?? certFacts[img.cert]?.clValue ?? null,
+            pop: img.pop ?? certFacts[img.cert]?.pop ?? null,
+          }
+        }
       }
-      setState({ certImages, certSales, certCardIds })
+      setState({ certImages, certSales, certCardIds, certFacts })
       scheduleSave(getState())
     } catch {
       /* a missing picture is cosmetic and must not disturb anything else */
@@ -284,9 +303,50 @@ export const useStore = create<AppState>((setState, getState) => ({
       return
     }
 
-    setState({ gradedRefresh: { running: true, done: 0, total: list.length, unmatched: [], failed: [], startedAt: Date.now() } })
+    setState({ gradedRefresh: { running: true, done: 0, total: list.length, unmatched: [], failed: [], startedAt: Date.now(), phase: 'prices' } })
+
+    // The cheap call goes FIRST, and for most refreshes it is the only one.
+    //
+    // Measured, run 30: search_by_certs_bulk is charged 1 credit against the
+    // price call's 3, and returned TEN sales for a cert where the price call
+    // returned five — better dated, too, since the price call dated all five
+    // of its own to the day of the request. It also carries cl_value,
+    // current_value, market_value, the population, the pictures and the card
+    // id the deep-history endpoint needs. There is nothing the price call
+    // gives that this one does not, and it costs a third as much.
+    //
+    // Leading with the price call therefore spent 9 credits of every 12 on
+    // strictly less data. It now runs only for certs the search could not
+    // answer for, which is a gap-filler rather than the main path: a full
+    // refresh of the collection goes from 12 credits to 3.
+    let answered = new Set<string>()
     try {
-      const { prices, unmatched, failed, usage, partialError } = await fetchCertPrices(list, {
+      await getState().refreshImages(list)
+      const sales = getState().certSales
+      answered = new Set(list.map((c) => c.cert_number).filter((c) => (sales[c] ?? []).length > 0))
+    } catch {
+      // The search failing just means the price call has everything to do.
+    }
+
+    const gaps = list.filter((c) => !answered.has(c.cert_number))
+    if (gaps.length === 0) {
+      setState({
+        certLastFetched: new Date().toISOString(),
+        gradedRefresh: { ...getState().gradedRefresh, done: list.length, total: list.length },
+      })
+      scheduleSave(getState())
+      try {
+        await getState().backfillHistory()
+      } finally {
+        setState({ gradedRefresh: { ...getState().gradedRefresh, running: false, startedAt: null } })
+        scheduleSave(getState())
+      }
+      return
+    }
+
+    setState({ gradedRefresh: { ...getState().gradedRefresh, done: 0, total: gaps.length, phase: 'prices' } })
+    try {
+      const { prices, unmatched, failed, usage, partialError } = await fetchCertPrices(gaps, {
         key,
         onProgress: (done, total) => setState({ gradedRefresh: { ...getState().gradedRefresh, done, total } }),
       })
@@ -309,8 +369,8 @@ export const useStore = create<AppState>((setState, getState) => ({
         // Still running: the pictures are part of this errand, and reporting
         // it finished while a call is in flight is how a fetch looks like it
         // did nothing.
-        gradedRefresh: { ...getState().gradedRefresh, done: list.length, total: list.length, unmatched, failed },
-        error: priced === 0
+        gradedRefresh: { ...getState().gradedRefresh, done: gaps.length, total: gaps.length, unmatched, failed },
+        error: priced === 0 && answered.size === 0
           ? `Looked up ${list.length} certificate${list.length === 1 ? '' : 's'} and none came back with sales. Check the numbers against the slab labels.`
           : partialError,
       })
@@ -326,12 +386,6 @@ export const useStore = create<AppState>((setState, getState) => ({
     // collection with no photographs at all. They are fetched once per cert
     // and kept, since a photograph does not go stale the way a price does and
     // the search that carries them costs its own credit.
-    try {
-      await getState().refreshImages(list)
-    } catch {
-      /* a missing picture is cosmetic */
-    }
-
     // And then the part that makes a yearly high real. The bulk endpoints hand
     // back the newest five sales per slab, which on an active card is days —
     // so any card whose record still does not reach back a year gets its full
