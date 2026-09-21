@@ -14,6 +14,7 @@ import { gradedPricingNote } from '../lib/analytics'
 import { CardThumb } from './CardThumb'
 import { thumbFor } from '../lib/images'
 import { SelectionBar, TickBox } from './SelectionBar'
+import { useFrozenOrder } from '../hooks/useFrozenOrder'
 import { useSelection } from '../hooks/useSelection'
 import { rankWatchlist, type RankedItem } from '../lib/ranking'
 import type {
@@ -44,15 +45,27 @@ export function WatchlistPanel({
 
   // Ordered by the buy ranking rather than the entry score alone, so the list
   // itself answers "which of these first?".
-  const rows = useMemo(() => {
-    const ranked = rankWatchlist(watchlist, itemKey, analyses, series)
-    return ranked.map((r, i) => ({
+  const ranked = useMemo(
+    () => rankWatchlist(watchlist, itemKey, analyses, series),
+    [watchlist, analyses, series],
+  )
+  // The rank is what orders this table, and the asking price is one of the
+  // things the rank is made of — so the order has to hold still while one is
+  // being typed. The number shown keeps updating; only the row stays put.
+  const held = useFrozenOrder(ranked, (r) => r.item.id)
+  const placeOf = useMemo(
+    () => new Map(ranked.map((r, i) => [r.item.id, r.verdict === 'no data' ? null : i + 1])),
+    [ranked],
+  )
+  const rows = useMemo(
+    () => held.order.map((r) => ({
       w: r.item,
       a: r.analysis,
       rank: r,
-      place: r.verdict === 'no data' ? null : i + 1,
-    }))
-  }, [watchlist, analyses, series])
+      place: placeOf.get(r.item.id) ?? null,
+    })),
+    [held.order, placeOf],
+  )
 
   const visibleIds = useMemo(() => rows.map((r) => r.w.id), [rows])
   const selection = useSelection(visibleIds)
@@ -107,13 +120,7 @@ export function WatchlistPanel({
 
       {rows.length > 0 && (
         <>
-        <SelectionBar
-          selected={selection.selected} noun="watch item"
-          onDelete={() => { onRemoveMany(selection.selected); selection.clear() }}
-          onClear={selection.clear}
-        />
-
-        <section className="card overflow-auto">
+        <section className="card overflow-auto" {...held.holdProps}>
           <table className="data w-full">
             <thead>
               <tr>
@@ -202,7 +209,13 @@ export function WatchlistPanel({
                     {open && (
                       <tr>
                         <td colSpan={10} style={{ background: 'var(--surface-2)' }}>
-                          <Reasoning item={w} analysis={a} rank={rank} images={images} />
+                          {/* Width zero with a full-width minimum: a cell
+                              spanning every column otherwise joins in deciding
+                              how wide each one is, so opening a row resized
+                              the whole table and rewrapped every line in it. */}
+                          <div style={{ width: 0, minWidth: '100%' }}>
+                            <Reasoning item={w} analysis={a} rank={rank} images={images} />
+                          </div>
                         </td>
                       </tr>
                     )}
@@ -212,6 +225,18 @@ export function WatchlistPanel({
             </tbody>
           </table>
         </section>
+
+        {/* Below the table and stuck to the bottom of the view. Above it, the
+            bar appeared the moment a box was ticked and shoved everything
+            down by its own height — including the row that had just been
+            clicked, and the next box someone was reaching for. */}
+        <div className="sticky bottom-4 z-10">
+          <SelectionBar
+            selected={selection.selected} noun="watch item"
+            onDelete={() => { onRemoveMany(selection.selected); selection.clear() }}
+            onClear={selection.clear}
+          />
+        </div>
         </>
       )}
     </div>

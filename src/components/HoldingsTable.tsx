@@ -87,19 +87,6 @@ export function HoldingsTable({
         <span className="text-xs muted tabular ml-auto">{rows.length} of {holdings.length}</span>
       </div>
 
-      <SelectionBar
-        selected={selection.selected} noun="holding"
-        onDelete={() => { onRemoveMany(selection.selected); selection.clear() }}
-        onClear={selection.clear}
-      >
-        <button
-          type="button" className="btn"
-          onClick={() => { onMoveToWatchlist(selection.selected); selection.clear() }}
-        >
-          Move {selection.count} to the watchlist <ArrowRight className="size-3.5" aria-hidden />
-        </button>
-      </SelectionBar>
-
       <div className="overflow-auto">
         <table className="data w-full">
           <thead>
@@ -196,6 +183,23 @@ export function HoldingsTable({
           </tbody>
         </table>
         {rows.length === 0 && <p className="p-8 text-center text-sm muted">No positions match those filters.</p>}
+      </div>
+
+      {/* Stuck to the bottom of the view rather than pushed in above the
+          table, where it shoved every row down the moment a box was ticked. */}
+      <div className="sticky bottom-4 z-10 px-4">
+        <SelectionBar
+          selected={selection.selected} noun="holding"
+          onDelete={() => { onRemoveMany(selection.selected); selection.clear() }}
+          onClear={selection.clear}
+        >
+          <button
+            type="button" className="btn"
+            onClick={() => { onMoveToWatchlist(selection.selected); selection.clear() }}
+          >
+            Move {selection.count} to the watchlist <ArrowRight className="size-3.5" aria-hidden />
+          </button>
+        </SelectionBar>
       </div>
       {rows.length > 0 && (
         <p className="text-xs muted leading-relaxed px-4 pb-4">
