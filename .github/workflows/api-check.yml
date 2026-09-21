@@ -336,13 +336,40 @@ jobs:
         run: |
           case ",$PROBES," in *,all,*|*,depth,*) ;; *) echo "skipped — not in '$PROBES'"; exit 0 ;; esac
           [ -n "$KEY" ] || exit 0
-          [ -s detail.json ] || { echo "no scraper resolved earlier — run with probes including 'prices'"; exit 0; }
+          # Resolve the scraper here rather than depending on the price probe
+          # having run. Listing tasks and reading one are metadata calls and
+          # are charged nothing, so a depth-only run no longer has to spend 3
+          # credits on a price call it does not want.
+          if [ ! -s detail.json ]; then
+            curl -sS -m 30 -o tasks.json -H "X-API-Key: $KEY" "$BASE/dispatch/tasks?limit=100" || true
+            TASK=$(python3 -c "
+          import json, re, sys
+          try:
+              d = json.load(open('tasks.json'))
+          except Exception:
+              sys.exit()
+          tasks = d.get('tasks', d) if isinstance(d, dict) else d
+          for t in tasks:
+              if re.search('cardladder', ' '.join(str(t.get(k, '')) for k in ('slug', 'url', 'name')), re.I):
+                  print(t.get('id')); sys.exit()
+          " || true)
+            [ -n "$TASK" ] || { echo "no Card Ladder API on this account"; exit 0; }
+            curl -sS -m 30 -o detail.json -H "X-API-Key: $KEY" "$BASE/dispatch/tasks/$TASK" || true
+            curl -sS -m 30 -o spec.json -H "X-API-Key: $KEY" \
+              "$BASE/v1/apis/$(python3 -c "
+          import json
+          print(json.load(open('detail.json')).get('result_scraper_id') or '')
+          ")/openapi.json" || true
+          fi
           SCR=$(python3 -c "
           import json
-          d = json.load(open('detail.json'))
+          try:
+              d = json.load(open('detail.json'))
+          except Exception:
+              print(''); raise SystemExit
           print(d.get('result_scraper_id') or d.get('scraper_id') or '')
           ")
-          [ -n "$SCR" ] || exit 0
+          [ -n "$SCR" ] || { echo "could not resolve the scraper"; exit 0; }
           ONE=$(python3 -c "
           import os
           print([c.strip() for c in os.environ['CERT'].replace(chr(10), ',').split(',') if c.strip()][0])
