@@ -11,6 +11,8 @@ import { classify } from '../lib/classify'
 import { money, plainPct, shortDate } from '../lib/format'
 import { itemKey } from '../lib/key'
 import { gradedPricingNote } from '../lib/analytics'
+import { CardThumb } from './CardThumb'
+import { thumbFor } from '../lib/images'
 import { SelectionBar, TickBox } from './SelectionBar'
 import { useSelection } from '../hooks/useSelection'
 import { rankWatchlist, type RankedItem } from '../lib/ranking'
@@ -22,6 +24,8 @@ interface Props {
   watchlist: WatchItem[]
   analyses: Map<string, ItemAnalysis>
   series: Map<string, PriceSeries>
+  /** Slab pictures by cert, fetched alongside the sold comps. */
+  images: Record<string, { image: string | null; thumbnail: string | null }>
   onAdd: (item: Omit<WatchItem, 'id' | 'segment' | 'segmentReason'>) => void
   onRemove: (id: string) => void
   onOverride: (id: string, segment: Segment | null) => void
@@ -33,7 +37,7 @@ interface Props {
 const EMPTY_FORM = { name: '', set: '', number: '', condition: '', cert: '', askingPrice: '', targetPrice: '' }
 
 export function WatchlistPanel({
-  watchlist, analyses, series, onAdd, onRemove, onRemoveMany, onOverride, onUpdate, onImport,
+  watchlist, analyses, series, images, onAdd, onRemove, onRemoveMany, onOverride, onUpdate, onImport,
 }: Props) {
   const [form, setForm] = useState(EMPTY_FORM)
   const [expanded, setExpanded] = useState<string | null>(null)
@@ -72,9 +76,15 @@ export function WatchlistPanel({
 
   return (
     <div className="space-y-4">
-      <section className="card p-4">
-        <h2 className="text-sm font-semibold mb-3">Add something you are looking at</h2>
-        <form onSubmit={submit} className="grid gap-2 sm:grid-cols-2 lg:grid-cols-8">
+      {/* Folded away once there is a list to look at. Six fields and an upload
+          box are what you want on the first visit and clutter on every one
+          after, so the list gets the top of the page instead. */}
+      <details className="card p-4" open={rows.length === 0}>
+        <summary className="text-sm font-semibold cursor-pointer select-none">
+          Add something you are looking at
+          <span className="muted font-normal"> — type one in, or upload a sheet</span>
+        </summary>
+        <form onSubmit={submit} className="grid gap-2 sm:grid-cols-2 lg:grid-cols-8 mt-3">
           <input className="input lg:col-span-2" placeholder="Card or product name *" required value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} aria-label="Name" />
           <input className="input" placeholder="Set" value={form.set} onChange={(e) => setForm({ ...form, set: e.target.value })} aria-label="Set" />
           <input className="input" placeholder="Number" value={form.number} onChange={(e) => setForm({ ...form, number: e.target.value })} aria-label="Card number" />
@@ -87,9 +97,13 @@ export function WatchlistPanel({
           </button>
         </form>
         <div className="mt-4">
-          <UploadZone compact label="Upload a watchlist" hint="An .xlsx or .csv of what you are considering. Name a sheet “Watchlist” and it is routed automatically." onFile={onImport} />
+          <UploadZone
+            compact label="Upload a watchlist"
+            hint="An .xlsx or .csv of what you are considering. Everything in it goes to the watchlist — nothing is counted as owned."
+            onFile={onImport}
+          />
         </div>
-      </section>
+      </details>
 
       {rows.length > 0 && (
         <>
@@ -111,15 +125,12 @@ export function WatchlistPanel({
                   />
                 </th>
                 <th style={{ width: 28 }} aria-label="Expand" />
-                <th className="num" style={{ width: 44 }}>#</th>
                 <th>Item</th>
                 <th>Segment</th>
                 <th className="num">Asking</th>
                 <th className="num">FMV</th>
                 <th>52-week range</th>
-                <th className="num">Yearly high</th>
                 <th className="num">Good entry</th>
-                <th>Call</th>
                 <th>Buy case</th>
                 <th aria-label="Actions" />
               </tr>
@@ -146,14 +157,18 @@ export function WatchlistPanel({
                           {open ? <ChevronDown className="size-3.5" aria-hidden /> : <ChevronRight className="size-3.5" aria-hidden />}
                         </button>
                       </td>
-                      <td className="num tabular muted">{place ?? '—'}</td>
                       <td>
+                        <div className="flex items-start gap-3">
+                          <CardThumb src={thumbFor(images, w.cert)} name={w.name} />
+                          <div className="min-w-0">
                         <div className="font-medium">{w.name}</div>
                         <div className="text-xs muted">{[
                           w.set, w.number && `#${w.number}`, w.variation, w.condition,
                           w.population != null ? `pop ${w.population}` : null,
                           w.cert && `cert ${w.cert}`,
                         ].filter(Boolean).join(' · ') || '—'}</div>
+                          </div>
+                        </div>
                       </td>
                       <td><SegmentPicker value={w.segmentOverride ?? null} inferred={inferred} onChange={(s) => onOverride(w.id, s)} /></td>
                       <td className="num">
@@ -171,18 +186,13 @@ export function WatchlistPanel({
                           asking={w.askingPrice ?? null} estimated={a?.range.estimated}
                         />
                       </td>
-                      <td className="num tabular">
-                        {money(a?.range.high)}
-                        {a?.range.estimated && a.range.sampleSize > 0 && <div className="text-[11px] muted">estimated</div>}
-                      </td>
                       <td className="num tabular font-medium" style={{ color: 'var(--delta-up)' }}>
                         {money(a?.entry.entryPrice)}
                         {a?.entry.stretchEntry != null && (
                           <div className="text-[11px] muted">stretch {money(a.entry.stretchEntry)}</div>
                         )}
                       </td>
-                      <td><VerdictBadge verdict={a?.entry.verdict ?? 'unknown'} score={a?.entry.score} /></td>
-                      <td><BuyCase rank={rank} /></td>
+                      <td><BuyCase rank={rank} place={place} /></td>
                       <td>
                         <button type="button" className="btn px-2 py-1" onClick={() => onRemove(w.id)} aria-label={`Remove ${w.name}`}>
                           <Trash2 className="size-3.5" aria-hidden />
@@ -191,8 +201,8 @@ export function WatchlistPanel({
                     </tr>
                     {open && (
                       <tr>
-                        <td colSpan={13} style={{ background: 'var(--surface-2)' }}>
-                          <Reasoning item={w} analysis={a} rank={rank} />
+                        <td colSpan={10} style={{ background: 'var(--surface-2)' }}>
+                          <Reasoning item={w} analysis={a} rank={rank} images={images} />
                         </td>
                       </tr>
                     )}
@@ -209,7 +219,7 @@ export function WatchlistPanel({
 }
 
 /** The ranking's verdict, with its score and the loudest caveat against it. */
-function BuyCase({ rank }: { rank: RankedItem }) {
+function BuyCase({ rank, place }: { rank: RankedItem; place: number | null }) {
   if (rank.verdict === 'no data') return <span className="text-xs muted">no data</span>
   const tone = rank.verdict === 'strong'
     ? 'var(--good)'
@@ -220,6 +230,7 @@ function BuyCase({ rank }: { rank: RankedItem }) {
         : 'var(--text-muted)'
   return (
     <div className="flex items-center gap-1.5 whitespace-nowrap" title={rank.warnings.join(' ')}>
+      {place != null && <span className="text-xs tabular muted">#{place}</span>}
       <span className="size-2 rounded-full shrink-0" style={{ background: tone }} aria-hidden />
       <span className="text-xs tabular font-medium">{rank.score}</span>
       <span className="text-xs muted">{rank.verdict}</span>
@@ -236,7 +247,14 @@ function BuyCase({ rank }: { rank: RankedItem }) {
   )
 }
 
-function Reasoning({ item, analysis, rank }: { item: WatchItem; analysis?: ItemAnalysis; rank: RankedItem }) {
+function Reasoning({
+  item, analysis, rank, images,
+}: {
+  item: WatchItem
+  analysis?: ItemAnalysis
+  rank: RankedItem
+  images: Record<string, { image: string | null; thumbnail: string | null }>
+}) {
   if (!analysis) return <p className="text-sm muted p-2">No analysis yet — refresh prices or import comps.</p>
   const { fmv, range, entry, forecast } = analysis
   // Said only when something is actually wrong with how this one is priced.
@@ -245,6 +263,19 @@ function Reasoning({ item, analysis, rank }: { item: WatchItem; analysis?: ItemA
   return (
     <div className="grid gap-5 lg:grid-cols-3 p-2">
       <div>
+        <div className="flex items-start gap-3 mb-3">
+          <CardThumb src={images[item.cert ?? '']?.image ?? thumbFor(images, item.cert)} name={item.name} size="lg" />
+          <div className="min-w-0">
+            <div className="font-medium">{item.name}</div>
+            <div className="text-xs muted leading-relaxed">
+              {[
+                item.set, item.number && `#${item.number}`, item.variation, item.condition,
+                item.population != null ? `pop ${item.population}` : null,
+                item.cert && `cert ${item.cert}`,
+              ].filter(Boolean).join(' · ') || '—'}
+            </div>
+          </div>
+        </div>
         <h3 className="text-xs font-semibold uppercase tracking-wide secondary mb-2">How the FMV was built</h3>
         <ul className="text-sm space-y-1.5 leading-relaxed">
           {fmv.rationale.map((r) => <li key={r}>· {r}</li>)}
@@ -290,7 +321,10 @@ function Reasoning({ item, analysis, rank }: { item: WatchItem; analysis?: ItemA
       </div>
 
       <div>
-        <h3 className="text-xs font-semibold uppercase tracking-wide secondary mb-2">The entry call</h3>
+        <div className="flex items-center justify-between gap-2 mb-2">
+          <h3 className="text-xs font-semibold uppercase tracking-wide secondary">The entry call</h3>
+          <VerdictBadge verdict={entry.verdict} score={entry.score} />
+        </div>
         <dl className="text-sm space-y-1.5 mb-3">
           <Row label="Good entry at or below" value={money(entry.entryPrice)} />
           <Row label="Stretch bid" value={money(entry.stretchEntry)} />

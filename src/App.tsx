@@ -369,7 +369,7 @@ export default function App() {
           </div>
         ) : tab === 'watchlist' ? (
           <WatchlistPanel
-            watchlist={watchlist} analyses={watchAnalyses} series={series}
+            watchlist={watchlist} analyses={watchAnalyses} series={series} images={store.certImages}
             onAdd={store.addWatchItem} onRemove={store.removeWatchItem}
             onRemoveMany={store.removeWatchItems}
             onOverride={(id, s) => store.setSegmentOverride(id, s, 'watch')}

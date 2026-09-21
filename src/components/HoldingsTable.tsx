@@ -2,6 +2,8 @@ import { useMemo, useState } from 'react'
 import { ArrowRight, Pencil, Trash2 } from 'lucide-react'
 import { PriceCell } from './PriceCell'
 import { SegmentPicker } from './SegmentPicker'
+import { CardThumb } from './CardThumb'
+import { thumbFor } from '../lib/images'
 import { SelectionBar, TickBox } from './SelectionBar'
 import { useSelection } from '../hooks/useSelection'
 import { money, pct, plainPct } from '../lib/format'
@@ -136,7 +138,7 @@ export function HoldingsTable({
                   </td>
                   <td>
                     <div className="flex items-start gap-3">
-                      <CardThumb src={h.cert ? images[h.cert]?.thumbnail ?? images[h.cert]?.image ?? null : null} name={h.name} />
+                      <CardThumb src={thumbFor(images, h.cert)} name={h.name} />
                       <div className="min-w-0">
                         <div className="font-medium">{h.name}</div>
                         <div className="text-xs muted">
@@ -351,27 +353,3 @@ function LastSoldCell({
  * hidden outright if the picture fails to load — a broken-image icon on every
  * row is worse than no picture.
  */
-function CardThumb({ src, name }: { src: string | null; name: string }) {
-  const [failed, setFailed] = useState(false)
-  if (!src || failed) {
-    return (
-      <div
-        className="shrink-0 w-10 h-14 rounded-sm"
-        style={{ background: 'var(--surface-2)', border: '1px solid var(--border)' }}
-        aria-hidden
-      />
-    )
-  }
-  return (
-    <img
-      src={src}
-      alt={`${name} slab`}
-      loading="lazy"
-      decoding="async"
-      referrerPolicy="no-referrer"
-      onError={() => setFailed(true)}
-      className="shrink-0 w-10 h-14 rounded-sm object-cover"
-      style={{ border: '1px solid var(--border)' }}
-    />
-  )
-}

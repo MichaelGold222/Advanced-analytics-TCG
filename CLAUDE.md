@@ -185,6 +185,31 @@ Worth knowing: `costBasis` claims "Entry Price", so a watchlist using that
 header to mean "the price I would pay" has it set aside rather than read as a
 target. The log now names it, which is how anyone would find out.
 
+### Slab photographs
+
+`certImages` is keyed by certificate and already covered the watchlist —
+`refreshGraded` builds its cert list from holdings **and** watchlist, and
+fetches pictures for both. The watchlist simply never drew them. `CardThumb`
+is shared by both tables (`sm` in a row, `lg` in the expanded panel) and
+`thumbFor` lives in `lib/images.ts`, since a plain helper in a component file
+breaks fast refresh.
+
+The frame is drawn whether or not a picture exists, so rows do not jump as
+images load, and a broken link falls back to the placeholder rather than a
+torn-image icon.
+
+### The watchlist table had thirteen columns
+
+Now ten. The rank number folded into the buy case (`#3 · 75 strong`), the
+yearly high went — it is already the right-hand label of the range meter and a
+row of the detail's range table — and the entry verdict moved into the detail
+beside "The entry call", where its own numbers are. Nothing was lost, and the
+photo column had to come from somewhere.
+
+The add-a-card form is a `<details>`, open only when the list is empty: six
+fields and an upload box are what a first visit wants and clutter on every
+visit after.
+
 ### The graded note was shown to every graded card
 
 `GRADED_QUOTE_NOTE` was rendered on `item.grade != null` alone, so a PSA 10
