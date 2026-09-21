@@ -316,6 +316,10 @@ function Reasoning({
         <dl className="text-sm space-y-1.5">
           <Row label="Position in the year's band" value={range.position == null ? '—' : plainPct(range.position, 0)} />
           <Row label="History covered" value={`${Math.round(analysis.allTimeRange.coverageDays)} days · ${analysis.allTimeRange.sampleSize} points`} />
+          <Row
+            label="Built from"
+            value={range.fromTrades ? `${range.sampleSize} completed sales` : 'asking prices and stored figures'}
+          />
           <Row label="Reliability" value={range.estimated ? 'Estimated — thin history' : 'Measured'} />
         </dl>
       </div>
@@ -327,8 +331,15 @@ function Reasoning({
         </div>
         <dl className="text-sm space-y-1.5 mb-3">
           <Row label="Good entry at or below" value={money(entry.entryPrice)} />
-          <Row label="Stretch bid" value={money(entry.stretchEntry)} />
-          <Row label="Discount required" value={plainPct(entry.requiredDiscount, 0)} />
+          <Row
+            label="Target, off this year's high"
+            value={entry.entryDownFromHigh == null ? '—' : plainPct(entry.entryDownFromHigh, 0)}
+          />
+          <Row label="Floor — lowest it has traded" value={money(entry.stretchEntry)} />
+          <Row
+            label="Asking, off this year's high"
+            value={entry.askingDownFromHigh == null ? '—' : plainPct(entry.askingDownFromHigh, 0)}
+          />
           <Row label="Volatility (last year)" value={entry.volatility == null ? '—' : plainPct(entry.volatility, 0)} />
           <Row label="90-day trend" value={entry.momentum90d == null ? '—' : plainPct(entry.momentum90d, 1)} />
         </dl>

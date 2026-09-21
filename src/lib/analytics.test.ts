@@ -241,16 +241,28 @@ describe('analyzeItem', () => {
 
 describe('how the entry call reads', () => {
   it('states the gap to FMV without a double negative', () => {
-    const points = steady(100, 12, 3)
-    const s = series(points)
+    // Three sales is below what the traded band needs, so this is the
+    // fair-value branch, which is the one that phrases a gap to FMV at all.
+    const s = series(steady(100, 3, 30))
     const fmv = computeFmv(s, NOW)
-    // Above the entry target but under FMV, which is the branch that phrases
-    // the gap; below the target it simply reports the target was met.
     const asking = 97
     const range = compute52WeekRange(s, asking, NOW)
-    const text = computeEntry(fmv, range, s, asking, NOW).rationale.join(' ')
+    const entry = computeEntry(fmv, range, s, asking, NOW)
+    expect(entry.anchoredOnTrades).toBe(false)
+    const text = entry.rationale.join(' ')
     expect(text).toMatch(/below FMV/)
     expect(text).not.toMatch(/-\d+\.\d+% below/)
+  })
+
+  it('talks about the traded band once there are trades to talk about', () => {
+    const s = series(steady(100, 12, 3))
+    const fmv = computeFmv(s, NOW)
+    const range = compute52WeekRange(s, 97, NOW)
+    const entry = computeEntry(fmv, range, s, 97, NOW)
+    expect(entry.anchoredOnTrades).toBe(true)
+    const text = entry.rationale.join(' ')
+    expect(text).toMatch(/Sales this year ran/)
+    expect(text).toMatch(/off the high/)
   })
 })
 
@@ -525,5 +537,101 @@ describe('what a graded card is told about its own pricing', () => {
 
   it('says nothing about an ungraded card', () => {
     expect(gradedPricingNote({ grade: null }, analyse([]))).toBeNull()
+  })
+})
+
+describe('a traded range is built from trades', () => {
+  const SALES: PricePoint[] = [
+    { date: daysBack(330), price: 1180, source: 'sale' },
+    { date: daysBack(280), price: 1450, source: 'sale' },
+    { date: daysBack(160), price: 980, source: 'sale' },
+    { date: daysBack(80), price: 900, source: 'sale' },
+    { date: daysBack(40), price: 870, source: 'sale' },
+    { date: daysBack(15), price: 950, source: 'sale' },
+  ]
+  /** The same card, plus an ask nobody took and a figure from a sheet. */
+  const NOISY: PricePoint[] = [
+    ...SALES,
+    { date: daysBack(30), price: 2400, source: 'listing' },
+    { date: daysBack(25), price: 2200, source: 'user' },
+    { date: daysBack(10), price: 400, source: 'snapshot' },
+  ]
+
+  it('gives the same high and low whatever opinions surround the trades', () => {
+    const clean = compute52WeekRange(series(SALES), 950, NOW)
+    const noisy = compute52WeekRange(series(NOISY), 950, NOW)
+    expect(noisy.high).toBe(clean.high)
+    expect(noisy.low).toBe(clean.low)
+    expect(noisy.fromTrades).toBe(true)
+  })
+
+  it('does not let an asking price set the yearly high', () => {
+    // The old band reached 2400 on an ask nobody accepted.
+    expect(compute52WeekRange(series(NOISY), 950, NOW).high).toBe(1450)
+  })
+
+  it('falls back to what it has when nothing has sold, and says so', () => {
+    const asksOnly = series([
+      { date: daysBack(40), price: 2400, source: 'listing' },
+      { date: daysBack(10), price: 2200, source: 'user' },
+    ])
+    const r = compute52WeekRange(asksOnly, 2300, NOW)
+    expect(r.fromTrades).toBe(false)
+    expect(r.estimated).toBe(true)
+    expect(r.high).not.toBeNull()
+  })
+})
+
+describe('an entry price the market would actually meet', () => {
+  const TRADED: PricePoint[] = [
+    { date: daysBack(330), price: 1180, source: 'sale' },
+    { date: daysBack(280), price: 1450, source: 'sale' },
+    { date: daysBack(210), price: 1020, source: 'sale' },
+    { date: daysBack(160), price: 980, source: 'sale' },
+    { date: daysBack(120), price: 1310, source: 'sale' },
+    { date: daysBack(80), price: 900, source: 'sale' },
+    { date: daysBack(40), price: 870, source: 'sale' },
+    { date: daysBack(15), price: 950, source: 'sale' },
+  ]
+  const entryFor = (asking: number) => {
+    const s = series(TRADED)
+    const fmv = computeFmv(s, NOW)
+    return { entry: computeEntry(fmv, compute52WeekRange(s, asking, NOW), s, asking, NOW), fmv }
+  }
+
+  it('sits inside the band the card actually trades in', () => {
+    const { entry } = entryFor(950)
+    expect(entry.entryPrice!).toBeGreaterThanOrEqual(870)
+    expect(entry.entryPrice!).toBeLessThanOrEqual(1450)
+  })
+
+  it('does not demand a discount nobody would ever accept', () => {
+    // The old model asked for up to 30% off fair value. Nobody sells at 70%
+    // of what their card is worth, so that target was never going to be met.
+    const { entry, fmv } = entryFor(950)
+    expect(entry.entryPrice! / fmv.fmv!).toBeGreaterThan(0.85)
+  })
+
+  it('puts the floor at the lowest the market has gone, not below it', () => {
+    expect(entryFor(950).entry.stretchEntry).toBe(870)
+  })
+
+  it('says how far off the high both the target and the ask are', () => {
+    const { entry } = entryFor(905)
+    expect(entry.entryDownFromHigh).toBeGreaterThan(0.3)
+    expect(entry.askingDownFromHigh).toBeGreaterThan(0.35)
+    expect(entry.rationale.join(' ')).toMatch(/off this year's high/)
+  })
+
+  it('calls an ask at the floor a strong buy, since nothing deeper has happened', () => {
+    expect(entryFor(875).entry.verdict).toBe('strong_buy')
+  })
+
+  it('reads an ask near the high as paying what the keenest buyer paid', () => {
+    expect(['rich', 'overpriced']).toContain(entryFor(1400).entry.verdict)
+  })
+
+  it('still ranks a cheaper ask above a dearer one', () => {
+    expect(entryFor(900).entry.score).toBeGreaterThan(entryFor(1300).entry.score)
   })
 })

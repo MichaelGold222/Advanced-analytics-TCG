@@ -229,9 +229,21 @@ export function computeRange(
   now = new Date(),
   windowDays = WINDOW_DAYS,
 ): RangeResult {
-  const windowed = pointsInWindow(series.points, now, windowDays)
+  const inWindow = pointsInWindow(series.points, now, windowDays)
+  // A traded range has to be built from trades. Everything else in the series
+  // is somebody's opinion: an asking price nobody took, a figure typed into a
+  // sheet, a quote this app captured on a past run. Mixed in, they set a high
+  // the card never reached and a low nobody ever sold at — and then the
+  // sentence "the market has not traded below this" is simply false.
+  const trades = inWindow.filter((p) => p.source === 'sale')
+  const fromTrades = trades.length > 0
+  const windowed = fromTrades ? trades : inWindow
+
   if (windowed.length === 0) {
-    return { high: null, low: null, position: null, coverageDays: 0, sampleSize: 0, confidence: 'none', estimated: true }
+    return {
+      high: null, low: null, position: null, coverageDays: 0, sampleSize: 0,
+      confidence: 'none', estimated: true, fromTrades: false,
+    }
   }
   const prices = windowed.map(effectivePrice)
   const high = Math.max(...prices)
@@ -247,7 +259,9 @@ export function computeRange(
 
   return {
     high, low, position, coverageDays, sampleSize: windowed.length, confidence,
-    estimated: wide < 0.25 || windowed.length < 8,
+    // A band with no trades under it is indicative whatever its coverage.
+    estimated: !fromTrades || wide < 0.25 || windowed.length < 8,
+    fromTrades,
   }
 }
 
@@ -258,6 +272,14 @@ export function compute52WeekRange(series: PriceSeries, reference: number | null
 
 /** Fallback discount demanded when a series is too short to measure volatility. */
 export const DEFAULT_DISCOUNT = 0.12
+
+/**
+ * Completed sales needed before the entry price is read off the traded band.
+ *
+ * Four. Below that a quartile of them is not a quartile of anything, and the
+ * fair-value reasoning is the better of two weak options.
+ */
+export const MIN_TRADES_FOR_TRADED_ENTRY = 4
 
 export function computeEntry(
   fmvResult: FmvResult,
@@ -280,29 +302,66 @@ export function computeEntry(
     return {
       verdict: 'unknown', score: 0, entryPrice: null, stretchEntry: null,
       requiredDiscount, volatility, momentum90d,
+      anchoredOnTrades: false, entryDownFromHigh: null, askingDownFromHigh: null,
       rationale: ['No fair market value could be established, so no entry price can be set.'],
     }
   }
 
-  const discountEntry = fmv * (1 - requiredDiscount)
-  // With a real history, blend the model price against where the market has
-  // actually traded, so the target is reachable rather than theoretical.
-  const prices = windowed.map(effectivePrice)
-  const p35 = prices.length >= 8 ? percentile(prices, 0.35) : null
-  const entryPrice = p35 != null ? (discountEntry + p35) / 2 : discountEntry
+  // Where the card has actually changed hands this year, which is the only
+  // set of prices anyone has ever accepted for it.
+  const tradePrices = windowed.filter((p) => p.source === 'sale').map(effectivePrice)
+  const anchoredOnTrades = range.fromTrades
+    && range.low != null && range.high != null && range.high > range.low
+    && tradePrices.length >= MIN_TRADES_FOR_TRADED_ENTRY
 
-  // The patient bid sits a further discount below the target, but is never
-  // proposed below anything the market has actually traded at - and never
-  // above the standard target, which a tight yearly low would otherwise cause.
-  const rawStretch = entryPrice * (1 - requiredDiscount)
-  const stretchEntry = Math.min(entryPrice, Math.max(rawStretch, range.low ?? rawStretch))
+  let entryPrice: number
+  let stretchEntry: number
 
-  rationale.push(
-    volatility == null
-      ? `Too little history to measure volatility, so a default ${pct(DEFAULT_DISCOUNT)} discount to FMV is required.`
-      : `Annualized volatility of ${pct(volatility)} calls for a ${pct(requiredDiscount)} discount to FMV.`,
-  )
-  if (p35 != null) rationale.push('Target blends that discount with the 35th percentile of the last year of prices.')
+  if (anchoredOnTrades) {
+    // A quarter of this year's sales went at or below this, so it is a price
+    // the market demonstrably accepts rather than one it has never seen.
+    //
+    // The old model asked for a discount to fair value — up to thirty per cent
+    // of it — and nobody sells a card at seventy per cent of its worth. A
+    // target like that is not patient, it is unreachable, and an entry price
+    // nobody will ever meet is the same as having none.
+    const quarter = percentile(tradePrices, 0.25)
+    entryPrice = clamp(quarter, range.low!, range.high!)
+    // The floor: the market has not gone below this, so there is nothing
+    // deeper to wait for.
+    stretchEntry = range.low!
+  } else {
+    // No usable record of trades, so fall back to reasoning from fair value.
+    const discountEntry = fmv * (1 - requiredDiscount)
+    const prices = windowed.map(effectivePrice)
+    const p35 = prices.length >= 8 ? percentile(prices, 0.35) : null
+    entryPrice = p35 != null ? (discountEntry + p35) / 2 : discountEntry
+    const rawStretch = entryPrice * (1 - requiredDiscount)
+    stretchEntry = Math.min(entryPrice, Math.max(rawStretch, range.low ?? rawStretch))
+  }
+
+  const down = (price: number | null) =>
+    price != null && range.high != null && range.high > 0 ? (range.high - price) / range.high : null
+  const entryDownFromHigh = down(entryPrice)
+  const askingDownFromHigh = down(reference)
+
+  if (anchoredOnTrades) {
+    rationale.push(
+      `Sales this year ran ${money(range.low!)} to ${money(range.high!)}. The target of ${money(entryPrice)} is `
+      + `${pct(entryDownFromHigh ?? 0)} off the high, and a quarter of the year's sales went at or below it.`,
+    )
+  } else {
+    rationale.push(
+      volatility == null
+        ? `Too little history to measure volatility, so a default ${pct(DEFAULT_DISCOUNT)} discount to FMV is required.`
+        : `Annualized volatility of ${pct(volatility)} calls for a ${pct(requiredDiscount)} discount to FMV.`,
+    )
+    rationale.push(
+      range.fromTrades
+        ? 'Fewer than four completed sales this year, so the target is reasoned from fair value rather than read off the band.'
+        : 'No completed sales on record this year, so the band is asking prices and stored figures — the target is reasoned from fair value instead.',
+    )
+  }
   if (stretchEntry >= entryPrice - 0.005 && range.low != null) {
     rationale.push(`The market has not traded below ${money(range.low)} this year, so there is no deeper bid worth waiting for.`)
   }
@@ -313,6 +372,7 @@ export function computeEntry(
   if (reference == null) {
     return {
       verdict: 'unknown', score: 0, entryPrice, stretchEntry, requiredDiscount, volatility, momentum90d,
+      anchoredOnTrades, entryDownFromHigh, askingDownFromHigh: null,
       rationale: [...rationale, 'No asking price given, so there is nothing to judge against the target yet.'],
     }
   }
@@ -324,7 +384,17 @@ export function computeEntry(
   const score = Math.round(rangeScore == null ? discountScore : discountScore * 0.6 + rangeScore * 0.4)
 
   let verdict: EntryVerdict
-  if (reference <= stretchEntry) verdict = 'strong_buy'
+  if (anchoredOnTrades) {
+    // Judged by where the ask sits in the band the card actually trades in.
+    // At the floor there is nothing deeper to wait for, and near the high you
+    // are paying what only the most eager buyer of the year paid.
+    const where = range.position ?? 0.5
+    if (reference <= stretchEntry * 1.03) verdict = 'strong_buy'
+    else if (reference <= entryPrice) verdict = 'buy'
+    else if (where <= 0.6) verdict = 'fair'
+    else if (where <= 0.85) verdict = 'rich'
+    else verdict = 'overpriced'
+  } else if (reference <= stretchEntry) verdict = 'strong_buy'
   else if (reference <= entryPrice) verdict = 'buy'
   else if (reference <= fmv * (1 + requiredDiscount * 0.5)) verdict = 'fair'
   else if (reference <= fmv * (1 + requiredDiscount * 1.5)) verdict = 'rich'
@@ -338,14 +408,24 @@ export function computeEntry(
     rationale.push('Capped at Buy rather than Strong buy: the FMV behind it is low confidence.')
   }
 
-  rationale.push(
-    reference <= entryPrice
-      ? `Asking ${money(reference)} is at or below the ${money(entryPrice)} target.`
-      // The direction is in the word, so the number stays unsigned.
-      : `Asking ${money(reference)} is ${pct(Math.abs((reference - fmv) / fmv)).replace('+', '')} ${reference >= fmv ? 'above' : 'below'} FMV; the target is ${money(entryPrice)}.`,
-  )
+  if (anchoredOnTrades && askingDownFromHigh != null) {
+    rationale.push(
+      `Asking ${money(reference)} is ${pct(askingDownFromHigh)} off this year's high`
+      + `${reference <= entryPrice ? ', at or below the target' : `, against a target of ${money(entryPrice)}`}.`,
+    )
+  } else {
+    rationale.push(
+      reference <= entryPrice
+        ? `Asking ${money(reference)} is at or below the ${money(entryPrice)} target.`
+        // The direction is in the word, so the number stays unsigned.
+        : `Asking ${money(reference)} is ${pct(Math.abs((reference - fmv) / fmv)).replace('+', '')} ${reference >= fmv ? 'above' : 'below'} FMV; the target is ${money(entryPrice)}.`,
+    )
+  }
 
-  return { verdict, score, entryPrice, stretchEntry, requiredDiscount, volatility, momentum90d, rationale }
+  return {
+    verdict, score, entryPrice, stretchEntry, requiredDiscount, volatility, momentum90d,
+    anchoredOnTrades, entryDownFromHigh, askingDownFromHigh, rationale,
+  }
 }
 
 /** Trailing 90-day drift, as a fraction of the mean price over the window. */

@@ -431,6 +431,34 @@ Drift is in **logs** everywhere internally. Printing it as a percentage without
 `Math.expm1` understates every fast mover: a card at 1.25 in logs is up 249% a
 year, not 125%.
 
+### A traded range is built from trades
+
+`computeRange` filtered on the window and nothing else, so the high and low
+were drawn from asking prices nobody took, figures typed into a sheet, and
+quotes this app captured on past runs. A single ask set a yearly high the card
+never reached. It now prefers `source === 'sale'` and falls back to the wider
+set only when nothing has sold, with `fromTrades` saying which — because "the
+market has not traded below this" is only a true sentence about trades.
+
+### The entry price has to be one somebody would accept
+
+The old target was fair value minus a volatility-derived discount, up to thirty
+per cent. Nobody sells a card at seventy per cent of what it is worth, so that
+target was never going to be met, and an entry price nobody will meet is the
+same as having none.
+
+It is now read off the band the card actually trades in: the 25th percentile of
+this year's completed sales, which is a price a quarter of the year's sales
+already went at. The floor is the yearly low — the market has not gone below
+it, so there is nothing deeper to wait for — and the verdict comes from where
+the ask sits in that band rather than from a discount to FMV. `anchoredOnTrades`
+is false when fewer than `MIN_TRADES_FOR_TRADED_ENTRY` sales exist, and the
+fair-value reasoning takes over with the rationale saying so.
+
+Framed throughout as distance from the year's high, which is how the owner
+reasons about it: "the target is 35% off the high, and a quarter of the year's
+sales went at or below it".
+
 ### Two ways the projections were simply wrong
 
 Reported as a ten-year median of $56 million, and both causes were real.

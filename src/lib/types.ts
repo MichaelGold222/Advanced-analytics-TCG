@@ -135,6 +135,12 @@ export interface FmvResult {
 export interface RangeResult {
   high: number | null
   low: number | null
+  /**
+   * True when the high and low are completed sales rather than asking prices,
+   * sheet figures and captured quotes. Only then is "the market traded between
+   * these" a true sentence.
+   */
+  fromTrades: boolean
   /** Where the current price sits in the 52-week band, 0 = at the low, 1 = at the high. */
   position: number | null
   /** Days between the oldest and newest point used. */
@@ -161,6 +167,15 @@ export interface EntryResult {
   volatility: number | null
   /** Trailing 90-day drift, as a fraction. */
   momentum90d: number | null
+  /**
+   * True when the target was read off the prices the card actually traded at
+   * this year, rather than reasoned from fair value for want of any.
+   */
+  anchoredOnTrades: boolean
+  /** How far below the year's high the target sits, 0-1. */
+  entryDownFromHigh: number | null
+  /** How far below the year's high the asking price sits, 0-1. */
+  askingDownFromHigh: number | null
   rationale: string[]
 }
 
