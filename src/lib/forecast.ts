@@ -49,6 +49,16 @@ export const PRIOR_VOLATILITY = 0.45
  */
 export const SHRINK_STRENGTH = 8
 
+/**
+ * Prior spread of the *true* annual trend across cards, before seeing any.
+ *
+ * Cards do genuinely trend — a vintage grade can run for years — so this is
+ * not zero. But a fifth a year either way covers most of what the market
+ * actually does over a holding period, and anything wider would let a noisy
+ * estimate through unchallenged.
+ */
+export const PRIOR_DRIFT_SPREAD = 0.2
+
 export interface DailyReturn {
   /** Log return scaled to one day, so irregular gaps compare. */
   rate: number
@@ -113,6 +123,54 @@ export function robustDrift(points: PricePoint[]): number | null {
   return median(slopes)
 }
 
+/**
+ * Trend pulled toward zero by how badly the sample determines it.
+ *
+ * Volatility and trend are not equally knowable, and the gap is not close.
+ * The standard error of an annual trend is the volatility divided by the root
+ * of the *calendar span* — more sales inside the same two years barely help,
+ * because what a trend needs is a longer lever, not a denser one. Volatility's
+ * own error falls as the root of the count, so it converges perhaps three or
+ * four times faster on a typical card here.
+ *
+ * Left alone, the noisier of the two quantities sets the headline. A card with
+ * six sales scattered along a flat line routinely measures twenty per cent a
+ * year with a standard error of eighteen — indistinguishable from nothing —
+ * and that number, compounded over a year of simulated days, is what decides
+ * whether the forecast reads as confident. So it is shrunk on the same
+ * principle volatility is, with the weight taken from how much of the spread
+ * is signal rather than error.
+ *
+ * @param volatility annualized, already shrunk
+ * @param spanDays calendar days from the first sale to the last
+ */
+export function shrunkDrift(
+  rawPerDay: number,
+  volatility: number,
+  spanDays: number,
+  spread = PRIOR_DRIFT_SPREAD,
+): number {
+  if (!(spanDays > 0) || !(volatility > 0)) return 0
+  const standardError = volatility / Math.sqrt(spanDays / 365)
+  // Signal over signal-plus-noise: all of it when the span is long enough to
+  // pin the trend down, almost none of it when the error swamps the prior.
+  const weight = (spread * spread) / (spread * spread + standardError * standardError)
+  return rawPerDay * weight
+}
+
+/**
+ * How long the sales run, said the way the cut needs explaining.
+ *
+ * The span is the whole reason a trend is or is not believable, so the
+ * sentence names it rather than reporting a weight nobody can interpret.
+ */
+function spanLabel(spanDays: number): string {
+  const of = (period: string) => `${period} of sales cannot tell a trend that size apart from chance`
+  if (spanDays < 120) return of('a few weeks')
+  if (spanDays < 400) return of('under a year')
+  return of(`${(spanDays / 365).toFixed(1)} years`)
+}
+
 /** A deterministic generator, so the same history always yields the same fan. */
 function seededRandom(seed: number): () => number {
   let state = seed >>> 0 || 1
@@ -146,9 +204,14 @@ export function computeForecast(
   const volatility = shrunkVolatility(returns, prior)
   const weight = returns.length / (returns.length + SHRINK_STRENGTH)
   const rawDrift = robustDrift(points) ?? 0
+  // How long a lever the sales give the trend, which is what determines it.
+  const dated = [...points].filter((p) => p.price > 0).map((p) => p.date).sort()
+  const spanDays = dated.length >= 2 ? daysBetween(dated[0], dated[dated.length - 1]) : 0
+  const pulledDrift = shrunkDrift(rawDrift, volatility, spanDays)
   // ±60% a year is already an extreme claim; beyond it the number is the
   // sample talking, not the market.
-  const driftPerDay = clamp(rawDrift, -0.6 / 365, 0.6 / 365)
+  const driftPerDay = clamp(pulledDrift, -0.6 / 365, 0.6 / 365)
+  const driftKept = rawDrift === 0 ? 1 : pulledDrift / rawDrift
 
   const rates = returns.map((r) => r.rate)
   const centred = rates.map((r) => r - mean(rates))
@@ -193,11 +256,13 @@ export function computeForecast(
     weight < 0.5
       ? `Its own history is thin, so volatility of ${Math.round(volatility * 100)}% leans mostly on what its segment typically does.`
       : `Volatility of ${Math.round(volatility * 100)}% a year across its whole history, pulled slightly toward its segment. The entry call quotes the last year alone, so the two figures differ.`,
-    Math.abs(rawDrift) > Math.abs(driftPerDay)
-      ? 'The measured trend was too steep to carry forward and has been capped.'
-      : `Trend of ${(driftPerDay * 365 * 100).toFixed(0)}% a year, taken as the median of every pair of sales.`,
+    `Trend of ${(driftPerDay * 365 * 100).toFixed(0)}% a year, the median of every pair of sales${
+      driftKept < 0.9
+        ? ` — cut from ${(rawDrift * 365 * 100).toFixed(0)}%, because ${spanLabel(spanDays)}`
+        : ''
+    }.`,
     'A range, not a prediction: the bands say where the price lands in 8 of 10 simulated futures.',
   ]
 
-  return { from, volatility, shrunk: weight < 0.5, driftPerYear: driftPerDay * 365, sampleSize: returns.length, bands, rationale }
+  return { from, volatility, shrunk: weight < 0.5, driftPerYear: driftPerDay * 365, driftShrunk: driftKept < 0.9, sampleSize: returns.length, bands, rationale }
 }

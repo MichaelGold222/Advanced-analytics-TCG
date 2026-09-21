@@ -183,6 +183,8 @@ export interface ForecastResult {
   /** True when volatility leant mostly on the segment prior, not this card. */
   shrunk: boolean
   driftPerYear: number
+  /** True when the measured trend was pulled toward zero as too noisy to trust. */
+  driftShrunk: boolean
   sampleSize: number
   bands: ForecastBand[]
   rationale: string[]

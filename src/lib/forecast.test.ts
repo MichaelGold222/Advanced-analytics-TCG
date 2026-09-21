@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
-  MIN_RETURNS_FOR_FORECAST, PRIOR_VOLATILITY, computeForecast, dailyReturns, robustDrift, shrunkVolatility,
+  MIN_RETURNS_FOR_FORECAST, PRIOR_VOLATILITY, computeForecast, dailyReturns, robustDrift, shrunkDrift,
+  shrunkVolatility,
 } from './forecast'
 import type { PricePoint } from './types'
 
@@ -107,7 +108,10 @@ describe('the forecast itself', () => {
     ])
     const f = computeForecast(rocket, 1600)!
     expect(f.driftPerYear).toBeLessThanOrEqual(0.6)
-    expect(f.rationale.join(' ')).toMatch(/too steep/i)
+    // A month of sales is no lever at all, so the trend is cut long before
+    // the cap that used to be the only thing standing between it and absurdity.
+    expect(f.driftShrunk).toBe(true)
+    expect(f.rationale.join(' ')).toMatch(/a few weeks of sales cannot tell a trend/i)
   })
 
   it('says what it was built from, and that it is a range', () => {
@@ -153,5 +157,52 @@ describe('the simulation matches the volatility it reports', () => {
     const calmBand = computeForecast(RISING, 1000)!.bands[3]
     const wildBand = computeForecast(wild, 1000)!.bands[3]
     expect(wildBand.high - wildBand.low).toBeGreaterThan(calmBand.high - calmBand.low)
+  })
+})
+
+describe('trend is shrunk harder than volatility, because it is known worse', () => {
+  it('keeps almost none of a trend measured over a few months', () => {
+    // Six months of lever against 30% volatility: the standard error on the
+    // annual trend is 30/sqrt(0.5) = 42%, which swamps a 20% prior.
+    const kept = shrunkDrift(0.001, 0.3, 182) / 0.001
+    expect(kept).toBeLessThan(0.2)
+  })
+
+  it('keeps most of a trend measured over many years', () => {
+    // Ten years reduces the same error to under 10%, well inside the prior.
+    const kept = shrunkDrift(0.001, 0.3, 3650) / 0.001
+    expect(kept).toBeGreaterThan(0.8)
+  })
+
+  it('pulls harder on a volatile card than a calm one over the same span', () => {
+    const calm = shrunkDrift(0.001, 0.15, 730) / 0.001
+    const wild = shrunkDrift(0.001, 0.6, 730) / 0.001
+    expect(wild).toBeLessThan(calm)
+  })
+
+  it('refuses to carry a trend when there is no span at all', () => {
+    expect(shrunkDrift(0.002, 0.3, 0)).toBe(0)
+  })
+
+  it('leaves a flat card flat rather than inventing a direction', () => {
+    expect(shrunkDrift(0, 0.3, 730)).toBe(0)
+  })
+
+  it('no longer calls a two-year climb a near-certainty a year out', () => {
+    // The old model carried the full measured trend and reported ~77% up on
+    // a series this thin. The trend is real-looking but the span cannot
+    // separate it from chance, so the claim has to come down.
+    const f = computeForecast(RISING, 1330)
+    expect(f).not.toBeNull()
+    expect(f!.driftShrunk).toBe(true)
+    const year = f!.bands.find((b) => b.horizonDays === 365)!
+    expect(year.chanceUp).toBeLessThan(0.72)
+    // But not flattened to a coin toss either - a real climb still leans up.
+    expect(year.chanceUp).toBeGreaterThan(0.5)
+  })
+
+  it('says in words that the trend was cut, and by how much', () => {
+    const f = computeForecast(RISING, 1330)
+    expect(f!.rationale.join(' ')).toMatch(/cut from .*cannot tell a trend/)
   })
 })
