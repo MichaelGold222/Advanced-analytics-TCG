@@ -11,9 +11,11 @@
  * valuation needs.
  */
 import {
-  FETCH_CONCURRENCY, batchCerts, parseBulkResponse, parseCertImages,
+  FETCH_CONCURRENCY, batchCerts, mergeSalePoints, parseBulkResponse, parseCertImages,
+  salesToPricePoints,
   type CertImage, type CertPrices, type CertRequest,
 } from './cardladder'
+import type { PricePoint } from '../types'
 
 const BASE = 'https://api.parse.bot'
 const KEY_STORAGE = 'aa-tcg.parseKey'
@@ -398,6 +400,123 @@ export async function fetchCertPrices(
         }.`
       : null,
   }
+}
+
+/** Pages of `get_card_sales_detail` to walk before giving up on one card. */
+export const MAX_HISTORY_PAGES = 10
+/** Rows asked for per page. */
+export const HISTORY_PAGE_SIZE = 200
+
+export interface DeepHistory {
+  cert: string
+  sales: PricePoint[]
+  /** Pages actually fetched, which is what the call cost. */
+  pages: number
+  /** True when the endpoint refused in a way that will not change on a retry. */
+  unavailable: boolean
+}
+
+/**
+ * A card's full sales history, walked a page at a time.
+ *
+ * The bulk endpoints hand back the newest five sales per certificate, which on
+ * an actively traded slab is a few days — so a "52-week high" built from them
+ * is the high of a few days. `get_card_sales_detail` takes `page` and `limit`
+ * alongside `card_id`, which is the only route to the rest of the record that
+ * does not involve typing it in by hand.
+ *
+ * **Never measured against the live API.** The account's credits ran out
+ * before this endpoint could be called once, so what it returns and what it
+ * costs are both unknown. Everything here is therefore written to fail
+ * quietly and cheaply: a refusal marks the card `unavailable` rather than
+ * retrying, a page that repeats what the last one held stops the walk, and
+ * `MAX_HISTORY_PAGES` caps what one card can ever spend. If the shape turns
+ * out to differ, `salesToPricePoints` is where it will show — it simply
+ * returns nothing for a row it cannot read, so a wrong guess costs the call
+ * and nothing else.
+ */
+export async function fetchCardHistory(
+  cards: { cert: string; cardId: string }[],
+  opts: { key: string; signal?: AbortSignal; onProgress?: (done: number, total: number) => void },
+): Promise<{ history: DeepHistory[]; usage: UsageInfo | null }> {
+  if (cards.length === 0) return { history: [], usage: null }
+
+  const scraperId = await resolveScraperId(opts.key, opts.signal)
+  const history: DeepHistory[] = []
+  let usage: UsageInfo | null = null
+  let done = 0
+  let next = 0
+
+  const worker = async () => {
+    for (;;) {
+      const i = next++
+      if (i >= cards.length) return
+      const { cert, cardId } = cards[i]
+      const sales: PricePoint[] = []
+      let pages = 0
+      let unavailable = false
+
+      for (let page = 1; page <= MAX_HISTORY_PAGES; page++) {
+        let body: unknown
+        try {
+          const res = await call(
+            `/scraper/${scraperId}/get_card_sales_detail`
+            + `?card_id=${encodeURIComponent(cardId)}&limit=${HISTORY_PAGE_SIZE}&page=${page}`,
+            opts.key,
+            { signal: opts.signal },
+          )
+          usage = readUsage(res) ?? usage
+          body = await res.json()
+        } catch (err) {
+          if ((err as Error)?.name === 'AbortError') throw err
+          // A spent balance or a missing endpoint is not worth a second page,
+          // and certainly not worth a second card's worth of pages.
+          if (err instanceof ParseError && (err.status === 402 || err.status === 429)) throw err
+          unavailable = true
+          break
+        }
+        pages = page
+        const got = readHistorySales(body)
+        if (got.length === 0) break
+        const before = sales.length
+        sales.push(...got)
+        // A page that adds nothing new means the endpoint is ignoring `page`
+        // and handing back the same rows. Walking ten of those would spend
+        // ten calls to learn one thing.
+        if (mergeSalePoints(sales.slice(0, before), got).length === before) break
+        if (got.length < HISTORY_PAGE_SIZE) break
+      }
+
+      history.push({ cert, sales: mergeSalePoints([], sales), pages, unavailable })
+      done += 1
+      opts.onProgress?.(done, cards.length)
+    }
+  }
+
+  // One at a time: the cost per call is unmeasured, so this must not discover
+  // that it is expensive eight calls at once.
+  await worker()
+  return { history, usage }
+}
+
+/** Sales out of whatever shape the detail endpoint answers with. */
+export function readHistorySales(body: unknown): PricePoint[] {
+  const seen = new Set<unknown>()
+  const found: PricePoint[] = []
+  const walk = (node: unknown, depth: number): void => {
+    if (depth > 6 || node == null || typeof node !== 'object') return
+    if (seen.has(node)) return
+    seen.add(node)
+    if (Array.isArray(node)) {
+      const points = salesToPricePoints(node as never)
+      if (points.length > 0) { found.push(...points); return }
+      for (const v of node.slice(0, 50)) walk(v, depth + 1)
+      return
+    }
+    for (const v of Object.values(node)) walk(v, depth + 1)
+  }
+  walk(body, 0)
+  return mergeSalePoints([], found)
 }
 
 /**

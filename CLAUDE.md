@@ -613,6 +613,47 @@ rate, does one fetch still keep up?
 Typed figures are excluded from the rate: a `user` point says a price on a
 date, nothing about how often the card changes hands.
 
+### The button does the whole job, including the expensive half
+
+"I want it to do it automatically when I hit the button." So **Fetch sold
+comps** now runs three passes, not two:
+
+1. `get_cert_values_bulk` — prices, `cl_value`, `last_sale_price` (3 credits).
+2. `search_by_certs_bulk` — pictures, deeper sales, and **the card id**
+   (1 credit).
+3. `backfillHistory` — `get_card_sales_detail`, walked page by page, for any
+   card whose record still does not reach back a year.
+
+The third is what makes a yearly high real, and three things stop it running
+away — which matters because **the endpoint's cost has never been measured**:
+
+- only cards whose sales do not reach back `WINDOW_DAYS *
+  WINDOW_COVERED_FRACTION` are candidates, so a well-covered collection spends
+  nothing at all;
+- `certDeepFetched` records every cert walked, and history does not get older,
+  so a card is walked exactly once, ever;
+- a refusal is recorded the same way, so an endpoint that is not available is
+  asked once rather than on every refresh forever. A 402 or 429 throws instead,
+  marking nothing done, so the next press resumes where it stopped.
+
+`usableCardId` keeps a call from being spent on one that cannot work: a
+catalogued card carries a Firestore document id, an uncatalogued cert carries
+a 40-character hex hash, and the hash was measured answering "Card with id ...
+not found" while still costing a request.
+
+`readHistorySales` looks for an array of sales *anywhere* in the response
+rather than assuming a key, because nobody has ever seen this endpoint's
+output — the credits ran out before it could be called once. A shape it cannot
+read returns nothing, so a wrong guess costs the call and nothing else. Pages
+stop early on a short page, an empty page, or a page that repeats the last one
+(an endpoint ignoring `page` would otherwise cost ten calls to teach one
+thing), and `MAX_HISTORY_PAGES` caps the rest. It runs one card at a time: the
+cost is unknown, so it must not discover that it is expensive eight calls at
+once.
+
+**Untested against the live API.** Everything above is written to fail quietly
+and cheaply, but the first real run is the measurement.
+
 ### Tracking the highs forward is a cron job, and it was never wired up
 
 `scripts/fetch-prices.ts` says in its own docstring that it "runs on a schedule

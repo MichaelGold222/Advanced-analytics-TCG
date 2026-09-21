@@ -302,6 +302,16 @@ export interface CertImage {
   /** Smaller version of the same, which is what a table row wants. */
   thumbnail: string | null
   /**
+   * Card Ladder's own id for the card, which `get_card_sales_detail` needs.
+   *
+   * Present on a card that is in the catalogue and looks like a Firestore
+   * document id (`Zrxi8aY5mAA6roFkKUVX`). A cert that is not catalogued gets
+   * a 40-character hex hash here instead, which the upstream rejects with
+   * "Card with id ... not found" — so the two are told apart before a call is
+   * spent on one that cannot work.
+   */
+  cardId: string | null
+  /**
    * Sales the search returned alongside the pictures.
    *
    * Measured: for cert 141142901 this call returned **ten** sales where the
@@ -327,6 +337,22 @@ function httpsUrl(v: unknown): string | null {
  * the wrong card is worse than no picture, so the order is only trusted when
  * the count matches exactly.
  */
+/**
+ * The `id` on a search result, when it is one the sales endpoints will accept.
+ *
+ * Measured: a catalogued card carries a Firestore document id (twenty-odd
+ * mixed-case characters); a cert the catalogue does not know carries a
+ * 40-character hex hash, and passing that to `get_card_sales` answered "Card
+ * with id ... not found" while still costing a request. Telling them apart
+ * here keeps a call from being spent on one that cannot succeed.
+ */
+export function usableCardId(v: unknown): string | null {
+  const s = typeof v === 'string' ? v.trim() : ''
+  if (!s) return null
+  if (/^[0-9a-f]{40}$/i.test(s)) return null
+  return /^[A-Za-z0-9_-]{12,64}$/.test(s) ? s : null
+}
+
 export function parseCertImages(body: unknown, asked: CertRequest[]): CertImage[] {
   const results = (body as { data?: { results?: unknown[] } })?.data?.results
   if (!Array.isArray(results)) return []
@@ -342,9 +368,10 @@ export function parseCertImages(body: unknown, asked: CertRequest[]): CertImage[
     const image = httpsUrl(r.image)
     const thumbnail = httpsUrl(r.thumbnail)
     const sales = salesToPricePoints(r.recent_sales as CardLadderSale[] | undefined)
-    // A row with sales and no photograph is still worth keeping now.
-    if (!image && !thumbnail && sales.length === 0) return
-    out.push({ cert, image, thumbnail, sales })
+    const cardId = usableCardId(r.id)
+    // A row with sales or an id and no photograph is still worth keeping now.
+    if (!image && !thumbnail && sales.length === 0 && !cardId) return
+    out.push({ cert, image, thumbnail, cardId, sales })
   })
   return out
 }

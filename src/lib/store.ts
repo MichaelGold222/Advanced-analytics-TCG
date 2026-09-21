@@ -7,7 +7,7 @@
  */
 import { create } from 'zustand'
 import { del, get, set } from 'idb-keyval'
-import { buildSeries } from './analytics'
+import { WINDOW_COVERED_FRACTION, WINDOW_DAYS, buildSeries } from './analytics'
 import { importWorkbook, mergeHistory, reclassify } from './ingest'
 import { itemKey } from './key'
 import { holdingAsWatchItem } from './portfolio'
@@ -15,9 +15,10 @@ import { refreshQuotes, type PriceProvider, type RefreshTarget } from './pricing
 import { isSupportedGrader, mergeSalePoints, type PriceFeed } from './providers/cardladder'
 import {
   fetchCertImages, fetchCertPrices, getParseKey, ParseError, type UsageInfo,
+  fetchCardHistory,
 } from './providers/cardladder-client'
 import { pokemonTcgIo } from './pricing'
-import { toISODate } from './stats'
+import { daysAgo, toISODate } from './stats'
 import type { Holding, PricePoint, PriceQuote, PriceSeries, Segment, WatchItem } from './types'
 
 const DB_KEY = 'advanced-analytics-tcg/v1'
@@ -59,6 +60,17 @@ interface PersistedState {
   lastRefresh: string | null
   /** Sold comps by certificate number, from Card Ladder. */
   certSales: Record<string, PricePoint[]>
+  /** Card Ladder's own id per cert, needed by the deep-history endpoint. */
+  certCardIds: Record<string, string>
+  /**
+   * Certs whose full history has already been fetched, and how it went.
+   *
+   * Deep history is a one-time cost per card: the record does not get any
+   * older, so having walked it once there is nothing to gain from walking it
+   * again. Kept so the button cannot quietly re-spend on a card it already
+   * paid for, and so an endpoint that refused is not asked again every time.
+   */
+  certDeepFetched: Record<string, { at: string; sales: number; unavailable: boolean }>
   certLastFetched: string | null
   /** Pictures by cert. Fetched once and kept: a photo does not go stale. */
   certImages: Record<string, { image: string | null; thumbnail: string | null }>
@@ -75,7 +87,12 @@ interface AppState extends PersistedState {
   feed: PriceFeed | null
   /** Credit counters Parse returned on the last graded fetch. */
   usage: UsageInfo | null
-  gradedRefresh: { running: boolean; done: number; total: number; unmatched: string[]; failed: string[]; startedAt: number | null }
+  gradedRefresh: {
+    running: boolean; done: number; total: number; unmatched: string[]; failed: string[]
+    startedAt: number | null
+    /** Which half is running: the cheap bulk pass, or the per-card history walk. */
+    phase?: 'prices' | 'history'
+  }
 
   hydrate(): Promise<void>
   loadFeed(): Promise<void>
@@ -96,6 +113,8 @@ interface AppState extends PersistedState {
   refreshGraded(opts?: { onlyMissing?: boolean }): Promise<void>
   /** Fetch pictures for any of these certs that has none yet. */
   refreshImages(certs: { cert_number: string; grading_company: 'PSA' | 'BGS' | 'CGC' | 'SGC' }[]): Promise<void>
+  /** Walk the full sales history of any card whose record is still too short. */
+  backfillHistory(): Promise<void>
   /** Empty holdings or the watchlist, keeping prices, photos and the other list. */
   clearList(kind: 'portfolio' | 'watchlist'): void
   clearAll(): Promise<void>
@@ -112,6 +131,8 @@ const EMPTY: PersistedState = {
   importLog: [],
   lastRefresh: null,
   certSales: {},
+  certCardIds: {},
+  certDeepFetched: {},
   certLastFetched: null,
   certImages: {},
 }
@@ -137,6 +158,8 @@ function migrate(saved: PersistedState): PersistedState {
     snapshots: saved.snapshots ?? {},
     quotes: saved.quotes ?? {},
     certSales: saved.certSales ?? {},
+    certCardIds: saved.certCardIds ?? {},
+    certDeepFetched: saved.certDeepFetched ?? {},
     certLastFetched: saved.certLastFetched ?? null,
     certImages: saved.certImages ?? {},
     importLog: (saved.importLog ?? []).map((e) => ({
@@ -161,6 +184,8 @@ function persistable(s: AppState): PersistedState {
     importLog: s.importLog.slice(-20),
     lastRefresh: s.lastRefresh,
     certSales: s.certSales,
+    certCardIds: s.certCardIds,
+    certDeepFetched: s.certDeepFetched,
     certLastFetched: s.certLastFetched,
     certImages: s.certImages,
   }
@@ -202,6 +227,7 @@ export const useStore = create<AppState>((setState, getState) => ({
       const { images } = await fetchCertImages(missing, { key })
       if (images.length === 0) return
       const certImages = { ...getState().certImages }
+      const certCardIds = { ...getState().certCardIds }
       // The same response carries sales, and measured against the live API it
       // carries MORE of them than the price call does, with better dates. They
       // were being parsed for pictures and discarded. Merged, never replaced:
@@ -214,8 +240,10 @@ export const useStore = create<AppState>((setState, getState) => ({
         if (img.sales.length > 0) {
           certSales[img.cert] = mergeSalePoints(certSales[img.cert] ?? [], img.sales)
         }
+        // The id the deep-history endpoint needs, free in this response.
+        if (img.cardId) certCardIds[img.cert] = img.cardId
       }
-      setState({ certImages, certSales })
+      setState({ certImages, certSales, certCardIds })
       scheduleSave(getState())
     } catch {
       /* a missing picture is cosmetic and must not disturb anything else */
@@ -300,9 +328,97 @@ export const useStore = create<AppState>((setState, getState) => ({
     // the search that carries them costs its own credit.
     try {
       await getState().refreshImages(list)
+    } catch {
+      /* a missing picture is cosmetic */
+    }
+
+    // And then the part that makes a yearly high real. The bulk endpoints hand
+    // back the newest five sales per slab, which on an active card is days —
+    // so any card whose record still does not reach back a year gets its full
+    // history walked once, here, without being asked for separately. It is a
+    // one-time cost per card by construction: the record only ever deepens, so
+    // a card that has been walked is never walked again.
+    try {
+      await getState().backfillHistory()
     } finally {
       setState({ gradedRefresh: { ...getState().gradedRefresh, running: false, startedAt: null } })
       scheduleSave(getState())
+    }
+  },
+
+  /**
+   * Walk the full sales history of every card that still needs it.
+   *
+   * Runs off the back of a refresh rather than as its own button: the owner
+   * asked for the numbers to be right when the button is pressed, not for
+   * another button to press afterwards.
+   *
+   * Three things keep it from running away, which matters because the cost of
+   * the endpoint has never been measured:
+   *
+   *   - only cards whose record does not reach back a year are candidates, so
+   *     a well-covered collection spends nothing;
+   *   - a cert that has been walked is recorded and never walked again, since
+   *     history does not get older;
+   *   - a refusal is recorded too, so an endpoint that is not available is
+   *     asked once rather than on every refresh forever.
+   */
+  async backfillHistory() {
+    const key = getParseKey()
+    if (!key) return
+    const state = getState()
+
+    const now = new Date()
+    const wanted: { cert: string; cardId: string }[] = []
+    const seen = new Set<string>()
+    for (const item of [...state.holdings, ...state.watchlist]) {
+      const cert = item.cert
+      if (!cert || seen.has(cert)) continue
+      seen.add(cert)
+      const cardId = state.certCardIds[cert]
+      // No id means the bulk search has not run for it, or the cert is not in
+      // the catalogue — either way the endpoint would refuse.
+      if (!cardId) continue
+      if (state.certDeepFetched[cert]) continue
+      const sales = (state.certSales[cert] ?? []).filter((p) => p.source === 'sale')
+      if (sales.length === 0) continue
+      const oldest = sales.reduce((a, b) => (a.date <= b.date ? a : b)).date
+      if (daysAgo(oldest, now) >= WINDOW_DAYS * WINDOW_COVERED_FRACTION) continue
+      wanted.push({ cert, cardId })
+    }
+    if (wanted.length === 0) return
+
+    setState({
+      gradedRefresh: {
+        ...getState().gradedRefresh, running: true, done: 0, total: wanted.length,
+        phase: 'history',
+      },
+    })
+
+    try {
+      const { history, usage } = await fetchCardHistory(wanted, {
+        key,
+        onProgress: (done, total) => setState({
+          gradedRefresh: { ...getState().gradedRefresh, done, total, phase: 'history' },
+        }),
+      })
+      const certSales = { ...getState().certSales }
+      const certDeepFetched = { ...getState().certDeepFetched }
+      const at = new Date().toISOString()
+      for (const h of history) {
+        if (h.sales.length > 0) certSales[h.cert] = mergeSalePoints(certSales[h.cert] ?? [], h.sales)
+        certDeepFetched[h.cert] = { at, sales: h.sales.length, unavailable: h.unavailable }
+      }
+      setState({ certSales, certDeepFetched, usage: usage ?? getState().usage })
+      scheduleSave(getState())
+    } catch (err) {
+      // Out of credits or rate limited: nothing is marked done, so the next
+      // refresh picks up exactly where this one stopped.
+      setState({
+        error: err instanceof ParseError
+          ? `Full history stopped: ${err.message}`
+          : `Full history stopped: ${err instanceof Error ? err.message : String(err)}`,
+      })
     }
   },
 
