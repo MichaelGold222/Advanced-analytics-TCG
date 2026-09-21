@@ -12,13 +12,14 @@ import { money, plainPct, shortDate } from '../lib/format'
 import { itemKey } from '../lib/key'
 import { gradedPricingNote } from '../lib/analytics'
 import { CardThumb } from './CardThumb'
+import { PasteHistory } from './PasteHistory'
 import { thumbFor } from '../lib/images'
 import { SelectionBar, TickBox } from './SelectionBar'
 import { useFrozenOrder } from '../hooks/useFrozenOrder'
 import { useSelection } from '../hooks/useSelection'
 import { rankWatchlist, type RankedItem } from '../lib/ranking'
 import type {
-  ForecastResult, ItemAnalysis, PriceSeries, RangeResult, Segment, WatchItem,
+  ForecastResult, ItemAnalysis, PricePoint, PriceSeries, RangeResult, Segment, WatchItem,
 } from '../lib/types'
 
 interface Props {
@@ -31,6 +32,8 @@ interface Props {
   onRemove: (id: string) => void
   onOverride: (id: string, segment: Segment | null) => void
   onUpdate: (id: string, patch: Partial<WatchItem>) => void
+  /** Price history pasted in for a card the API cannot reach. */
+  onPasteHistory: (item: WatchItem, points: PricePoint[]) => void
   onImport: (file: File) => Promise<void>
   onRemoveMany: (ids: string[]) => void
 }
@@ -39,6 +42,7 @@ const EMPTY_FORM = { name: '', set: '', number: '', condition: '', cert: '', ask
 
 export function WatchlistPanel({
   watchlist, analyses, series, images, onAdd, onRemove, onRemoveMany, onOverride, onUpdate, onImport,
+  onPasteHistory,
 }: Props) {
   const [form, setForm] = useState(EMPTY_FORM)
   const [expanded, setExpanded] = useState<string | null>(null)
@@ -214,7 +218,10 @@ export function WatchlistPanel({
                               how wide each one is, so opening a row resized
                               the whole table and rewrapped every line in it. */}
                           <div style={{ width: 0, minWidth: '100%' }}>
-                            <Reasoning item={w} analysis={a} rank={rank} images={images} />
+                            <Reasoning
+                              item={w} analysis={a} rank={rank} images={images}
+                              onPasteHistory={(pts) => onPasteHistory(w, pts)}
+                            />
                           </div>
                         </td>
                       </tr>
@@ -273,12 +280,13 @@ function BuyCase({ rank, place }: { rank: RankedItem; place: number | null }) {
 }
 
 function Reasoning({
-  item, analysis, rank, images,
+  item, analysis, rank, images, onPasteHistory,
 }: {
   item: WatchItem
   analysis?: ItemAnalysis
   rank: RankedItem
   images: Record<string, { image: string | null; thumbnail: string | null }>
+  onPasteHistory: (points: PricePoint[]) => void
 }) {
   if (!analysis) return <p className="text-sm muted p-2">No analysis yet — refresh prices or import comps.</p>
   const { fmv, range, entry, forecast } = analysis
@@ -352,6 +360,11 @@ function Reasoning({
             record over time, but only as fast as the card trades.
           </p>
           </>
+        )}
+        {!range.coversWindow && (
+          <div className="mb-3 pb-3" style={{ borderBottom: '1px solid var(--border)' }}>
+            <PasteHistory name={item.name} onAdd={onPasteHistory} />
+          </div>
         )}
         <dl className="text-sm space-y-1.5">
           <Row label="Position in the year's band" value={range.position == null ? '—' : plainPct(range.position, 0)} />

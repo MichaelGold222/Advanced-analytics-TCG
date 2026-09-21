@@ -124,6 +124,8 @@ interface AppState extends PersistedState {
   refreshImages(certs: { cert_number: string; grading_company: 'PSA' | 'BGS' | 'CGC' | 'SGC' }[]): Promise<void>
   /** Walk the full sales history of any card whose record is still too short. */
   backfillHistory(): Promise<void>
+  /** Add price history a person pasted in, for a card the API cannot reach. */
+  addPastedHistory(key: string, points: PricePoint[]): void
   /** Empty holdings or the watchlist, keeping prices, photos and the other list. */
   clearList(kind: 'portfolio' | 'watchlist'): void
   clearAll(): Promise<void>
@@ -424,6 +426,27 @@ export const useStore = create<AppState>((setState, getState) => ({
    *   - a refusal is recorded too, so an endpoint that is not available is
    *     asked once rather than on every refresh forever.
    */
+  /**
+   * History typed or pasted in by hand, for a card no call can reach.
+   *
+   * Card Ladder keeps promos outside the `cards` collection the Parse wrapper
+   * reads, so a promo answers 422 even when handed its own Card Ladder id off
+   * the site's own URL. There is no query, certificate or id that reaches it —
+   * and a collection can be mostly promos. This is not a fallback for those
+   * cards, it is the only route.
+   *
+   * Merged rather than replaced, and merged into the same uploadedHistory a
+   * spreadsheet writes to, so pasting twice costs nothing and a later import
+   * does not wipe it.
+   */
+  addPastedHistory(key, points) {
+    if (points.length === 0) return
+    const uploadedHistory = { ...getState().uploadedHistory }
+    uploadedHistory[key] = mergeSalePoints(uploadedHistory[key] ?? [], points)
+    setState({ uploadedHistory })
+    scheduleSave(getState())
+  },
+
   async backfillHistory() {
     const key = getParseKey()
     if (!key) return

@@ -402,6 +402,7 @@ export default function App() {
             onRemoveMany={store.removeWatchItems}
             onOverride={(id, s) => store.setSegmentOverride(id, s, 'watch')}
             onUpdate={store.updateWatchItem}
+            onPasteHistory={(item, points) => store.addPastedHistory(itemKey(item), points)}
             onImport={(f) => store.importFile(f, 'watchlist')}
           />
         ) : (

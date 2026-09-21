@@ -645,6 +645,43 @@ save a credit; it would only throw away the sales in the reply.
 Pinned in tests (`what a full refresh costs`), because the ordering is worth
 real money and an innocent-looking edit could reverse it.
 
+### Promos cannot be fetched at all, at any price
+
+Measured, runs 31-42, and the reason a whole class of cards will never come
+right through the API.
+
+Card Ladder holds a promo's sales and shows them on its own site. The Parse
+wrapper cannot reach them. For cert 77865285, a 2019 Japanese SM promo:
+
+- the bulk search returns a 40-character hash where a card id should be, and
+  only a listing photograph;
+- `search_cards` finds nothing under any spelling tried, including the
+  owner's own, while `Charizard` returns 25 — so the search works and this
+  card is not in what it indexes;
+- `list_sets` cannot help, because **a promo is not from a set**;
+- and given the card's own Card Ladder id, read straight off
+  `app.cardladder.com/card/aDzWNhB6zljWw619YHQd`, `get_card_sales` still
+  answers 422 — the error names
+  `firestore.../documents/cards/aDzWNhB6zljWw619YHQd`, so the wrapper looks
+  only in the `cards` collection and promos are not in it.
+
+A valid id refused by collection is the end of that road. No query, no
+certificate and no id reaches these cards, and more credits do not change it.
+**Do not spend anything else proving this**; it cost about ten credits and
+several runs, a good part of that on probe bugs rather than on the question.
+
+So `pastesales.ts` and `PasteHistory` are not a fallback for such cards, they
+are the only route — and a watchlist can be mostly promos. The box appears on
+any card whose band does not cover its window, takes a date and a price per
+line in whatever layout was copied, and **commits nothing until every line has
+been shown as either a dated price or a reason it was skipped**: a parser
+forgiving about shape is only safe if it is loud about what it understood.
+
+Pasted points are `source: 'user'`, not `sale` — a price on a date the owner
+vouches for, which is what a band is made of, without pretending the app
+observed a sale. They merge into `uploadedHistory`, so pasting twice costs
+nothing and a later spreadsheet import does not wipe them.
+
 ### The lookup is by name, not by certificate
 
 Measured across runs 31-37. The chain that works:
