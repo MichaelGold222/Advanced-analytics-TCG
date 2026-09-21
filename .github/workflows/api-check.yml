@@ -34,6 +34,13 @@ on:
           nothing on its own, since the query may simply be wrong.
         required: false
         default: ''
+      card_id:
+        description: >-
+          A Card Ladder card id, taken straight from the URL of its page:
+          app.cardladder.com/card/<THIS>. Skips the name search entirely — the
+          site hands the id over, so nothing has to be guessed.
+        required: false
+        default: ''
       probes:
         description: >-
           Which questions to ask, comma separated. Each one spends the owner's
@@ -334,6 +341,7 @@ jobs:
           CERT: ${{ inputs.cert }}
           GRADER: ${{ inputs.grader }}
           CARD_NAME: ${{ inputs.card_name }}
+          CARD_ID: ${{ inputs.card_id }}
         run: |
           case ",$PROBES," in *,all,*|*,depth,*) ;; *) echo "skipped — not in '$PROBES'"; exit 0 ;; esac
           [ -n "$KEY" ] || exit 0
@@ -564,7 +572,14 @@ jobs:
           # which is a different slab of the same card. So when a cert carries
           # no card id — and most seem not to — the way in is the card's name,
           # not its certificate. search_cards has never been called.
-          if [ -n "$CARD_NAME" ]; then
+          # A card id handed over directly beats every guess. Card Ladder's
+          # own page URL is app.cardladder.com/card/<card_id>, so the id is
+          # simply readable off the address bar — no search, no spelling.
+          if [ -n "$CARD_ID" ]; then
+            printf '\n=== card id taken from a Card Ladder URL ===\n'
+            printf '  %s\n' "$CARD_ID"
+            printf '%s\n' "$CARD_ID" > found.txt
+          elif [ -n "$CARD_NAME" ]; then
             # Written to a file, like depth.py, rather than passed with -c.
             # The -c version crashed before printing anything twice running,
             # and each time the run had already paid for the response it then
@@ -700,5 +715,44 @@ jobs:
               print('    oldest:', json.dumps(s[-1])[:120])
           PY4
               break
+            done < found.txt
+          fi
+
+          # Whichever route produced an id, ask for the history.
+          if [ -n "$CARD_ID" ] && [ -s found.txt ]; then
+            while IFS= read -r CID; do
+              [ -n "$CID" ] || continue
+              printf '\n  --- GET get_card_sales?card_id=%s ---\n' "$CID"
+              code=$(curl -sS -m 120 -o hist.json -w '%{http_code}' -D hist.head \
+                -H "X-API-Key: $KEY" "$BASE/scraper/$SCR/get_card_sales?card_id=$CID" || echo 000)
+              echo "  HTTP $code"
+              tr -d '\r' < hist.head | grep -iE '^x-credits-charged' | sed 's/^/  /' || true
+              [ "$code" = "200" ] || { head -c 300 hist.json | sed 's/^/  /'; echo; continue; }
+              python3 - <<'PY6' || true
+          from datetime import datetime
+          import json
+          d = json.load(open('hist.json')).get('data', {})
+          rows = d.get('sales') or []
+          print('   ', str(d.get('label', ''))[:100])
+          print('    total_sales:', d.get('total_sales'), '| dated points:', len(rows))
+          def when(r):
+              try:
+                  return datetime.strptime(r.get('date', ''), '%m/%d/%Y')
+              except Exception:
+                  return None
+          dated = sorted([(when(r), r) for r in rows if when(r)], key=lambda x: x[0])
+          if dated:
+              print('    spans', dated[0][0].date(), 'to', dated[-1][0].date())
+              prices = [r.get('price') for _, r in dated if isinstance(r.get('price'), (int, float))]
+              print('    full range: $%.0f - $%.0f' % (min(prices), max(prices)))
+              cut = dated[-1][0].timestamp() - 365 * 86400
+              yr = [r.get('price') for t, r in dated if t.timestamp() >= cut]
+              if yr:
+                  print('    LAST 12 MONTHS: $%.0f - $%.0f, from %d points' % (min(yr), max(yr), len(yr)))
+              cut6 = dated[-1][0].timestamp() - 182 * 86400
+              six = [r.get('price') for t, r in dated if t.timestamp() >= cut6]
+              if six:
+                  print('    LAST 6 MONTHS:  $%.0f - $%.0f, from %d points' % (min(six), max(six), len(six)))
+          PY6
             done < found.txt
           fi
