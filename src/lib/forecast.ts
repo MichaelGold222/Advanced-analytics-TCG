@@ -33,6 +33,26 @@ import { type MarketBeta, type MarketIndex, estimateBeta } from './marketindex'
 import { clamp, daysBetween, mean, median, stdev } from './stats'
 import type { ForecastResult, PricePoint, Projection } from './types'
 
+/**
+ * Shortest spacing treated as real elapsed time between two sales.
+ *
+ * Sales closer together than this are near-simultaneous observations of one
+ * value, and the difference between them is mostly who turned up to bid.
+ */
+export const MIN_GAP_DAYS = 14
+
+/**
+ * Most volatility this will report, however wild the record looks.
+ *
+ * A hundred and twenty per cent a year is already far beyond anything a graded
+ * card does; past it the number is a symptom of the data rather than a
+ * measurement of the market, and carrying it into a ten-year simulation
+ * produces figures with no meaning at all. Capping is cruder than modelling the
+ * noise properly, and it is the difference between an implausible band and an
+ * impossible one.
+ */
+export const MAX_VOLATILITY = 1.2
+
 /** Below this many usable returns, a forecast would be arithmetic on noise. */
 export const MIN_RETURNS_FOR_FORECAST = 4
 
@@ -140,7 +160,15 @@ export function dailyReturns(points: PricePoint[]): DailyReturn[] {
   for (let i = 1; i < sorted.length; i++) {
     const gapDays = daysBetween(sorted[i - 1].date, sorted[i].date)
     if (gapDays <= 0) continue
-    out.push({ rate: Math.log(sorted[i].price / sorted[i - 1].price) / Math.sqrt(gapDays), gapDays })
+    // Dividing by the root of a tiny gap is where this goes wrong. Two copies
+    // of a slab selling three days apart at a fifteen per cent difference is
+    // two buyers, not the card moving fifteen per cent in three days — but the
+    // arithmetic reads it as an annualized volatility near three hundred per
+    // cent, and everything downstream inherits that. The floor says the two
+    // prices are at best a fortnight's worth of evidence about how fast the
+    // value moves, which is the honest reading of near-simultaneous sales.
+    const spacing = Math.max(gapDays, MIN_GAP_DAYS)
+    out.push({ rate: Math.log(sorted[i].price / sorted[i - 1].price) / Math.sqrt(spacing), gapDays })
   }
   return out
 }
@@ -156,7 +184,7 @@ export function shrunkVolatility(returns: DailyReturn[], prior = PRIOR_VOLATILIT
   if (returns.length < 2) return prior
   const own = stdev(returns.map((r) => r.rate)) * Math.sqrt(365)
   const weight = returns.length / (returns.length + SHRINK_STRENGTH)
-  return weight * own + (1 - weight) * prior
+  return Math.min(MAX_VOLATILITY, weight * own + (1 - weight) * prior)
 }
 
 /**
@@ -478,11 +506,26 @@ function simulate(
   const maxYears = Math.max(...projectionYears)
   const steps = Math.ceil((maxYears * 365) / PROJECTION_STEP_DAYS)
   const poolShock = shockerFor(baseSeed + 1_000_003)
-  const monthlyPool = Array.from({ length: 600 }, () => {
+  const rawPool = Array.from({ length: 600 }, () => {
     let sum = 0
     for (let d = 0; d < PROJECTION_STEP_DAYS; d++) sum += poolShock()
     return sum
   })
+  // Centre the pool, and this is not a nicety.
+  //
+  // Six hundred sums of thirty draws do not average to exactly zero, and every
+  // path draws from this same pool — so whatever the pool's mean happens to be
+  // is applied identically to all two thousand paths and never averages out.
+  // Over a hundred and twenty steps it compounds into a drift nothing reported
+  // and nothing intended: a card with a measured trend of zero was projected to
+  // lose thirteen per cent a year, and on a volatile one the same error ran the
+  // other way and put a ten-year median in the tens of millions.
+  //
+  // The daily draws were always centred exactly, so the near-term bands were
+  // right while the projections beneath them were not — the two disagreed about
+  // the same card at the same horizon, which is what gave it away.
+  const poolMean = mean(rawPool)
+  const monthlyPool = rawPool.map((x) => x - poolMean)
   const stepDrift = Array.from({ length: steps }, (_, i) =>
     cumulativeDrift(driftPerDay, i * PROJECTION_STEP_DAYS, (i + 1) * PROJECTION_STEP_DAYS))
   const wanted = projectionYears.map((y) => ({

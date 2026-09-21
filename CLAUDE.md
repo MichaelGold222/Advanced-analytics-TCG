@@ -431,6 +431,38 @@ Drift is in **logs** everywhere internally. Printing it as a percentage without
 `Math.expm1` understates every fast mover: a card at 1.25 in logs is up 249% a
 year, not 125%.
 
+### Two ways the projections were simply wrong
+
+Reported as a ten-year median of $56 million, and both causes were real.
+
+**The monthly pool carried its own sampling mean.** Six hundred sums of thirty
+draws do not average to exactly zero, and *every path drew from that same
+pool*, so the error was applied identically to all two thousand paths and never
+averaged out. Over a hundred and twenty steps it compounded into a drift
+nothing reported and nothing intended — a card measuring zero trend was
+projected at −13% a year, and on a volatile one the same error ran the other
+way. The pool is now centred on its own mean.
+
+The tell was there and nobody looked: the daily-walked bands were always
+centred exactly, so **the one-year band and the one-year projection disagreed
+about the same card**. They now agree to under a per cent, and a test holds
+them together.
+
+**`dailyReturns` divided by the root of a tiny gap.** Two copies of a slab
+selling three days apart at a fifteen per cent difference is two buyers, not
+the card moving fifteen per cent in three days — but the arithmetic read it as
+roughly 300% annualized volatility, and the whole simulation inherited that.
+`MIN_GAP_DAYS` floors the spacing used for scaling at a fortnight. The gap
+itself is kept, since only the scaling was wrong.
+
+`MAX_VOLATILITY` (120% a year) is a backstop, not a model. Past it the number
+is a symptom of the data rather than a measurement, and a ten-year simulation
+built on it produces figures with no meaning.
+
+**The invariant worth keeping:** with no measured trend, the projected median
+must stay where it started, at every horizon. That is what both bugs broke, and
+it is what the tests now assert.
+
 ### What is still missing
 
 Nothing measures whether the 80% bands actually contain the price 80% of the

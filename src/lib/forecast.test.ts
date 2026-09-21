@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
-  MIN_RETURNS_FOR_FORECAST, PRIOR_VOLATILITY, computeForecast, cumulativeDrift, dailyReturns,
-  robustDrift, shrunkDrift, shrunkVolatility,
+  MAX_VOLATILITY, MIN_RETURNS_FOR_FORECAST, PRIOR_VOLATILITY, computeForecast, cumulativeDrift,
+  dailyReturns, robustDrift, shrunkDrift, shrunkVolatility,
 } from './forecast'
 import { buildRepeatSalesIndex } from './marketindex'
 import type { PricePoint, PriceSeries } from './types'
@@ -47,10 +47,19 @@ describe('volatility on thin evidence', () => {
   })
 
   it('leans less on the prior as evidence accumulates', () => {
-    const few = dailyReturns(RISING.slice(0, 4))
+    // Thirty sales spread across two years, roughly three weeks apart, which
+    // is a densely traded card rather than an impossible one. The dates have
+    // to be real and ordered: a set cycling through month and day strings
+    // lands most of its pairs a day apart, where the gap floor now applies,
+    // and then measures the floor rather than the shrinking.
+    const start = Date.UTC(2024, 8, 21)
     const many = dailyReturns(series(
-      Array.from({ length: 30 }, (_, i) => [`2026-${String(1 + (i % 9)).padStart(2, '0')}-${String(1 + i % 28).padStart(2, '0')}`, 1000 + i * 5] as [string, number]),
+      Array.from({ length: 30 }, (_, i) => [
+        new Date(start + i * 24 * 86_400_000).toISOString().slice(0, 10),
+        1000 + i * 5 + (i % 3) * 40,
+      ] as [string, number]),
     ))
+    const few = dailyReturns(RISING.slice(0, 4))
     const distance = (v: number) => Math.abs(v - PRIOR_VOLATILITY)
     expect(distance(shrunkVolatility(many))).toBeGreaterThan(distance(shrunkVolatility(few)))
   })
@@ -408,5 +417,77 @@ describe('repeating a forecast', () => {
     expect(b.basis).toBe(2000)
     const roi = (f: typeof a) => f.projections.find((p) => p.years === 1)!.roiMid
     expect(roi(a)).toBeGreaterThan(roi(b))
+  })
+})
+
+describe('a walk with no trend keeps its median where it started', () => {
+  const day = 86_400_000
+  const END = Date.UTC(2026, 8, 21)
+  const at = (d: number) => new Date(END - d * day).toISOString().slice(0, 10)
+  const pts = (pairs: [number, number][]): PricePoint[] =>
+    pairs.map(([d, price]) => ({ date: at(d), price, source: 'sale' as const }))
+
+  /** Wobbles, goes nowhere. */
+  const FLAT = pts([[400, 2600], [300, 2800], [220, 2650], [140, 2900], [70, 2700], [20, 2900]])
+
+  it('does not drift the median at any horizon', () => {
+    // The monthly pool used to carry its own sampling mean, applied to every
+    // path alike, so a card with no measured trend was projected to lose or
+    // gain a tenth of its value a year out of nothing at all.
+    const f = computeForecast(FLAT, 2900)!
+    expect(Math.abs(f.driftPerYear)).toBeLessThan(0.05)
+    for (const p of f.projections) {
+      const drift = Math.abs(Math.log(p.mid / 2900))
+      expect(drift).toBeLessThan(0.2)
+    }
+  })
+
+  it('reports a return near zero rather than a steady decline', () => {
+    const f = computeForecast(FLAT, 2900, { basis: 2900 })!
+    for (const p of f.projections) expect(Math.abs(p.roiMid)).toBeLessThan(0.05)
+  })
+
+  it('agrees with its own one-year band, which is the same question', () => {
+    // The bands are walked daily and were always centred correctly; the
+    // projections are pooled monthly and were not. The two disagreeing about
+    // one card at one horizon is what exposed it.
+    const f = computeForecast(FLAT, 2900)!
+    const band = f.bands.find((b) => b.horizonDays === 365)!
+    const proj = f.projections.find((p) => p.years === 1)!
+    expect(Math.abs(Math.log(proj.mid / band.mid))).toBeLessThan(0.08)
+    expect(Math.abs(Math.log(proj.low / band.low))).toBeLessThan(0.25)
+    expect(Math.abs(Math.log(proj.high / band.high))).toBeLessThan(0.25)
+  })
+})
+
+describe('sales close together are two buyers, not a violent market', () => {
+  const day = 86_400_000
+  const END = Date.UTC(2026, 8, 21)
+  const at = (d: number) => new Date(END - d * day).toISOString().slice(0, 10)
+  const pts = (pairs: [number, number][]): PricePoint[] =>
+    pairs.map(([d, price]) => ({ date: at(d), price, source: 'sale' as const }))
+
+  const CLOSE = pts([[400, 2600], [300, 2800], [120, 2700], [60, 3100], [58, 2500], [20, 2900]])
+  const SPACED = pts([[400, 2600], [300, 2800], [120, 2700], [75, 3100], [45, 2500], [20, 2900]])
+
+  it('does not read a two-day price difference as a year of volatility', () => {
+    const close = computeForecast(CLOSE, 2900)!
+    const spaced = computeForecast(SPACED, 2900)!
+    // Before the floor these were 82% and 47% from the same six prices.
+    expect(Math.abs(close.volatility - spaced.volatility)).toBeLessThan(0.15)
+  })
+
+  it('keeps the gap itself, since the floor is only for the scaling', () => {
+    const gaps = dailyReturns(CLOSE).map((r) => r.gapDays)
+    expect(gaps).toContain(2)
+  })
+
+  it('refuses to report a volatility beyond what any card does', () => {
+    const chaos = pts([
+      [400, 2600], [340, 9200], [338, 900], [280, 7800], [200, 800],
+      [130, 9100], [128, 1200], [60, 8400], [20, 2900],
+    ])
+    const f = computeForecast(chaos, 2900)!
+    expect(f.volatility).toBeLessThanOrEqual(MAX_VOLATILITY)
   })
 })

@@ -410,11 +410,21 @@ function Projections({ forecast }: { forecast: ForecastResult }) {
           </tr>
         </thead>
         <tbody>
-          {forecast.projections.map((p) => (
+          {forecast.projections.map((p) => {
+            // Past roughly twentyfold the band is arithmetically right and
+            // useless as a number: it says the horizon is beyond what this
+            // record can speak to, which is worth saying on the row rather
+            // than in a footnote under the table.
+            const span = p.low > 0 ? p.high / p.low : Infinity
+            const tooWide = span > 20
+            return (
             <tr key={p.years}>
-              <td className="secondary">{p.years === 1 ? '1 year' : `${p.years} years`}</td>
+              <td className="secondary">
+                {p.years === 1 ? '1 year' : `${p.years} years`}
+                {tooWide && <div className="text-[11px] muted">too wide to read</div>}
+              </td>
               <td className="num tabular">{money(p.low)}</td>
-              <td className="num tabular font-medium">{money(p.mid)}</td>
+              <td className={`num tabular ${tooWide ? 'muted' : 'font-medium'}`}>{money(p.mid)}</td>
               <td className="num tabular">{money(p.high)}</td>
               <td className="num tabular" style={{ color: p.roiMid >= 0 ? 'var(--delta-up)' : 'var(--delta-down)' }}>
                 {plainPct(p.roiMid, 1)}
@@ -422,7 +432,8 @@ function Projections({ forecast }: { forecast: ForecastResult }) {
               </td>
               <td className="num tabular">{plainPct(p.chanceAboveBasis, 0)}</td>
             </tr>
-          ))}
+            )
+          })}
         </tbody>
       </table>
       <p className="text-xs secondary leading-relaxed mt-2">
