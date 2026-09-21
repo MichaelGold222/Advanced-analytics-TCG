@@ -645,10 +645,11 @@ save a credit; it would only throw away the sales in the reply.
 Pinned in tests (`what a full refresh costs`), because the ordering is worth
 real money and an innocent-looking edit could reverse it.
 
-### Promos cannot be fetched at all, at any price
+### One promo could not be fetched at all — how far that generalises is UNTESTED
 
-Measured, runs 31-42, and the reason a whole class of cards will never come
-right through the API.
+Measured, runs 31-42, on **exactly one card**. It was first written up here as
+"promos cannot be fetched at any price", which is a generalisation from a
+single sample and was not earned. What follows is what was actually observed.
 
 Card Ladder holds a promo's sales and shows them on its own site. The Parse
 wrapper cannot reach them. For cert 77865285, a 2019 Japanese SM promo:
@@ -665,13 +666,22 @@ wrapper cannot reach them. For cert 77865285, a 2019 Japanese SM promo:
   `firestore.../documents/cards/aDzWNhB6zljWw619YHQd`, so the wrapper looks
   only in the `cards` collection and promos are not in it.
 
-A valid id refused by collection is the end of that road. No query, no
-certificate and no id reaches these cards, and more credits do not change it.
-**Do not spend anything else proving this**; it cost about ten credits and
-several runs, a good part of that on probe bugs rather than on the question.
+A valid id refused by collection is the end of that road **for this card**. No
+query, certificate or id reaches it, and more credits do not change that one.
 
-So `pastesales.ts` and `PasteHistory` are not a fallback for such cards, they
-are the only route — and a watchlist can be mostly promos. The box appears on
+**What is not known:** whether other Sun & Moon promos, or promos generally,
+are equally absent. Sun & Moon *sets* are plainly indexed — a `Charizard`
+search returned `2019 Pokemon Sun & Moon: Hidden Fates Charizard GX Shiny
+Vault: Full Art #SV49 BGS 10 Black` — but a set is not a promo and that says
+nothing either way. One `search_cards` call against another promo would settle
+it for 1 credit; it has not been made.
+
+Establishing the above cost about ten credits over several runs, a good part
+of that on bugs in the probe rather than on the question. Before spending more
+here, read this section: the answer for this card is settled.
+
+So `pastesales.ts` and `PasteHistory` are the only route for any card in this
+position — and a watchlist can be mostly promos. The box appears on
 any card whose band does not cover its window, takes a date and a price per
 line in whatever layout was copied, and **commits nothing until every line has
 been shown as either a dated price or a reason it was skipped**: a parser
