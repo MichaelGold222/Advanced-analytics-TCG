@@ -91,6 +91,8 @@ interface AppState extends PersistedState {
   refreshGraded(opts?: { onlyMissing?: boolean }): Promise<void>
   /** Fetch pictures for any of these certs that has none yet. */
   refreshImages(certs: { cert_number: string; grading_company: 'PSA' | 'BGS' | 'CGC' | 'SGC' }[]): Promise<void>
+  /** Empty holdings or the watchlist, keeping prices, photos and the other list. */
+  clearList(kind: 'portfolio' | 'watchlist'): void
   clearAll(): Promise<void>
   reportError(message: string): void
   dismissError(): void
@@ -513,6 +515,21 @@ export const useStore = create<AppState>((setState, getState) => ({
         error: `Price refresh failed: ${err instanceof Error ? err.message : String(err)}`,
       })
     }
+  },
+
+  /**
+   * Empty one list, keeping everything else.
+   *
+   * "Clear all data" is the only bulk delete there was, and it takes the
+   * fetched prices and the slab photographs with it — which is a heavy price
+   * for fixing a list that went to the wrong tab. This removes the rows and
+   * nothing else: the other list stays, and so do the snapshots, live quotes
+   * and pictures, all of which are keyed by card and will still be there when
+   * the right sheet is uploaded.
+   */
+  clearList(kind) {
+    setState(kind === 'portfolio' ? { holdings: [] } : { watchlist: [] })
+    scheduleSave(getState())
   },
 
   async clearAll() {

@@ -206,11 +206,21 @@ Belt and braces: a sheet with asking or target prices and no cost column that
 lands in holdings anyway now says so at import, because landing there counts it
 in the portfolio total and reports asking prices as wealth.
 
-**Recovery, if it happens again:** re-upload the watchlist through "Upload
-watchlist" (a replace, so it restores that tab), then re-upload the real
-holdings sheet through "Upload portfolio" (also a replace, which clears the
-stray rows). Prices already fetched are keyed by card, not by tab, so nothing
-fetched is lost either way.
+**Recovery, three ways, none of which costs anything fetched.** Prices, quotes
+and slab photographs are keyed by card rather than by list, and an import
+writes only holdings, watchlist and uploaded history — so rows can be moved or
+deleted freely and the prices are still there when the right sheet arrives.
+
+- The Holdings tab offers to move rows with nothing paid and no purchase date
+  to the watchlist (`suspectedWatchItems`). Heuristic, so it lists them and
+  moves nothing on its own.
+- **Empty holdings / Empty watchlist** in Data & settings clears one list and
+  nothing else. Deterministic, which is what to reach for when the heuristic
+  does not match — a row with a cost in it will not be offered for moving.
+- Re-uploading a sheet is a replace by default, so it clears that list too.
+
+"Clear all data" is none of these: it takes the snapshots and the photographs
+with it.
 
 ### A trap worth remembering
 

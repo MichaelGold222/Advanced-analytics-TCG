@@ -361,6 +361,9 @@ export default function App() {
             usage={store.usage} onRefreshGraded={(o) => void store.refreshGraded(o)}
             onImport={store.importFile} onTemplate={handleTemplate} onExport={handleExport}
             onClear={() => void store.clearAll()}
+            onClearList={store.clearList}
+            holdingCount={holdings.length}
+            watchCount={watchlist.length}
           />
         )}
       </main>

@@ -27,11 +27,47 @@ interface Props {
   onTemplate: () => void
   onExport: () => void
   onClear: () => void
+  onClearList: (kind: 'portfolio' | 'watchlist') => void
+  holdingCount: number
+  watchCount: number
+}
+
+/**
+ * A destructive button that asks first, and says what it will destroy.
+ *
+ * The count goes in the confirmation rather than the label, because "Empty
+ * holdings" is what you look for and "remove all 94 holdings" is what you
+ * need to read before agreeing to it.
+ */
+function ConfirmButton({
+  label, confirm, onConfirm, disabled,
+}: { label: string; confirm: string; onConfirm: () => void; disabled?: boolean }) {
+  const [armed, setArmed] = useState(false)
+  if (!armed) {
+    return (
+      <button type="button" className="btn" disabled={disabled} onClick={() => setArmed(true)}>
+        <Trash2 className="size-4" aria-hidden /> {label}
+      </button>
+    )
+  }
+  return (
+    <span className="flex gap-2">
+      <button
+        type="button" className="btn"
+        style={{ borderColor: 'var(--critical)', color: 'var(--critical)' }}
+        onClick={() => { onConfirm(); setArmed(false) }}
+      >
+        {confirm}
+      </button>
+      <button type="button" className="btn" onClick={() => setArmed(false)}>Cancel</button>
+    </span>
+  )
 }
 
 export function DataPanel({
   importLog, refresh, gradedRefresh, certLastFetched, certCount, missingCerts, photoCount, usage,
-  onImport, onTemplate, onExport, onClear, onRefreshGraded,
+  onImport, onTemplate, onExport, onClear, onClearList, onRefreshGraded,
+  holdingCount, watchCount,
 }: Props) {
   const [key, setKey] = useState(getApiKey())
   const [saved, setSaved] = useState(false)
@@ -305,6 +341,29 @@ export function DataPanel({
 
             </div>
           </details>
+        </section>
+
+        <section className="card p-4">
+          <h3 className="text-sm font-semibold mb-2">Empty one list</h3>
+          <p className="text-xs secondary mb-2">
+            Removes the rows and nothing else. Prices you have fetched and slab photographs are kept —
+            they are stored against the card, not against the list — so re-uploading the right sheet
+            brings them straight back.
+          </p>
+          <div className="flex flex-wrap gap-2">
+            <ConfirmButton
+              label="Empty holdings"
+              confirm={`Yes, remove all ${holdingCount} holdings`}
+              onConfirm={() => onClearList('portfolio')}
+              disabled={holdingCount === 0}
+            />
+            <ConfirmButton
+              label="Empty watchlist"
+              confirm={`Yes, remove all ${watchCount} watch items`}
+              onConfirm={() => onClearList('watchlist')}
+              disabled={watchCount === 0}
+            />
+          </div>
         </section>
 
         <section className="card p-4">
