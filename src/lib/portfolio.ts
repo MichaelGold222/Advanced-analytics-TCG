@@ -1,6 +1,7 @@
 /** Portfolio-level aggregation across the four segments. */
 import { analyzeItem, pointsInWindow } from './analytics'
 import { itemKey } from './key'
+import type { MarketIndex } from './marketindex'
 import { toISODate } from './stats'
 import { SEGMENTS } from './types'
 import type {
@@ -39,13 +40,14 @@ export function analyzeHoldings(
   holdings: Holding[],
   seriesByKey: Map<string, PriceSeries>,
   now = new Date(),
+  index?: MarketIndex | null,
 ): Map<string, ItemAnalysis> {
   const out = new Map<string, ItemAnalysis>()
   for (const h of holdings) {
     const key = holdingKey(h)
     if (out.has(key)) continue
     const series = seriesByKey.get(key) ?? { key, points: [] }
-    out.set(key, analyzeItem(series, null, now))
+    out.set(key, analyzeItem(series, null, now, index))
   }
   return out
 }

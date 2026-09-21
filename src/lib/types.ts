@@ -177,6 +177,26 @@ export interface ForecastBand {
   chanceUp: number
 }
 
+/** How a forecast split the card's future between the market and the card. */
+export interface ForecastMarket {
+  /** Sensitivity to the market, shrunk toward one. */
+  beta: number
+  rawBeta: number
+  /** Share of this card's past movement the market accounted for. */
+  marketShare: number
+  /** False when the market's path was too straight to measure sensitivity. */
+  separable: boolean
+  /** The index's own annual drift, after being shrunk for its span. */
+  marketDriftPerYear: number
+  /** What is left for the card itself, annualized and shrunk. */
+  alphaPerYear: number
+  /** Annualized volatility the market does not account for. */
+  idiosyncratic: number
+  /** Cards and repeat sales the index was built from. */
+  cardCount: number
+  pairCount: number
+}
+
 export interface ForecastResult {
   from: number
   volatility: number
@@ -187,6 +207,8 @@ export interface ForecastResult {
   driftShrunk: boolean
   sampleSize: number
   bands: ForecastBand[]
+  /** Present when the forecast was built against a market index. */
+  market?: ForecastMarket
   rationale: string[]
 }
 

@@ -77,6 +77,58 @@ a browser. `get_cert_full_profile` carries the same pictures but takes one
 cert per call, which is why the bulk search is used instead. All of them
 require `grading_company` alongside the cert number.
 
+## How the forecast is put together
+
+`src/lib/forecast.ts` and `src/lib/marketindex.ts`. Three ideas, each there to
+stop a specific way this could be wrong.
+
+**Drift is shrunk harder than volatility, because it is known worse.** The
+standard error of an annual trend is the volatility over the root of the
+*calendar span* — more sales inside the same two years barely help, since a
+trend needs a longer lever rather than a denser one. Volatility's error falls
+as the root of the count. On a typical card here that makes the trend three or
+four times less determined, so it gets pulled toward zero by
+`shrunkDrift`. Before this existed, a Lugia measuring 19% a year against a
+standard error of ~18% was reading 77% up at a year; with it, 10% and 65%.
+
+**Most of what a card does is the market.** `buildRepeatSalesIndex` is a
+repeat-sales regression (Bailey–Muth–Nourse; Case–Shiller) over every card that
+sold twice, which is the standard method for assets that are expensive,
+individually distinct and sell rarely. `estimateBeta` then splits each card into
+the market's part and its own, so the common component is estimated from
+hundreds of pairs rather than one card's nine. Nothing is compared across
+different cards — only each card against itself at two dates — which is what
+makes the comparison legitimate.
+
+Four things in there are load-bearing and were each put in to fix an observed
+failure, so think before removing any of them:
+
+- The prior on period-to-period change is deliberately weak (half a sale). At
+  two sales it flattened a genuine peak.
+- The robust scale has a floor (`MIN_RESIDUAL_SIGMA`). Without it, a run of
+  tidy comps collapses the median deviation, and the long pairs carrying the
+  market across a quiet stretch get trimmed as outliers — exactly backwards.
+- Beta needs the market to have *shape*. Against a market rising in a straight
+  line, "moves twice as hard" and "has its own drift" are the same numbers
+  twice; `separable` reports when the split was impossible and falls back to
+  beta 1.
+- A constant sale interval is an intercept, not collinearity. Treating it as
+  degenerate refuses every evenly-spaced card.
+
+**The index counts `sale` and `user` points, not quotes.** A dated column from
+the owner's sheet is a price for one card on one date, which is what a pair is
+made of. Market quotes, asks, midpoints and this app's own snapshots are
+opinions rather than prices paid, and snapshots would manufacture a repeat sale
+every time the page was opened.
+
+### What is still missing
+
+Nothing measures whether the 80% bands actually contain the price 80% of the
+time. Until a backtest exists — fit each card through a cutoff date, check
+where the real later price landed, aggregate across the collection — "is this
+accurate?" has no measured answer, including for the two fixes above. That is
+the highest-value next piece of work, well above adding another model.
+
 ## Where things stand
 
 The dashboard is deployed from this branch to

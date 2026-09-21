@@ -1,5 +1,5 @@
 import { money, plainPct } from '../lib/format'
-import type { ForecastResult } from '../lib/types'
+import type { ForecastMarket, ForecastResult } from '../lib/types'
 
 /** Nearer horizons darker: one hue, and the ramp carries how far out it is. */
 const SHADES = ['var(--seq-550)', 'var(--seq-450)', 'var(--seq-250)', 'var(--seq-100)']
@@ -72,9 +72,48 @@ export function ForecastBands({ forecast }: { forecast: ForecastResult }) {
         </div>
       </div>
 
-      <ul className="text-sm space-y-1.5 leading-relaxed">
-        {forecast.rationale.map((r) => <li key={r}>· {r}</li>)}
-      </ul>
+      <div>
+        {forecast.market && <MarketSplit market={forecast.market} />}
+        <ul className="text-sm space-y-1.5 leading-relaxed">
+          {forecast.rationale.map((r) => <li key={r}>· {r}</li>)}
+        </ul>
+      </div>
+    </div>
+  )
+}
+
+/**
+ * How much of this card's movement is the market's, and how much is its own.
+ *
+ * Two segments of one bar rather than two bars: they are shares of one thing
+ * and always sum to it, so the comparison worth seeing is which is larger.
+ * Both are written out beside their own segment, so the split never has to be
+ * read off a length or a colour.
+ */
+function MarketSplit({ market }: { market: ForecastMarket }) {
+  const share = Math.max(0, Math.min(1, market.marketShare))
+  const pct = Math.round(share * 100)
+
+  return (
+    <div className="mb-3">
+      <div className="flex items-baseline justify-between gap-3 text-xs mb-1.5">
+        <span className="secondary">What moves it</span>
+        <span className="tabular muted">
+          {market.separable
+            ? `beta ${market.beta.toFixed(2)}`
+            : 'beta not measurable'}
+        </span>
+      </div>
+      <div className="relative h-4 rounded-sm overflow-hidden" style={{ background: 'var(--surface-2)' }}>
+        <div
+          className="absolute inset-y-0 left-0"
+          style={{ width: `${pct}%`, background: 'var(--seq-450)', boxShadow: '0 0 0 2px var(--surface-1)' }}
+        />
+      </div>
+      <div className="flex items-baseline justify-between gap-3 text-xs mt-1">
+        <span className="tabular">{pct}% the market</span>
+        <span className="tabular muted">{100 - pct}% this card alone</span>
+      </div>
     </div>
   )
 }

@@ -3,7 +3,8 @@ import {
   MIN_RETURNS_FOR_FORECAST, PRIOR_VOLATILITY, computeForecast, dailyReturns, robustDrift, shrunkDrift,
   shrunkVolatility,
 } from './forecast'
-import type { PricePoint } from './types'
+import { buildRepeatSalesIndex } from './marketindex'
+import type { PricePoint, PriceSeries } from './types'
 
 const series = (pairs: [string, number][]): PricePoint[] =>
   pairs.map(([date, price]) => ({ date, price, source: 'sale' }))
@@ -204,5 +205,89 @@ describe('trend is shrunk harder than volatility, because it is known worse', ()
   it('says in words that the trend was cut, and by how much', () => {
     const f = computeForecast(RISING, 1330)
     expect(f!.rationale.join(' ')).toMatch(/cut from .*cannot tell a trend/)
+  })
+})
+
+describe('forecasting against a market index', () => {
+  const day = 86_400_000
+  const START = Date.UTC(2025, 0, 1)
+  const at = (d: number) => new Date(START + d * day).toISOString().slice(0, 10)
+  const WAVY = (d: number) => 0.25 * Math.sin(d / 90) + (0.18 * d) / 365
+
+  /** A collection whose cards all track one wavy, rising market. */
+  const collection = () => {
+    const out = new Map<string, PriceSeries>()
+    for (let c = 0; c < 18; c++) {
+      const base = 500 * (1 + c)
+      const days = [0, 61, 128, 195, 260, 320, 399, 455, 520, 601, 668, 730]
+      out.set(`c${c}`, {
+        key: `c${c}`,
+        points: days.map((d) => {
+          const shifted = Math.min(730, d + (c * 11) % 29)
+          return { date: at(shifted), price: base * Math.exp(WAVY(shifted)), source: 'sale' as const }
+        }),
+      })
+    }
+    return out
+  }
+
+  const index = buildRepeatSalesIndex(collection())!
+  /** A card that rode the same market, sampled on its own irregular dates. */
+  const rider = [0, 48, 139, 201, 288, 366, 430, 512, 588, 655, 719]
+    .map((d) => ({ date: at(d), price: 2000 * Math.exp(WAVY(d)), source: 'sale' as const }))
+
+  it('builds an index worth using from a collection this size', () => {
+    expect(index.cardCount).toBeGreaterThanOrEqual(18)
+    expect(index.pairCount).toBeGreaterThan(100)
+  })
+
+  it('reports the split, so the market is not silently doing the work', () => {
+    const f = computeForecast(rider, 2000, { index })!
+    expect(f.market).toBeDefined()
+    expect(f.market!.marketShare).toBeGreaterThan(0.5)
+    expect(f.market!.cardCount).toBe(index.cardCount)
+  })
+
+  it('says nothing about a market when there is no index', () => {
+    expect(computeForecast(rider, 2000)!.market).toBeUndefined()
+  })
+
+  it("keeps more of the market's trend than it would keep of one card's", () => {
+    // The market's trend rests on a hundred-odd pairs over two years and
+    // survives being shrunk; the same card alone gets most of its trend cut.
+    const withMarket = computeForecast(rider, 2000, { index })!
+    const alone = computeForecast(rider, 2000)!
+    expect(Math.abs(withMarket.driftPerYear)).toBeGreaterThan(Math.abs(alone.driftPerYear))
+  })
+
+  it('gives a geared card a wider band than one that barely moves with the market', () => {
+    const geared = [0, 48, 139, 201, 288, 366, 430, 512, 588, 655, 719]
+      .map((d) => ({ date: at(d), price: 2000 * Math.exp(2 * WAVY(d)), source: 'sale' as const }))
+    const sluggish = [0, 48, 139, 201, 288, 366, 430, 512, 588, 655, 719]
+      .map((d) => ({ date: at(d), price: 2000 * Math.exp(0.2 * WAVY(d)), source: 'sale' as const }))
+    const g = computeForecast(geared, 2000, { index })!
+    const s = computeForecast(sluggish, 2000, { index })!
+    expect(g.market!.beta).toBeGreaterThan(s.market!.beta)
+    const gYear = g.bands.find((b) => b.horizonDays === 365)!
+    const sYear = s.bands.find((b) => b.horizonDays === 365)!
+    expect(gYear.high - gYear.low).toBeGreaterThan(sYear.high - sYear.low)
+  })
+
+  it('still refuses a card too thin to model, index or no index', () => {
+    const thin = [{ date: at(0), price: 100, source: 'sale' as const },
+      { date: at(40), price: 110, source: 'sale' as const }]
+    expect(computeForecast(thin, 110, { index })).toBeNull()
+  })
+
+  it('explains in words where the trend came from', () => {
+    const said = computeForecast(rider, 2000, { index })!.rationale.join(' ')
+    expect(said).toMatch(/paired prices across \d+ cards/)
+    expect(said).toMatch(/of what this card has done was the whole market moving/)
+  })
+
+  it('gives the same answer twice with a market as without one', () => {
+    const a = computeForecast(rider, 2000, { index })!
+    const b = computeForecast(rider, 2000, { index })!
+    expect(a.bands).toEqual(b.bands)
   })
 })

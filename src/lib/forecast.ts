@@ -29,6 +29,7 @@
  * reliable, which is why every result carries what it was built from and why
  * `computeForecast` returns null rather than guess when a card is too thin.
  */
+import { type MarketBeta, type MarketIndex, estimateBeta } from './marketindex'
 import { clamp, daysBetween, mean, median, stdev } from './stats'
 import type { ForecastResult, PricePoint } from './types'
 
@@ -58,6 +59,20 @@ export const SHRINK_STRENGTH = 8
  * estimate through unchallenged.
  */
 export const PRIOR_DRIFT_SPREAD = 0.2
+
+/**
+ * Volatility assumed for a card's *own* movement, once the market's share of it
+ * has been taken out. Lower than the total prior, because a good part of what
+ * any card does is the whole market moving.
+ */
+export const PRIOR_IDIOSYNCRATIC = 0.32
+
+export interface ForecastOptions {
+  horizons?: number[]
+  prior?: number
+  /** The collection's index, and this card's relationship to it. */
+  index?: MarketIndex | null
+}
 
 export interface DailyReturn {
   /** Log return scaled to one day, so irregular gaps compare. */
@@ -171,6 +186,64 @@ function spanLabel(spanDays: number): string {
   return of(`${(spanDays / 365).toFixed(1)} years`)
 }
 
+/**
+ * Centre a set of observed moves and rescale them to a target volatility.
+ *
+ * Keeps whatever skew and fat tails the moves actually had while setting their
+ * width to the estimate that was reported, rather than to the raw spread of a
+ * handful of sales. A set with no spread at all becomes a coin flip of the
+ * right size, since resampling zeros would forecast a certainty.
+ */
+function drawsAt(moves: number[], annualVolatility: number): number[] {
+  const targetDaily = annualVolatility / Math.sqrt(365)
+  if (moves.length === 0) return [-targetDaily, targetDaily]
+  const centred = moves.map((m) => m - mean(moves))
+  const raw = stdev(centred)
+  if (!(raw > 1e-9)) return [-targetDaily, targetDaily]
+  return centred.map((c) => (c * targetDaily) / raw)
+}
+
+/**
+ * Rebuild a card's drift and volatility out of the market's and its own.
+ *
+ * This is the whole point of having an index. A card's own trend is measured
+ * from nine sales and is mostly noise; the market's is measured from hundreds
+ * and survives being shrunk. So the market's drift is taken, scaled by how
+ * hard this card moves with it, and only the leftover has to come from the
+ * card's thin record — where it is shrunk hard, because a leftover is the
+ * least determined quantity in the whole calculation.
+ *
+ * Volatility composes the same way. The market part is beta times the index's
+ * volatility and needs no shrinking, having come from the whole collection.
+ * The card's own part does, and is pulled toward a prior that is deliberately
+ * below the all-in one, since a good share of any card's movement is already
+ * accounted for by the market and must not be counted twice.
+ */
+function splitAgainstMarket(index: MarketIndex, beta: MarketBeta, weight: number) {
+  const indexSpanDays = index.points.length >= 2
+    ? (index.points.length - 1) * index.periodDays
+    : 0
+  // The index earns its drift: hundreds of pairs across a long span, so the
+  // same shrinking that flattens a single card leaves most of this intact.
+  const marketDriftPerDay = shrunkDrift(
+    index.driftPerYear / 365, index.volatility, indexSpanDays,
+  )
+  const idiosyncratic = weight * beta.idiosyncratic + (1 - weight) * PRIOR_IDIOSYNCRATIC
+  const alphaPerDay = shrunkDrift(beta.rawAlphaPerDay, idiosyncratic, beta.spanDays)
+  const marketVolatility = index.volatility
+
+  return {
+    beta: beta.beta,
+    marketVolatility,
+    idiosyncratic,
+    volatility: Math.hypot(beta.beta * marketVolatility, idiosyncratic),
+    marketDriftPerDay,
+    alphaPerDay,
+    driftPerDay: beta.beta * marketDriftPerDay + alphaPerDay,
+    rawDriftPerDay: beta.beta * (index.driftPerYear / 365) + beta.rawAlphaPerDay,
+  }
+}
+
 /** A deterministic generator, so the same history always yields the same fan. */
 function seededRandom(seed: number): () => number {
   let state = seed >>> 0 || 1
@@ -194,39 +267,39 @@ function seededRandom(seed: number): () => number {
 export function computeForecast(
   points: PricePoint[],
   from: number | null,
-  horizons: number[] = [30, 90, 180, 365],
-  prior = PRIOR_VOLATILITY,
+  options: ForecastOptions = {},
 ): ForecastResult | null {
+  const { horizons = [30, 90, 180, 365], prior = PRIOR_VOLATILITY, index = null } = options
   if (from == null || !(from > 0)) return null
   const returns = dailyReturns(points)
   if (returns.length < MIN_RETURNS_FOR_FORECAST) return null
 
-  const volatility = shrunkVolatility(returns, prior)
   const weight = returns.length / (returns.length + SHRINK_STRENGTH)
-  const rawDrift = robustDrift(points) ?? 0
   // How long a lever the sales give the trend, which is what determines it.
   const dated = [...points].filter((p) => p.price > 0).map((p) => p.date).sort()
   const spanDays = dated.length >= 2 ? daysBetween(dated[0], dated[dated.length - 1]) : 0
-  const pulledDrift = shrunkDrift(rawDrift, volatility, spanDays)
+
+  const beta = index ? estimateBeta(points, index) : null
+  const split = index && beta ? splitAgainstMarket(index, beta, weight) : null
+
+  const volatility = split ? split.volatility : shrunkVolatility(returns, prior)
+  const rawDrift = split ? split.rawDriftPerDay : (robustDrift(points) ?? 0)
+  const pulledDrift = split
+    ? split.driftPerDay
+    : shrunkDrift(rawDrift, volatility, spanDays)
   // ±60% a year is already an extreme claim; beyond it the number is the
   // sample talking, not the market.
   const driftPerDay = clamp(pulledDrift, -0.6 / 365, 0.6 / 365)
   const driftKept = rawDrift === 0 ? 1 : pulledDrift / rawDrift
 
-  const rates = returns.map((r) => r.rate)
-  const centred = rates.map((r) => r - mean(rates))
-
-  // Resample the shape, but at the shrunk volatility rather than the raw one.
-  // Six sales along a smooth line have almost no residual spread, and drawing
-  // from that would forecast the future as a certainty — the overconfidence
-  // shrinking exists to prevent. Rescaling keeps whatever skew and fat tails
-  // the card's own moves have while setting their width to the estimate that
-  // was actually reported.
-  const rawDaily = stdev(centred)
-  const targetDaily = volatility / Math.sqrt(365)
-  const draws = rawDaily > 1e-9
-    ? centred.map((c) => (c * targetDaily) / rawDaily)
-    : [-targetDaily, targetDaily]
+  // One factor or two. Without an index everything the card did is its own;
+  // with one, the market's moves and the card's leftovers are drawn
+  // separately, so the part estimated from hundreds of sales is not diluted
+  // by the part estimated from nine.
+  const marketDraws = split ? drawsAt(index!.dailyMoves, split.marketVolatility) : null
+  const draws = split
+    ? drawsAt(beta!.residuals, split.idiosyncratic)
+    : drawsAt(returns.map((r) => r.rate), volatility)
 
   const rand = seededRandom(Math.round(from * 1000) + returns.length * 7919)
 
@@ -235,8 +308,11 @@ export function computeForecast(
     for (let path = 0; path < SIM_PATHS; path++) {
       let logPrice = Math.log(from)
       for (let day = 0; day < horizonDays; day++) {
-        const draw = draws[Math.floor(rand() * draws.length) % draws.length]
-        logPrice += driftPerDay + draw
+        const own = draws[Math.floor(rand() * draws.length) % draws.length]
+        const market = marketDraws
+          ? split!.beta * marketDraws[Math.floor(rand() * marketDraws.length) % marketDraws.length]
+          : 0
+        logPrice += driftPerDay + own + market
       }
       ends.push(Math.exp(logPrice))
     }
@@ -251,18 +327,70 @@ export function computeForecast(
     }
   })
 
-  const rationale = [
+  const asPct = (x: number) => `${Math.round(x * 100)}%`
+  const rationale: string[] = [
     `Built from ${returns.length} price moves on this card, resampled rather than assumed to be bell-shaped.`,
-    weight < 0.5
-      ? `Its own history is thin, so volatility of ${Math.round(volatility * 100)}% leans mostly on what its segment typically does.`
-      : `Volatility of ${Math.round(volatility * 100)}% a year across its whole history, pulled slightly toward its segment. The entry call quotes the last year alone, so the two figures differ.`,
-    `Trend of ${(driftPerDay * 365 * 100).toFixed(0)}% a year, the median of every pair of sales${
-      driftKept < 0.9
-        ? ` — cut from ${(rawDrift * 365 * 100).toFixed(0)}%, because ${spanLabel(spanDays)}`
-        : ''
-    }.`,
-    'A range, not a prediction: the bands say where the price lands in 8 of 10 simulated futures.',
   ]
 
-  return { from, volatility, shrunk: weight < 0.5, driftPerYear: driftPerDay * 365, driftShrunk: driftKept < 0.9, sampleSize: returns.length, bands, rationale }
+  if (split && beta && index) {
+    rationale.push(beta.separable
+      ? `About ${asPct(beta.marketShare)} of what this card has done was the whole market moving. It moves ${
+        beta.beta > 1.15 ? 'harder than' : beta.beta < 0.85 ? 'less than' : 'roughly with'
+      } the market, at ${beta.beta.toFixed(2)} times it.`
+      : "The market's path across this card's sales was too straight to tell its sensitivity apart from its own drift, so it is taken to move with the market.")
+
+    rationale.push(`The market's own trend of ${asPct(split.marketDriftPerDay * 365)} a year comes from ${
+      index.pairCount
+    } paired prices across ${index.cardCount} cards, which is why it survives a scrutiny this card's own handful does not.`)
+
+    rationale.push(`Volatility of ${asPct(volatility)} a year: ${
+      asPct(split.beta * split.marketVolatility)
+    } of it the market at this card's sensitivity and ${
+      asPct(split.idiosyncratic)
+    } its own, which come to less than their sum because they do not move in step.`)
+
+    const alpha = split.alphaPerDay * 365
+    const ownPart = Math.abs(alpha) < 0.01
+      ? `nothing of its own worth carrying, since ${spanLabel(beta.spanDays)}`
+      : `${asPct(alpha)} a year of its own${
+        driftKept < 0.9 ? `, itself cut down because ${spanLabel(beta.spanDays)}` : ''
+      }`
+    rationale.push(`Trend of ${asPct(driftPerDay * 365)} a year: the market's, scaled to this card, plus ${ownPart}.`)
+  } else {
+    rationale.push(weight < 0.5
+      ? `Its own history is thin, so volatility of ${asPct(volatility)} leans mostly on what its segment typically does.`
+      : `Volatility of ${asPct(volatility)} a year across its whole history, pulled slightly toward its segment. The entry call quotes the last year alone, so the two figures differ.`)
+
+    rationale.push(`Trend of ${asPct(driftPerDay * 365)} a year, the median of every pair of sales${
+      driftKept < 0.9
+        ? ` — cut from ${asPct(rawDrift * 365)}, because ${spanLabel(spanDays)}`
+        : ''
+    }.`)
+  }
+
+  rationale.push('A range, not a prediction: the bands say where the price lands in 8 of 10 simulated futures.')
+
+  return {
+    from,
+    volatility,
+    shrunk: weight < 0.5,
+    driftPerYear: driftPerDay * 365,
+    driftShrunk: driftKept < 0.9,
+    sampleSize: returns.length,
+    bands,
+    market: split && beta && index
+      ? {
+        beta: split.beta,
+        rawBeta: beta.rawBeta,
+        marketShare: beta.marketShare,
+        separable: beta.separable,
+        marketDriftPerYear: split.marketDriftPerDay * 365,
+        alphaPerYear: split.alphaPerDay * 365,
+        idiosyncratic: split.idiosyncratic,
+        cardCount: index.cardCount,
+        pairCount: index.pairCount,
+      }
+      : undefined,
+    rationale,
+  }
 }

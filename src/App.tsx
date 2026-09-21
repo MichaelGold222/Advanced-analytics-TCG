@@ -16,6 +16,7 @@ import { useTheme } from './hooks/useTheme'
 import { analyzeItem, computeTrend } from './lib/analytics'
 import { money, pct, relativeTime } from './lib/format'
 import { itemKey } from './lib/key'
+import { buildRepeatSalesIndex } from './lib/marketindex'
 import { analyzeHoldings, buildValueTrend, computePortfolioStats, holdingKey, unitValue } from './lib/portfolio'
 import { getParseKey } from './lib/providers/cardladder-client'
 import { selectSeries, useStore } from './lib/store'
@@ -52,17 +53,25 @@ export default function App() {
     [holdings, watchlist, uploadedHistory, snapshots, quotes, feed],
   )
 
-  const holdingAnalyses = useMemo(() => analyzeHoldings(holdings, series), [holdings, series])
+  // One index for the whole collection, built once from every repeat sale in
+  // it. Holdings and watchlist both measure against the same market, which is
+  // the only way their betas mean the same thing.
+  const marketIndex = useMemo(() => buildRepeatSalesIndex(series), [series])
+
+  const holdingAnalyses = useMemo(
+    () => analyzeHoldings(holdings, series, new Date(), marketIndex),
+    [holdings, series, marketIndex],
+  )
 
   const watchAnalyses = useMemo(() => {
     const out = new Map<string, ItemAnalysis>()
     for (const w of watchlist) {
       const key = itemKey(w)
       const s = series.get(key) ?? { key, points: [] }
-      out.set(key, analyzeItem(s, w.askingPrice ?? null))
+      out.set(key, analyzeItem(s, w.askingPrice ?? null, new Date(), marketIndex))
     }
     return out
-  }, [watchlist, series])
+  }, [watchlist, series, marketIndex])
 
   const stats = useMemo(() => computePortfolioStats(holdings, holdingAnalyses), [holdings, holdingAnalyses])
   // Stored holdings keep whatever they were parsed as, so an importer fix only

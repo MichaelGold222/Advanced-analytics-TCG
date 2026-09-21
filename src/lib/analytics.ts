@@ -13,6 +13,7 @@ import {
   recencyWeight, rejectOutliers, slope, toISODate,
 } from './stats'
 import { computeForecast } from './forecast'
+import type { MarketIndex } from './marketindex'
 import type {
   Confidence, EntryResult, EntryVerdict, FmvResult, ItemAnalysis, LastSale, PricePoint,
   PriceSeries, RangeResult,
@@ -379,7 +380,12 @@ function slopeOf(xs: number[], ys: number[]): number | null {
  * `askingPrice` is what the user is being quoted; without one we judge the
  * current market against itself using FMV as the reference.
  */
-export function analyzeItem(series: PriceSeries, askingPrice?: number | null, now = new Date()): ItemAnalysis {
+export function analyzeItem(
+  series: PriceSeries,
+  askingPrice?: number | null,
+  now = new Date(),
+  index?: MarketIndex | null,
+): ItemAnalysis {
   const fmv = computeFmv(series, now)
   const reference = askingPrice ?? null
   const range = compute52WeekRange(series, reference ?? fmv.fmv, now)
@@ -389,7 +395,7 @@ export function analyzeItem(series: PriceSeries, askingPrice?: number | null, no
   const entry = computeEntry(fmv, range, series, reference, now)
   // Forecast from what it last went for, the same basis market value uses.
   const lastSale = lastSaleAt(series, now)
-  const forecast = computeForecast(series.points, lastSale?.price ?? fmv.fmv)
+  const forecast = computeForecast(series.points, lastSale?.price ?? fmv.fmv, { index })
   return {
     key: series.key, fmv, range, sixMonthRange, twoYearRange, allTimeRange, entry, referencePrice: reference,
     lastSale,
