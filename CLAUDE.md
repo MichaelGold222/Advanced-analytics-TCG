@@ -645,46 +645,63 @@ save a credit; it would only throw away the sales in the reply.
 Pinned in tests (`what a full refresh costs`), because the ordering is worth
 real money and an innocent-looking edit could reverse it.
 
-### The button does the whole job, including the expensive half
+### The whole history of a card is one call and one credit
 
-"I want it to do it automatically when I hit the button." So **Fetch sold
-comps** now runs three passes, not two:
+Measured, run 31. `get_card_sales?card_id=...` answered with **627 dated
+prices going back years, charged 1 credit**, against the five sales spanning
+six days the bulk endpoints were giving. That is the answer to the yearly
+high, and the backfill is built on it.
 
-1. `get_cert_values_bulk` — prices, `cl_value`, `last_sale_price` (3 credits).
-2. `search_by_certs_bulk` — pictures, deeper sales, and **the card id**
-   (1 credit).
-3. `backfillHistory` — `get_card_sales_detail`, walked page by page, for any
-   card whose record still does not reach back a year.
+**`get_card_sales_detail` is not used.** Asked for page 1 at `limit=200` it
+returned `"sales":[]`, forced `limit:50`, still claimed `has_more:true`, and
+charged the same credit for nothing. Walking it page by page — which is what
+was built before this run — would have spent many credits per card to collect
+thousands of individual sales, in order to compute two numbers.
 
-The third is what makes a yearly high real, and three things stop it running
-away — which matters because **the endpoint's cost has never been measured**:
+**The rows are aggregated, and that is the right thing to ask for.**
+`{date, price, count}`: a price standing for `count` sales. An Umbreon VMAX
+PSA 10 has 21,000 copies and thousands of sales behind it; paying to download
+every one to find a high and a low would be absurd. `count` is carried through
+as `volume`, which the valuation already weights on.
 
-- only cards whose sales do not reach back `WINDOW_DAYS *
-  WINDOW_COVERED_FRACTION` are candidates, so a well-covered collection spends
-  nothing at all;
-- `certDeepFetched` records every cert walked, and history does not get older,
-  so a card is walked exactly once, ever;
-- a refusal is recorded the same way, so an endpoint that is not available is
-  asked once rather than on every refresh forever. A 402 or 429 throws instead,
-  marking nothing done, so the next press resumes where it stopped.
+The cost of that aggregation, which the UI has to keep saying: an averaged
+point **understates a high and overstates a low**. Seven sales averaged to
+$814 may hide one at $1,100. The band is a floor on the true range rather than
+the range itself — still enormously better than five sales over six days, and
+the only version of this that is affordable.
 
-`usableCardId` keeps a call from being spent on one that cannot work: a
-catalogued card carries a Firestore document id, an uncatalogued cert carries
-a 40-character hex hash, and the hash was measured answering "Card with id ...
-not found" while still costing a request.
+`card_id` identifies the **card at a grade, not the slab**: the response comes
+back labelled with a different cert from the one asked about, because every
+PSA 10 of that card shares one history. That is the right unit for a price
+series, and it means two slabs of the same card cost one call between them —
+worth exploiting, and not yet exploited.
 
-`readHistorySales` looks for an array of sales *anywhere* in the response
-rather than assuming a key, because nobody has ever seen this endpoint's
-output — the credits ran out before it could be called once. A shape it cannot
-read returns nothing, so a wrong guess costs the call and nothing else. Pages
-stop early on a short page, an empty page, or a page that repeats the last one
-(an endpoint ignoring `page` would otherwise cost ten calls to teach one
-thing), and `MAX_HISTORY_PAGES` caps the rest. It runs one card at a time: the
-cost is unknown, so it must not discover that it is expensive eight calls at
-once.
+Dates arrive as `MM/DD/YYYY`. `toISODate` handles them; the Python probe did
+not, which is why a run log said "no readable dates" about perfectly readable
+data. Do not trust that phrase from `depth.py` again.
 
-**Untested against the live API.** Everything above is written to fail quietly
-and cheaply, but the first real run is the measurement.
+### The button does the whole job
+
+**Fetch sold comps** runs three passes, and the third is the one above:
+
+1. `search_by_certs_bulk` — 1 credit per 200 certs: sales, `cl_value`, `pop`,
+   pictures, and the card id.
+2. `get_cert_values_bulk` — 3 credits, **only for certs the search could not
+   answer**. Usually none.
+3. `get_card_sales` — 1 credit per card, **only for cards whose record still
+   does not reach back a year**, and **once per card ever**.
+
+So a routine refresh of the whole collection is 3 credits; a first backfill of
+122 slabs is about 122 more, one time. `certDeepFetched` records every cert
+walked — history does not get older, so it is never walked twice — and records
+a refusal the same way, so a dead endpoint is asked once rather than forever.
+A 402 or 429 throws and marks nothing, so the next press resumes where it
+stopped.
+
+`usableCardId` keeps a call from being spent on a cert that cannot work: a
+catalogued card carries a Firestore document id, an uncatalogued one carries a
+40-character hash, and that hash was measured answering "Card with id ... not
+found" while still costing a request.
 
 ### Tracking the highs forward is a cron job, and it was never wired up
 

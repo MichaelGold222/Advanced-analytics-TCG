@@ -72,7 +72,14 @@ interface PersistedState {
    * again. Kept so the button cannot quietly re-spend on a card it already
    * paid for, and so an endpoint that refused is not asked again every time.
    */
-  certDeepFetched: Record<string, { at: string; sales: number; unavailable: boolean }>
+  certDeepFetched: Record<string, {
+    at: string
+    /** Dated price points stored. */
+    sales: number
+    /** Individual sales those points stand for, as the API counted them. */
+    underlying?: number
+    unavailable: boolean
+  }>
   certLastFetched: string | null
   /** Pictures by cert. Fetched once and kept: a photo does not go stale. */
   certImages: Record<string, { image: string | null; thumbnail: string | null }>
@@ -461,7 +468,9 @@ export const useStore = create<AppState>((setState, getState) => ({
       const at = new Date().toISOString()
       for (const h of history) {
         if (h.sales.length > 0) certSales[h.cert] = mergeSalePoints(certSales[h.cert] ?? [], h.sales)
-        certDeepFetched[h.cert] = { at, sales: h.sales.length, unavailable: h.unavailable }
+        certDeepFetched[h.cert] = {
+          at, sales: h.sales.length, unavailable: h.unavailable, underlying: h.underlying,
+        }
       }
       setState({ certSales, certDeepFetched, usage: usage ?? getState().usage })
       scheduleSave(getState())

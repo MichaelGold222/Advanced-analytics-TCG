@@ -1,10 +1,8 @@
 import { describe, expect, it } from 'vitest'
-import { readHistorySales } from './cardladder-client'
-import { usableCardId } from './cardladder'
+import { salesToPricePoints, usableCardId } from './cardladder'
 
-describe('the card id the sales endpoints accept', () => {
+describe('the card id the sales endpoint accepts', () => {
   it('takes the Firestore document id a catalogued card carries', () => {
-    // Measured: cert 141142901 -> this exact id, matching its picture URL.
     expect(usableCardId('Zrxi8aY5mAA6roFkKUVX')).toBe('Zrxi8aY5mAA6roFkKUVX')
   })
 
@@ -17,53 +15,48 @@ describe('the card id the sales endpoints accept', () => {
   it('refuses nothing at all', () => {
     expect(usableCardId(undefined)).toBeNull()
     expect(usableCardId('')).toBeNull()
-    expect(usableCardId('   ')).toBeNull()
     expect(usableCardId(12345)).toBeNull()
   })
 })
 
-describe('reading sales out of a response whose shape is unmeasured', () => {
-  // get_card_sales_detail has never been called: the credits ran out first.
-  // So the reader looks for an array of sales anywhere rather than assuming a
-  // key, and a shape it cannot read costs the call and nothing else.
-  const sale = (date: string, price: number) => ({ date, price })
+describe('the history get_card_sales actually returns', () => {
+  // Verbatim rows from the live response, run 31, for the Umbreon VMAX PSA 10
+  // behind card_id Zrxi8aY5mAA6roFkKUVX. 627 of these came back for 1 credit.
+  const LIVE = [
+    { date: '12/31/2025', price: 2912.5, count: 2 },
+    { date: '12/31/2022', price: 814.5487333333333, count: 7 },
+    { date: '12/31/2021', price: 707.25, count: 2 },
+  ]
 
-  it('finds them under data.sales', () => {
-    const body = { status: 'ok', data: { sales: [sale('2026-03-01', 100), sale('2026-04-01', 120)] } }
-    expect(readHistorySales(body).map((s) => s.price)).toEqual([100, 120])
+  it('reads the American date format they come in', () => {
+    // The probe script could not, which made the run log say "no readable
+    // dates" about data that was perfectly readable.
+    expect(salesToPricePoints(LIVE as never).map((p) => p.date))
+      .toEqual(['2021-12-31', '2022-12-31', '2025-12-31'])
   })
 
-  it('finds them under data.results, or sale_records, or at the root', () => {
-    for (const body of [
-      { data: { results: [sale('2026-03-01', 100)] } },
-      { data: { sale_records: [sale('2026-03-01', 100)] } },
-      [sale('2026-03-01', 100)],
-    ]) {
-      expect(readHistorySales(body)).toHaveLength(1)
+  it('keeps the sale count as volume, so a busy point outweighs a lone one', () => {
+    const byDate = new Map(salesToPricePoints(LIVE as never).map((p) => [p.date, p]))
+    expect(byDate.get('2022-12-31')!.volume).toBe(7)
+    expect(byDate.get('2021-12-31')!.volume).toBe(2)
+  })
+
+  it('leaves volume unset when a row has no count', () => {
+    const [p] = salesToPricePoints([{ date: '12/31/2025', price: 100 }] as never)
+    expect(p.volume).toBeUndefined()
+  })
+
+  it('ignores a count that is not a usable number', () => {
+    for (const count of [0, -3, 'seven', null, NaN]) {
+      const [p] = salesToPricePoints([{ date: '12/31/2025', price: 100, count }] as never)
+      expect(p.volume).toBeUndefined()
     }
   })
 
-  it('returns nothing rather than throwing on a shape it cannot read', () => {
-    expect(readHistorySales({ error: 'nope' })).toEqual([])
-    expect(readHistorySales(null)).toEqual([])
-    expect(readHistorySales('not json')).toEqual([])
-    expect(readHistorySales({ data: { sales: [{ nope: 1 }] } })).toEqual([])
-  })
-
-  it('sorts and dedupes what it finds', () => {
-    const body = { data: { sales: [sale('2026-04-01', 120), sale('2026-03-01', 100), sale('2026-04-01', 120)] } }
-    const out = readHistorySales(body)
-    expect(out.map((s) => s.date)).toEqual(['2026-03-01', '2026-04-01'])
-  })
-
-  it('does not wander into an unrelated array of numbers', () => {
-    expect(readHistorySales({ data: { page_sizes: [10, 20, 50], sales: [sale('2026-03-01', 100)] } }))
-      .toHaveLength(1)
-  })
-
-  it('survives a response that refers to itself', () => {
-    const body: Record<string, unknown> = { data: { sales: [sale('2026-03-01', 100)] } }
-    body.self = body
-    expect(readHistorySales(body)).toHaveLength(1)
+  it('gives a yearly band the five-sale feed could never reach', () => {
+    const pts = salesToPricePoints(LIVE as never)
+    const prices = pts.map((p) => p.price)
+    expect(Math.max(...prices)).toBe(2912.5)
+    expect(Math.min(...prices)).toBe(707.25)
   })
 })

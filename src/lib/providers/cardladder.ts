@@ -130,7 +130,12 @@ export function salesToPricePoints(sales: CardLadderSale[] | undefined): PricePo
     const sig = `${date}|${s.price}`
     if (seen.has(sig)) continue
     seen.add(sig)
-    points.push({ date, price: s.price, source: 'sale', venue: venueOf(s) })
+    // `count` on an aggregated row says how many sales the price stands for.
+    // The valuation already weights on `volume`, so a point backed by seven
+    // sales counts for more than a lone one.
+    const count = (s as { count?: unknown }).count
+    const volume = typeof count === 'number' && Number.isFinite(count) && count > 0 ? count : undefined
+    points.push({ date, price: s.price, source: 'sale', venue: venueOf(s), volume })
   }
   return points.sort((a, b) => a.date.localeCompare(b.date))
 }
