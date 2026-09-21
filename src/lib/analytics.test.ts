@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
-  LISTING_HAIRCUT, SIX_MONTH_DAYS, TREND_FLAT_BAND, analyzeItem, buildSeries, compute52WeekRange, computeEntry, computeFmv, computeRange, computeTrend, lastSaleAt,
+  LISTING_HAIRCUT, SIX_MONTH_DAYS, TREND_FLAT_BAND, analyzeItem, buildSeries, compute52WeekRange,
+  computeEntry, computeFmv, computeRange, computeTrend, gradedPricingNote, lastSaleAt,
 } from './analytics'
 import type { PricePoint, PriceSeries } from './types'
 
@@ -469,5 +470,60 @@ describe('the last completed sale', () => {
     ])
     expect(computeFmv(s, NOW).fmv).toBe(4200)
     expect(lastSaleAt(s, NOW)!.price).toBe(9900)
+  })
+})
+
+describe('what a graded card is told about its own pricing', () => {
+  const day = 86_400_000
+  const END = Date.UTC(2026, 8, 21)
+  const at = (d: number) => new Date(END - d * day).toISOString().slice(0, 10)
+  const NOW = new Date(END)
+
+  const psa10 = { grade: 10, cert: '93083876' }
+  /** A provider quote for an ungraded copy, which is all the feed ever has. */
+  const RAW_QUOTE: PriceSeries['quote'] = { market: 900, currency: 'USD', provider: 'pokemontcg.io' }
+
+  const analyse = (points: PricePoint[], quote?: PriceSeries['quote']) =>
+    analyzeItem(
+      { key: 'k', points, quote, quoteExcluded: !!quote },
+      null, NOW, { withForecast: false },
+    )
+
+  const SALES: PricePoint[] = [
+    { date: at(200), price: 20000, source: 'sale' },
+    { date: at(120), price: 22000, source: 'sale' },
+    { date: at(40), price: 24000, source: 'sale' },
+  ]
+
+  it('says nothing at all when the card is priced from its own grade', () => {
+    expect(gradedPricingNote(psa10, analyse(SALES))).toBeNull()
+  })
+
+  it('stays quiet even when a raw quote is also hanging about', () => {
+    // The quote is excluded, but the sold comps are doing the work, so there
+    // is nothing to explain and the old note was simply wrong here.
+    const note = gradedPricingNote(psa10, analyse(SALES, RAW_QUOTE))
+    expect(note).toBeNull()
+  })
+
+  it('names the cert and the button when no comps have been fetched', () => {
+    const note = gradedPricingNote(psa10, analyse([]))!
+    expect(note).toMatch(/93083876/)
+    expect(note).toMatch(/Fetch sold comps/)
+  })
+
+  it('mentions the raw quote only when one is actually being excluded', () => {
+    expect(gradedPricingNote(psa10, analyse([], RAW_QUOTE))!).toMatch(/raw copy/)
+    expect(gradedPricingNote(psa10, analyse([]))!).not.toMatch(/raw copy/)
+  })
+
+  it('asks for a cert when the card has none', () => {
+    const note = gradedPricingNote({ grade: 10 }, analyse([]))!
+    expect(note).toMatch(/no certificate number/i)
+    expect(note).toMatch(/Cert Number/)
+  })
+
+  it('says nothing about an ungraded card', () => {
+    expect(gradedPricingNote({ grade: null }, analyse([]))).toBeNull()
   })
 })

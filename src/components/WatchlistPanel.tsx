@@ -10,7 +10,7 @@ import { VerdictBadge } from './VerdictBadge'
 import { classify } from '../lib/classify'
 import { money, plainPct, shortDate } from '../lib/format'
 import { itemKey } from '../lib/key'
-import { GRADED_QUOTE_NOTE } from '../lib/analytics'
+import { gradedPricingNote } from '../lib/analytics'
 import { SelectionBar, TickBox } from './SelectionBar'
 import { useSelection } from '../hooks/useSelection'
 import { rankWatchlist, type RankedItem } from '../lib/ranking'
@@ -239,6 +239,8 @@ function BuyCase({ rank }: { rank: RankedItem }) {
 function Reasoning({ item, analysis, rank }: { item: WatchItem; analysis?: ItemAnalysis; rank: RankedItem }) {
   if (!analysis) return <p className="text-sm muted p-2">No analysis yet — refresh prices or import comps.</p>
   const { fmv, range, entry, forecast } = analysis
+  // Said only when something is actually wrong with how this one is priced.
+  const gradedNote = gradedPricingNote(item, analysis)
 
   return (
     <div className="grid gap-5 lg:grid-cols-3 p-2">
@@ -246,7 +248,7 @@ function Reasoning({ item, analysis, rank }: { item: WatchItem; analysis?: ItemA
         <h3 className="text-xs font-semibold uppercase tracking-wide secondary mb-2">How the FMV was built</h3>
         <ul className="text-sm space-y-1.5 leading-relaxed">
           {fmv.rationale.map((r) => <li key={r}>· {r}</li>)}
-          {item.grade != null && <li style={{ color: 'var(--serious)' }}>· {GRADED_QUOTE_NOTE}</li>}
+          {gradedNote && <li style={{ color: 'var(--serious)' }}>· {gradedNote}</li>}
         </ul>
         {fmv.contributors.length > 0 && (
           <table className="data w-full mt-3">

@@ -185,6 +185,24 @@ Worth knowing: `costBasis` claims "Entry Price", so a watchlist using that
 header to mean "the price I would pay" has it set aside rather than read as a
 target. The log now names it, which is how anyone would find out.
 
+### The graded note was shown to every graded card
+
+`GRADED_QUOTE_NOTE` was rendered on `item.grade != null` alone, so a PSA 10
+priced correctly from its own certificate's sales was still told that "the
+available market quote prices a raw card, so it is excluded from FMV" — untrue
+when no quote existed, and read as an explanation for the grade being ignored
+when it was not being ignored at all.
+
+`gradedPricingNote` now says one of three things and otherwise says nothing:
+priced from its own grade's sales (silence), graded with no cert (ask for the
+column), or graded with a cert and no comps fetched (name the cert and the
+button). The raw-quote clause is added only when a quote is genuinely being
+excluded.
+
+A graded card shows no sold comps until **Fetch sold comps** has run for its
+cert. That is the whole answer to "it is not using PSA 10 sales" — the sales
+are fetched per certificate and nothing fetches them on import.
+
 ### A variation is a different card
 
 `itemKey` includes the variation. Shadowless and Unlimited Base Set Charizard

@@ -461,6 +461,42 @@ export function buildSeries(
 export const GRADED_QUOTE_NOTE =
   'Graded copy: the available market quote prices a raw card, so it is shown for reference but excluded from FMV. Add your own sold comps for a grade-accurate value.'
 
+/**
+ * What to say about a graded card's pricing, or nothing when all is well.
+ *
+ * The note above used to be shown for every graded item, whether or not a raw
+ * quote existed and whether or not the card had a full set of sold comps at its
+ * own grade. So a PSA 10 priced correctly from its own certificate's sales was
+ * told that the available quote prices a raw card — which was not true, and
+ * read as an explanation for why the grade was being ignored when it was not
+ * being ignored at all.
+ *
+ * Three states, three different things to say, and silence when there is
+ * nothing wrong.
+ */
+export function gradedPricingNote(
+  item: { grade?: number | null; cert?: string },
+  analysis: ItemAnalysis,
+): string | null {
+  if (item.grade == null) return null
+
+  const soldComps = analysis.fmv.contributors.filter((c) => c.source === 'sale').length
+
+  // Priced from its own grade's sales. Nothing to explain.
+  if (soldComps > 0) return null
+
+  if (!item.cert) {
+    return 'Graded, but with no certificate number, so its own sales cannot be found. '
+      + 'Add a Cert Number column to the sheet — a graded card is priced from sales of that exact slab.'
+  }
+
+  return `No sold comps fetched for cert ${item.cert} yet, so this is not yet priced at its grade. `
+    + 'Press "Fetch sold comps" in Data & settings.'
+    + (analysis.quoteExcluded
+      ? ' The figure shown is a market quote for a raw copy, kept for reference and excluded from FMV.'
+      : '')
+}
+
 function pct(x: number): string {
   return `${(x * 100).toFixed(1)}%`
 }
