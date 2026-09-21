@@ -552,17 +552,34 @@ jobs:
               python3 -c "
           import json, re
           d = json.load(open('cards.json'))
-          hits = []
+          # Print what came back BEFORE judging it. The previous version
+          # reported "0 card ids" and showed nothing else, which is
+          # indistinguishable from an empty result, a renamed field and a
+          # response shape nobody guessed.
+          print('   top-level keys:', sorted(d) if isinstance(d, dict) else type(d).__name__)
+          data = d.get('data') if isinstance(d, dict) else None
+          if isinstance(data, dict):
+              print('   data keys:', sorted(data))
+              for k, v in data.items():
+                  if isinstance(v, list):
+                      print('   data.%s: %d entries' % (k, len(v)))
+                      if v: print('     first:', json.dumps(v[0])[:400])
+          print('   raw:', json.dumps(d)[:500])
+          hits, ids = [], []
           def walk(n):
               if isinstance(n, dict):
-                  i = n.get('id')
-                  if isinstance(i, str) and not re.fullmatch(r'[0-9a-f]{40}', i):
-                      hits.append((i, str(n.get('label') or n.get('name') or '')[:95]))
+                  for key in ('id', 'card_id', 'cardId', 'slug'):
+                      i = n.get(key)
+                      if isinstance(i, str) and i:
+                          ids.append((key, i))
+                          if not re.fullmatch(r'[0-9a-f]{40}', i):
+                              hits.append((i, str(n.get('label') or n.get('name') or '')[:95]))
                   for v in n.values(): walk(v)
               elif isinstance(n, list):
                   for v in n[:40]: walk(v)
           walk(d)
-          print('   card ids found:', len(hits))
+          print('   every id-ish value seen:', ids[:12] or 'none')
+          print('   usable card ids:', len(hits))
           for i, label in hits[:12]:
               print('    ', i, '|', label)
           open('found.txt','w').write(chr(10).join(i for i, _ in hits[:12]))
