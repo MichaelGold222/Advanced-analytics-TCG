@@ -4,6 +4,7 @@ import {
   rowsToWatchItems,
 } from './ingest'
 import type { Cell, RawSheet } from './ingest'
+import { itemKey } from './key'
 
 const sheet = (rows: Cell[][], name = 'Portfolio'): RawSheet => ({ name, rows })
 
@@ -569,5 +570,58 @@ describe('a workbook tab does not overrule the button either', () => {
     const file = new File([rows.map((r) => r.join(',')).join('\n')], 'my collection.csv', { type: 'text/csv' })
     const r = await importWorkbook(file, 'watchlist')
     expect(r.routed).toEqual([{ sheet: 'my collection', to: 'watchlist' }])
+  })
+})
+
+describe('columns a grader’s export carries', () => {
+  const sheetOf = (headers: Cell[], ...rows: Cell[][]): RawSheet =>
+    ({ name: 'Watchlist', rows: [headers, ...rows] })
+
+  it('reads Subject as the card name when nothing better is there', () => {
+    const r = rowsToWatchItems(sheetOf(
+      ['Subject', 'Variation', 'Population', 'Asking Price'],
+      ['Charizard', 'Shadowless', 1834, 24000],
+    ))
+    expect(r.items[0].name).toBe('Charizard')
+    expect(r.unmappedHeaders).toEqual([])
+  })
+
+  it('lets an explicit name column win, and does not call Subject unreadable', () => {
+    const r = rowsToWatchItems(sheetOf(
+      ['Card Name', 'Subject', 'Variation', 'Population'],
+      ['Charizard', 'Charizard Holo', 'Shadowless', 1834],
+    ))
+    expect(r.items[0].name).toBe('Charizard')
+    // A second column of a kind already taken is understood, just not needed.
+    expect(r.unmappedHeaders).not.toContain('Subject')
+    expect(r.ignoredHeaders).toContain('Subject')
+  })
+
+  it('keeps the variation and the population on the item', () => {
+    const r = rowsToWatchItems(sheetOf(
+      ['Card Name', 'Variation', 'Population'],
+      ['Charizard', 'Shadowless', 1834],
+    ))
+    expect(r.items[0].variation).toBe('Shadowless')
+    expect(r.items[0].population).toBe(1834)
+  })
+
+  it('gives two printings of one card separate identities', () => {
+    const r = rowsToHoldings({
+      name: 'Portfolio',
+      rows: [
+        ['Card Name', 'Set', 'Card Number', 'Condition', 'Variation', 'Cost Basis'],
+        ['Charizard', 'Base Set', '4', 'PSA 10', 'Shadowless', 40000],
+        ['Charizard', 'Base Set', '4', 'PSA 10', 'Unlimited', 12000],
+      ],
+    })
+    expect(r.items).toHaveLength(2)
+    const keys = r.items.map((h) => itemKey(h))
+    expect(new Set(keys).size).toBe(2)
+  })
+
+  it('still flags a header that matches nothing at all', () => {
+    const r = rowsToWatchItems(sheetOf(['Card Name', 'Binder Slot'], ['Charizard', 'A3']))
+    expect(r.unmappedHeaders).toEqual(['Binder Slot'])
   })
 })

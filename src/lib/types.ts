@@ -19,6 +19,10 @@ export interface Holding {
   set?: string
   number?: string
   year?: number
+  /** Shadowless, 1st Edition, Reverse Holo — part of what card this is. */
+  variation?: string
+  /** Graded population at this grade, when the sheet carries one. */
+  population?: number
   /** Raw condition text, e.g. "NM", "PSA 10", "CGC 9.5". */
   condition?: string
   grader?: 'PSA' | 'BGS' | 'CGC' | 'SGC' | 'ACE' | 'TAG' | null
@@ -50,6 +54,8 @@ export interface WatchItem {
   set?: string
   number?: string
   year?: number
+  variation?: string
+  population?: number
   condition?: string
   grader?: Holding['grader']
   grade?: number | null

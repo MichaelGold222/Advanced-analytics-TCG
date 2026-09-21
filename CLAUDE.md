@@ -185,6 +185,29 @@ Worth knowing: `costBasis` claims "Entry Price", so a watchlist using that
 header to mean "the price I would pay" has it set aside rather than read as a
 target. The log now names it, which is how anyone would find out.
 
+### A variation is a different card
+
+`itemKey` includes the variation. Shadowless and Unlimited Base Set Charizard
+share a name, a set, a number and a grade, and are worth wildly different
+money; without it they were one item whose price history was the two of them
+interleaved, and `analyzeHoldings` kept only the first.
+
+It is appended only when there is one, so anything imported before this keeps
+the key it had. Graded prices attach through `item.cert` rather than the key
+anyway, so a key change never orphans fetched sales — only `uploadedHistory`,
+`snapshots` and `quotes` are key-addressed, and a re-import rebuilds those.
+
+`Subject` is a low-priority `name` alias, so a grader's export works while an
+explicit name column still wins. `Population` is stored and shown, not yet
+modelled — it is the one genuinely exogenous signal available (a pop count
+climbing is structural downward pressure that no price series contains).
+
+**An unclaimed header is not automatically unknown.** A field claims one column,
+so a sheet with "Card Name" beside "Subject" has two names and can use one.
+`partitionLeftovers` checks the leftovers against every field before calling
+anything unrecognised, because "not recognised" should mean a column might be
+getting missed, and nothing else.
+
 ### Routing a sheet to the right tab
 
 The button the person pressed outranks any guess made from a name. It did not

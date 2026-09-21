@@ -29,7 +29,13 @@ export interface RawSheet {
 
 /** Canonical fields we try to find, best alias first. */
 const FIELD_ALIASES = {
-  name: ['card name', 'item name', 'product name', 'card', 'item', 'product', 'name', 'description', 'title'],
+  name: [
+    'card name', 'item name', 'product name', 'card', 'item', 'product', 'name', 'description',
+    'title',
+    // What a grader's export calls the card. Last, so an explicit name column
+    // always wins when a sheet carries both.
+    'subject', 'player',
+  ],
   set: ['set name', 'expansion', 'set', 'series', 'edition'],
   number: ['card number', 'collector number', 'card no', 'number', 'card #', 'no'],
   year: ['release year', 'year', 'released'],
@@ -64,6 +70,17 @@ const FIELD_ALIASES = {
   segment: ['segment', 'category', 'bucket', 'type', 'class', 'group'],
   language: ['language', 'lang'],
   notes: ['notes', 'note', 'comments', 'comment', 'remarks'],
+  /**
+   * What distinguishes two printings of the same card at the same grade.
+   *
+   * Shadowless, 1st Edition, Reverse Holo, a staff stamp. Part of the identity,
+   * not decoration: a Shadowless Base Charizard and an Unlimited one share a
+   * name, a set, a number and a grade, and are worth wildly different money.
+   * Left out of the key they became one item with one merged price history.
+   */
+  variation: ['variation', 'variety', 'parallel', 'finish', 'printing', 'subset', 'attribute'],
+  /** Graded population for this card at this grade. Recorded, not yet modelled. */
+  population: ['population', 'pop count', 'pop report', 'psa pop', 'pop'],
   askingPrice: ['asking price', 'ask', 'listed price', 'list price', 'offer price', 'seller price'],
   targetPrice: ['target price', 'max price', 'max bid', 'budget', 'target', 'my max'],
   /**
@@ -108,11 +125,28 @@ export function matchesAnyField(header: string, fields: readonly FieldName[]): b
   return fields.some((f) => headerScore(header, FIELD_ALIASES[f]) > 0)
 }
 
-/** Split leftover headers into the ones meant for owners and the puzzles. */
+const ALL_FIELDS = Object.keys(FIELD_ALIASES) as FieldName[]
+
+/**
+ * Split leftover headers into the understood ones and the genuine puzzles.
+ *
+ * Two ways a header ends up unclaimed. It may be one this app has no use for
+ * here — cost on a watchlist, a stated profit anywhere — or it may be a second
+ * column of a kind already taken, since a field claims only one: a sheet with
+ * "Card Name" beside "Subject" has two names and can use one.
+ *
+ * Neither is a fault in the file, and reporting them as unrecognised says the
+ * app could not read something it understands perfectly well. Only a header
+ * matching nothing at all is worth flagging, because only that one might mean
+ * a column is being missed.
+ */
 function partitionLeftovers(leftovers: string[], fields: readonly FieldName[]) {
   const ignored: string[] = []
   const unmapped: string[] = []
-  for (const h of leftovers) (matchesAnyField(h, fields) ? ignored : unmapped).push(h)
+  for (const h of leftovers) {
+    const known = matchesAnyField(h, fields) || matchesAnyField(h, ALL_FIELDS)
+    ;(known ? ignored : unmapped).push(h)
+  }
   return { ignored, unmapped }
 }
 export type ColumnMap = Partial<Record<FieldName, number>>
@@ -252,12 +286,16 @@ function baseFields(row: Cell[], map: ColumnMap) {
   const cert = toText(get('cert'))?.replace(/\s+/g, '')
   const year = toYear(get('year'))
   const notes = toText(get('notes'))
+  const variation = toText(get('variation'))
+  const population = toNumber(get('population'))
   const override = parseSegment(get('segment'))
   const cls = classify({ name, set, number, year, notes, override })
   return {
     name,
     set,
     number,
+    variation,
+    population: population ?? undefined,
     condition,
     grader,
     grade,
@@ -312,7 +350,10 @@ export function rowsToHoldings(sheet: RawSheet): ImportResult<Holding> {
     const quantity = toNumber(f.get('quantity')) ?? 1
     const costBasis = perUnitCost(f.get('costBasis'), f.get('investment'), quantity)
     const userPrice = toNumber(f.get('userPrice'))
-    const key = itemKey({ name: f.name, set: f.set, number: f.number, grader: f.grader, grade: f.grade })
+    const key = itemKey({
+      name: f.name, set: f.set, number: f.number, variation: f.variation,
+      grader: f.grader, grade: f.grade,
+    })
 
     items.push({
       id: `${key}#${r}`,
@@ -320,6 +361,8 @@ export function rowsToHoldings(sheet: RawSheet): ImportResult<Holding> {
       set: f.set,
       number: f.number,
       year: f.year,
+      variation: f.variation,
+      population: f.population,
       condition: f.condition,
       grader: f.grader,
       grade: f.grade,
@@ -438,13 +481,18 @@ export function rowsToWatchItems(sheet: RawSheet): ImportResult<WatchItem> {
     if (!row || row.every((c) => c == null || c === '')) continue
     const f = baseFields(row, map)
     if (!f.name) continue
-    const key = itemKey({ name: f.name, set: f.set, number: f.number, grader: f.grader, grade: f.grade })
+    const key = itemKey({
+      name: f.name, set: f.set, number: f.number, variation: f.variation,
+      grader: f.grader, grade: f.grade,
+    })
     items.push({
       id: `${key}#w${r}`,
       name: f.name,
       set: f.set,
       number: f.number,
       year: f.year,
+      variation: f.variation,
+      population: f.population,
       condition: f.condition,
       grader: f.grader,
       grade: f.grade,
@@ -525,7 +573,10 @@ export function rowsToPriceHistory(sheet: RawSheet): Record<string, PricePoint[]
     const date = toDate(row[dateCol])
     const price = toNumber(row[priceCol])
     if (!f.name || !date || price == null || price <= 0) continue
-    const key = itemKey({ name: f.name, set: f.set, number: f.number, grader: f.grader, grade: f.grade })
+    const key = itemKey({
+      name: f.name, set: f.set, number: f.number, variation: f.variation,
+      grader: f.grader, grade: f.grade,
+    })
     ;(out[key] ??= []).push({
       date,
       price,

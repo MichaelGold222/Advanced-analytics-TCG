@@ -149,7 +149,11 @@ export function WatchlistPanel({
                       <td className="num tabular muted">{place ?? '—'}</td>
                       <td>
                         <div className="font-medium">{w.name}</div>
-                        <div className="text-xs muted">{[w.set, w.number && `#${w.number}`, w.condition, w.cert && `cert ${w.cert}`].filter(Boolean).join(' · ') || '—'}</div>
+                        <div className="text-xs muted">{[
+                          w.set, w.number && `#${w.number}`, w.variation, w.condition,
+                          w.population != null ? `pop ${w.population}` : null,
+                          w.cert && `cert ${w.cert}`,
+                        ].filter(Boolean).join(' · ') || '—'}</div>
                       </td>
                       <td><SegmentPicker value={w.segmentOverride ?? null} inferred={inferred} onChange={(s) => onOverride(w.id, s)} /></td>
                       <td className="num">

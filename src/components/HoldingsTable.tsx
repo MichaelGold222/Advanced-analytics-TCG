@@ -140,7 +140,11 @@ export function HoldingsTable({
                       <div className="min-w-0">
                         <div className="font-medium">{h.name}</div>
                         <div className="text-xs muted">
-                          {[h.set, h.number && `#${h.number}`, h.condition, h.year, h.cert && `cert ${h.cert}`].filter(Boolean).join(' · ') || '—'}
+                          {[
+                            h.set, h.number && `#${h.number}`, h.variation, h.condition, h.year,
+                            h.population != null ? `pop ${h.population}` : null,
+                            h.cert && `cert ${h.cert}`,
+                          ].filter(Boolean).join(' · ') || '—'}
                         </div>
                       </div>
                     </div>
