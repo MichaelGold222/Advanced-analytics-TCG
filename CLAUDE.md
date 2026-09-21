@@ -49,6 +49,15 @@ Measured against the live API, not read from documentation. Re-measure with
 `.github/workflows/api-check.yml` (Actions → Price API check → Run workflow)
 rather than assuming any of it still holds.
 
+**Every run of that check spends the owner's credits, and the plan is 200 a
+month.** Four runs in ten minutes emptied the balance and left ~60 slabs
+unpriceable until the reset. Roughly half of that went on the picture steps,
+re-asking questions run 27 had already answered and recorded in this file —
+paid for twice, for nothing. So: read this section before asking the API
+anything, batch every open question into ONE run, and pick the probes with the
+`probes` input, which now defaults to prices only. The picture answers are
+settled and do not need asking again.
+
 **Allowances, and which one bites first.** The plan is 200 credits and **100
 requests a day**, with a burst of 30 refilling at 5 a minute. Requests run out
 first, so the client is tuned to spend few of them: a collection is split into
