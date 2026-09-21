@@ -389,16 +389,29 @@ jobs:
           echo "=== what the bulk price call already gave us ==="
           [ -s bulk.json ] && python3 depth.py bulk.json get_cert_values_bulk recent_sales || echo "  no bulk.json"
 
-          echo
-          echo "=== does the bulk SEARCH carry deeper history? (1 credit, 200 certs) ==="
-          [ -s blk.json ] && python3 depth.py blk.json search_by_certs_bulk recent_sales || echo "  no blk.json"
 
+          # get_cert_full_profile is NOT called here. It costs 10 credits and
+          # its answer is already recorded: five sale_records, the same five
+          # the bulk calls give. Asking again is paying twice for a settled
+          # fact, which is how the balance was emptied last time.
+          #
+          # The bulk search IS called, for 1 credit, because it is the only
+          # place the card id comes from and this step must not depend on the
+          # picture probes having been run.
           echo
-          echo "=== the per-cert profile ==="
-          curl -sS -m 120 -o prof2.json -H "X-API-Key: $KEY" \
-            "$BASE/scraper/$SCR/get_cert_full_profile?cert_number=$ONE&grading_company=$GRADER" || true
-          python3 depth.py prof2.json 'profile sale_records' sale_records
-          python3 depth.py prof2.json 'profile recent_sales' recent_sales
+          echo "=== bulk search, for the card id (1 credit) ==="
+          python3 -c "
+          import json, os
+          certs = [c.strip() for c in os.environ['CERT'].replace(chr(10), ',').split(',') if c.strip()]
+          json.dump({'certs': [{'cert_number': c, 'grading_company': os.environ['GRADER']} for c in certs]},
+                    open('req2.json', 'w'))
+          "
+          code=$(curl -sS -m 300 -o blk.json -w '%{http_code}' -D blk.head \
+            -X POST -H "X-API-Key: $KEY" -H 'Content-Type: application/json' \
+            -d @req2.json "$BASE/scraper/$SCR/search_by_certs_bulk" || echo 000)
+          echo "  HTTP $code"
+          tr -d '\r' < blk.head | grep -iE '^x-credits' | sed 's/^/  /' || true
+          python3 depth.py blk.json 'search recent_sales' recent_sales
 
           echo
           echo "=== get_card_sales: what does it take? ==="
@@ -460,7 +473,7 @@ jobs:
                   elif re.search(r'(^|_)id$', path.rsplit('/', 1)[-1], re.I):
                       note(path, node, False)
 
-          for f in ('blk.json', 'prof2.json', 'bulk.json'):
+          for f in ('blk.json', 'bulk.json'):
               try:
                   scan(f, json.load(open(f)))
               except Exception as e:
