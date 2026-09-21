@@ -30,7 +30,7 @@
  * `computeForecast` returns null rather than guess when a card is too thin.
  */
 import { clamp, daysBetween, mean, median, stdev } from './stats'
-import type { PricePoint } from './types'
+import type { ForecastResult, PricePoint } from './types'
 
 /** Below this many usable returns, a forecast would be arithmetic on noise. */
 export const MIN_RETURNS_FOR_FORECAST = 4
@@ -125,27 +125,6 @@ function seededRandom(seed: number): () => number {
   }
 }
 
-export interface ForecastBand {
-  horizonDays: number
-  /** 10th, 50th and 90th percentile of the simulated price. */
-  low: number
-  mid: number
-  high: number
-  /** Chance the price ends above where it started. */
-  chanceUp: number
-}
-
-export interface ForecastResult {
-  from: number
-  volatility: number
-  /** True when volatility leant mostly on the segment prior, not this card. */
-  shrunk: boolean
-  driftPerYear: number
-  sampleSize: number
-  bands: ForecastBand[]
-  rationale: string[]
-}
-
 /**
  * Simulate forward by resampling the card's own moves.
  *
@@ -213,7 +192,7 @@ export function computeForecast(
     `Built from ${returns.length} price moves on this card, resampled rather than assumed to be bell-shaped.`,
     weight < 0.5
       ? `Its own history is thin, so volatility of ${Math.round(volatility * 100)}% leans mostly on what its segment typically does.`
-      : `Volatility of ${Math.round(volatility * 100)}% a year, measured from this card and pulled slightly toward its segment.`,
+      : `Volatility of ${Math.round(volatility * 100)}% a year across its whole history, pulled slightly toward its segment. The entry call quotes the last year alone, so the two figures differ.`,
     Math.abs(rawDrift) > Math.abs(driftPerDay)
       ? 'The measured trend was too steep to carry forward and has been capped.'
       : `Trend of ${(driftPerDay * 365 * 100).toFixed(0)}% a year, taken as the median of every pair of sales.`,

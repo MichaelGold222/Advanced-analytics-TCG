@@ -1,6 +1,8 @@
 import { Fragment, useMemo, useState } from 'react'
 import { ChevronDown, ChevronRight, Plus, Trash2 } from 'lucide-react'
 import { PriceCell } from './PriceCell'
+import { ForecastBands } from './ForecastBands'
+import { MIN_RETURNS_FOR_FORECAST } from '../lib/forecast'
 import { RangeMeter } from './RangeMeter'
 import { SegmentPicker } from './SegmentPicker'
 import { UploadZone } from './UploadZone'
@@ -9,7 +11,7 @@ import { classify } from '../lib/classify'
 import { money, plainPct, shortDate } from '../lib/format'
 import { itemKey } from '../lib/key'
 import { GRADED_QUOTE_NOTE } from '../lib/analytics'
-import type { ItemAnalysis, Segment, WatchItem } from '../lib/types'
+import type { ItemAnalysis, RangeResult, Segment, WatchItem } from '../lib/types'
 
 interface Props {
   watchlist: WatchItem[]
@@ -162,7 +164,7 @@ export function WatchlistPanel({ watchlist, analyses, onAdd, onRemove, onOverrid
 
 function Reasoning({ item, analysis }: { item: WatchItem; analysis?: ItemAnalysis }) {
   if (!analysis) return <p className="text-sm muted p-2">No analysis yet — refresh prices or import comps.</p>
-  const { fmv, range, entry } = analysis
+  const { fmv, range, entry, forecast } = analysis
 
   return (
     <div className="grid gap-5 lg:grid-cols-3 p-2">
@@ -192,12 +194,21 @@ function Reasoning({ item, analysis }: { item: WatchItem; analysis?: ItemAnalysi
       </div>
 
       <div>
-        <h3 className="text-xs font-semibold uppercase tracking-wide secondary mb-2">The 52-week band</h3>
+        <h3 className="text-xs font-semibold uppercase tracking-wide secondary mb-2">Where it has traded</h3>
+        <table className="w-full text-sm mb-2">
+          <thead>
+            <tr><th>Window</th><th className="num">Low</th><th className="num">High</th></tr>
+          </thead>
+          <tbody>
+            <BandRow label="6 months" r={analysis.sixMonthRange} />
+            <BandRow label="1 year" r={range} />
+            <BandRow label="2 years" r={analysis.twoYearRange} />
+            <BandRow label="All time" r={analysis.allTimeRange} />
+          </tbody>
+        </table>
         <dl className="text-sm space-y-1.5">
-          <Row label="Yearly high" value={money(range.high)} />
-          <Row label="Yearly low" value={money(range.low)} />
-          <Row label="Position in band" value={range.position == null ? '—' : plainPct(range.position, 0)} />
-          <Row label="History covered" value={`${Math.round(range.coverageDays)} days · ${range.sampleSize} points`} />
+          <Row label="Position in the year's band" value={range.position == null ? '—' : plainPct(range.position, 0)} />
+          <Row label="History covered" value={`${Math.round(analysis.allTimeRange.coverageDays)} days · ${analysis.allTimeRange.sampleSize} points`} />
           <Row label="Reliability" value={range.estimated ? 'Estimated — thin history' : 'Measured'} />
         </dl>
       </div>
@@ -208,14 +219,37 @@ function Reasoning({ item, analysis }: { item: WatchItem; analysis?: ItemAnalysi
           <Row label="Good entry at or below" value={money(entry.entryPrice)} />
           <Row label="Stretch bid" value={money(entry.stretchEntry)} />
           <Row label="Discount required" value={plainPct(entry.requiredDiscount, 0)} />
-          <Row label="Volatility (annualized)" value={entry.volatility == null ? '—' : plainPct(entry.volatility, 0)} />
+          <Row label="Volatility (last year)" value={entry.volatility == null ? '—' : plainPct(entry.volatility, 0)} />
           <Row label="90-day trend" value={entry.momentum90d == null ? '—' : plainPct(entry.momentum90d, 1)} />
         </dl>
         <ul className="text-sm space-y-1.5 leading-relaxed">
           {entry.rationale.map((r) => <li key={r}>· {r}</li>)}
         </ul>
       </div>
+
+      <div className="lg:col-span-3">
+        <h3 className="text-xs font-semibold uppercase tracking-wide secondary mb-2">What it might do</h3>
+        {forecast
+          ? <ForecastBands forecast={forecast} />
+          : (
+            <p className="text-sm secondary leading-relaxed">
+              Not enough price moves on record to model this one. It needs at least
+              {' '}{MIN_RETURNS_FOR_FORECAST + 1} sales at different dates; anything less would be arithmetic on
+              noise dressed up as a forecast.
+            </p>
+          )}
+      </div>
     </div>
+  )
+}
+
+function BandRow({ label, r }: { label: string; r: RangeResult }) {
+  return (
+    <tr>
+      <td className="secondary">{label}</td>
+      <td className="num tabular">{r.low == null ? '—' : money(r.low)}</td>
+      <td className="num tabular">{r.high == null ? '—' : money(r.high)}</td>
+    </tr>
   )
 }
 

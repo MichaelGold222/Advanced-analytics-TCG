@@ -161,6 +161,7 @@ describe('what drives market value', () => {
     allTimeRange: EMPTY_RANGE,
     lastSale: lastSale == null ? null : { price: lastSale, date: '2026-09-18', venue: 'ebay', ageDays: 1 },
     entry: {} as never,
+    forecast: null,
     referencePrice: null,
   })
 
@@ -187,6 +188,7 @@ describe('a value typed in by hand', () => {
     allTimeRange: EMPTY_RANGE,
     lastSale: last == null ? null : { price: last, date: '2026-09-18', venue: 'ebay', ageDays: 1 },
     entry: {} as never,
+    forecast: null,
     referencePrice: null,
   })
 

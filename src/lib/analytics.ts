@@ -12,6 +12,7 @@ import {
   annualizedVolatility, clamp, clamp01, daysAgo, daysBetween, mad, mean, median, percentile,
   recencyWeight, rejectOutliers, slope, toISODate,
 } from './stats'
+import { computeForecast } from './forecast'
 import type {
   Confidence, EntryResult, EntryVerdict, FmvResult, ItemAnalysis, LastSale, PricePoint,
   PriceSeries, RangeResult,
@@ -386,9 +387,13 @@ export function analyzeItem(series: PriceSeries, askingPrice?: number | null, no
   const twoYearRange = computeRange(series, reference ?? fmv.fmv, now, TWO_YEAR_DAYS)
   const allTimeRange = computeRange(series, reference ?? fmv.fmv, now, ALL_TIME_DAYS)
   const entry = computeEntry(fmv, range, series, reference, now)
+  // Forecast from what it last went for, the same basis market value uses.
+  const lastSale = lastSaleAt(series, now)
+  const forecast = computeForecast(series.points, lastSale?.price ?? fmv.fmv)
   return {
     key: series.key, fmv, range, sixMonthRange, twoYearRange, allTimeRange, entry, referencePrice: reference,
-    lastSale: lastSaleAt(series, now),
+    lastSale,
+    forecast,
     quote: series.quote, quoteExcluded: series.quoteExcluded,
   }
 }

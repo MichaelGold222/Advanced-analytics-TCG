@@ -167,6 +167,27 @@ export interface LastSale {
   ageDays: number
 }
 
+export interface ForecastBand {
+  horizonDays: number
+  /** 10th, 50th and 90th percentile of the simulated price. */
+  low: number
+  mid: number
+  high: number
+  /** Chance the price ends above where it started. */
+  chanceUp: number
+}
+
+export interface ForecastResult {
+  from: number
+  volatility: number
+  /** True when volatility leant mostly on the segment prior, not this card. */
+  shrunk: boolean
+  driftPerYear: number
+  sampleSize: number
+  bands: ForecastBand[]
+  rationale: string[]
+}
+
 export interface ItemAnalysis {
   key: string
   fmv: FmvResult
@@ -180,6 +201,8 @@ export interface ItemAnalysis {
   allTimeRange: RangeResult
   /** The most recent completed sale, shown beside market value. */
   lastSale: LastSale | null
+  /** Simulated range ahead, or null where the history is too thin to model. */
+  forecast: ForecastResult | null
   entry: EntryResult
   referencePrice: number | null
   /** The provider's live quote, whether or not it fed the valuation. */
