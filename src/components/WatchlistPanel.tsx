@@ -336,13 +336,22 @@ function Reasoning({
           </tbody>
         </table>
         {!range.coversWindow && range.sampleSize > 0 && (
+          <>
           <p className="text-xs muted mb-2">
-            Only {Math.round(range.coverageDays)} days of sales are on record — the oldest is
-            from {range.oldest}. Every window above therefore rests on the same{' '}
-            {range.sampleSize} sale{range.sampleSize === 1 ? '' : 's'}, and none of them is
-            a 52-week high. The graded feed returns the newest few sales per slab, so the
-            record deepens each time it is fetched.
+            <strong>This app has {range.sampleSize} sale{range.sampleSize === 1 ? '' : 's'} for
+            this card</strong>, the oldest from {range.oldest} — {Math.round(range.coverageDays)}{' '}
+            days. That is a limit of how the prices are fetched, not of what the card has
+            done: the bulk endpoint returns only the newest few sales per slab, and Card
+            Ladder itself holds far more. So every window above rests on those same{' '}
+            {range.sampleSize}, and none of them is a real 52-week high.
           </p>
+          <p className="text-xs muted mb-2">
+            To get the true high, put the fuller history into a sheet — any card with a
+            dated price column — and upload it. Dated prices from your own sheet now build
+            the band for the months these sales do not reach. Refreshing also deepens the
+            record over time, but only as fast as the card trades.
+          </p>
+          </>
         )}
         <dl className="text-sm space-y-1.5">
           <Row label="Position in the year's band" value={range.position == null ? '—' : plainPct(range.position, 0)} />

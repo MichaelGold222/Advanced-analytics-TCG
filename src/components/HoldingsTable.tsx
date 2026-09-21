@@ -242,7 +242,7 @@ function CoverageNote({ range }: { range: RangeResult }) {
     <div
       className="text-[11px]"
       style={{ color: 'var(--warn, var(--text-muted))' }}
-      title={`${range.sampleSize} sale${range.sampleSize === 1 ? '' : 's'} on record, the oldest from ${range.oldest}. Nothing older is on file, so this is the high and low of ${days} days rather than of the full window.`}
+      title={`This app has ${range.sampleSize} sale${range.sampleSize === 1 ? '' : 's'} for this card, the oldest from ${range.oldest}. That is a limit of how prices are fetched — the bulk endpoint returns only the newest few per slab and Card Ladder holds more — not a statement that nothing older happened. So this is the high and low of ${days} days rather than of the full window. Upload a sheet with dated prices to fill in the rest.`}
     >
       {days === 0 ? 'one day only' : `${days} days of sales`}
     </div>
