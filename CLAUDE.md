@@ -222,6 +222,31 @@ deleted freely and the prices are still there when the right sheet arrives.
 "Clear all data" is none of these: it takes the snapshots and the photographs
 with it.
 
+### Stored state is older than the code
+
+`hydrate` runs `migrate()` over whatever came back from IndexedDB, filling in
+fields that did not exist when it was written. Do that for any new array or
+object field, and never spread saved state in raw.
+
+This is not hypothetical. Adding `ignoredHeaders` to the import log looked
+purely additive, but every returning owner had log entries saved without it,
+`e.ignoredHeaders.length` threw during render, React unmounted the tree, and
+Data & settings was a black page. The data was untouched the whole time; only
+the drawing of it failed.
+
+Two reasons it got all the way to a person: every browser test starts from
+empty storage, so no test had old-format state in it, and there was no error
+boundary, so one bad read blanked everything rather than one panel.
+
+`ErrorBoundary` now wraps the tab content, keyed by tab. `vite.config.ts`
+includes `*.test.tsx` so components can be rendered and asserted on — added
+for the boundary, because what it draws is the only thing between a bad render
+and a blank page.
+
+**To reproduce this class of bug:** seed IndexedDB (`advanced-analytics-tcg/v1`)
+with state missing a field the code now reads, reload, and open the tab that
+reads it.
+
 ### A trap worth remembering
 
 `npx tsc --noEmit` at the repo root checks **nothing** — the root tsconfig is

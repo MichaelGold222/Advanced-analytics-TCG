@@ -31,6 +31,10 @@ export default defineConfig({
     // Default to Node; files needing a DOM declare it with a @vitest-environment
     // docblock, which this version honours where environmentMatchGlobs does not.
     environment: 'node',
-    include: ['src/**/*.test.ts', 'scripts/**/*.test.ts'],
+    // .tsx as well, so a component can be rendered and asserted on. The error
+    // boundary is the reason: what it draws when something throws is the only
+    // thing standing between a bad render and a blank page, and that is worth
+    // a test rather than a hope.
+    include: ['src/**/*.test.ts', 'src/**/*.test.tsx', 'scripts/**/*.test.ts'],
   },
 })

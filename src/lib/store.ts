@@ -111,6 +111,40 @@ const EMPTY: PersistedState = {
   certImages: {},
 }
 
+/**
+ * Fill in fields that did not exist when this state was written.
+ *
+ * What comes back from storage was saved by whatever version of this app the
+ * owner last ran, which may be months old and will not have fields added
+ * since. Spreading it in verbatim puts `undefined` where the code expects an
+ * array, and the first component to read `.length` from one throws during
+ * render — which in React unmounts the whole tree and leaves a blank page. An
+ * added field turning every returning user's screen black is a severe result
+ * for a change that looked additive, and the fix belongs here, once, rather
+ * than in every component that reads one of these.
+ */
+function migrate(saved: PersistedState): PersistedState {
+  return {
+    ...saved,
+    holdings: saved.holdings ?? [],
+    watchlist: saved.watchlist ?? [],
+    uploadedHistory: saved.uploadedHistory ?? {},
+    snapshots: saved.snapshots ?? {},
+    quotes: saved.quotes ?? {},
+    certSales: saved.certSales ?? {},
+    certLastFetched: saved.certLastFetched ?? null,
+    certImages: saved.certImages ?? {},
+    importLog: (saved.importLog ?? []).map((e) => ({
+      ...e,
+      mapped: e.mapped ?? {},
+      unmappedHeaders: e.unmappedHeaders ?? [],
+      ignoredHeaders: e.ignoredHeaders ?? [],
+      issues: e.issues ?? [],
+      sheets: e.sheets ?? [],
+    })),
+  }
+}
+
 function persistable(s: AppState): PersistedState {
   return {
     holdings: s.holdings,
@@ -268,7 +302,7 @@ export const useStore = create<AppState>((setState, getState) => ({
   async hydrate() {
     try {
       const saved = await get<PersistedState>(DB_KEY)
-      if (saved) setState({ ...saved, snapshots: purgeGradedSnapshots(saved.snapshots), hydrated: true })
+      if (saved) setState({ ...migrate(saved), snapshots: purgeGradedSnapshots(saved.snapshots), hydrated: true })
       else setState({ hydrated: true })
     } catch {
       setState({ hydrated: true })

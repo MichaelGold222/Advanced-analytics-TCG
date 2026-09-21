@@ -11,6 +11,7 @@ import { SegmentBreakdown } from './components/SegmentBreakdown'
 import { TopHoldings, type HoldingBar } from './components/TopHoldings'
 import { UploadZone } from './components/UploadZone'
 import { ValueTrend } from './components/ValueTrend'
+import { ErrorBoundary } from './components/ErrorBoundary'
 import { MisplacedRows } from './components/MisplacedRows'
 import { WatchlistPanel } from './components/WatchlistPanel'
 import { useTheme } from './hooks/useTheme'
@@ -239,6 +240,9 @@ export default function App() {
           </div>
         )}
 
+        {/* A crash while drawing one tab must not black out the whole app. Keyed
+            by tab so moving to another gives the broken one a fresh start. */}
+        <ErrorBoundary key={tab} label={TABS.find((t) => t.id === tab)?.label}>
         {isEmpty && tab !== 'data' ? (
           <div className="card p-8 max-w-3xl mx-auto mt-6">
             <h2 className="text-xl font-semibold mb-2">Start with your collection sheet</h2>
@@ -366,6 +370,7 @@ export default function App() {
             watchCount={watchlist.length}
           />
         )}
+        </ErrorBoundary>
       </main>
 
       <footer className="max-w-[1400px] mx-auto px-4 py-6 text-xs muted leading-relaxed">
