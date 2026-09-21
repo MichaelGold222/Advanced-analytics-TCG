@@ -40,6 +40,8 @@ export function HistoryGapsPanel({ gaps, total }: { gaps: HistoryGap[]; total: n
 
   const thin = gaps.filter((g) => g.kind === 'shallow' || g.kind === 'both').length
   const fast = gaps.filter((g) => g.kind === 'outpaced' || g.kind === 'both').length
+  const noId = gaps.filter((g) => g.blocked === 'no-card-id').length
+  const fixable = gaps.filter((g) => g.blocked === null && g.kind !== 'outpaced').length
 
   return (
     <section className="card p-4">
@@ -78,6 +80,21 @@ export function HistoryGapsPanel({ gaps, total }: { gaps: HistoryGap[]; total: n
           </li>
         ))}
       </ul>
+
+      {(noId > 0 || fixable > 0) && (
+        <p className="text-xs mt-3" style={{ color: 'var(--serious)' }}>
+          {fixable > 0 && (
+            <><strong>{fixable}</strong> of these can be fixed by pressing Fetch sold comps — a
+            card's whole history is one call and one credit. </>
+          )}
+          {noId > 0 && (
+            <><strong>{noId}</strong> cannot: Card Ladder returned no card id for those
+            certificates, only an internal hash the sales endpoint rejects. Pressing the button
+            spends nothing on them, which is why a refresh can cost two credits and change
+            nothing.</>
+          )}
+        </p>
+      )}
 
       <p className="text-xs muted mt-3">
         Sales lost between refreshes cannot be recovered later — the feed returns only the

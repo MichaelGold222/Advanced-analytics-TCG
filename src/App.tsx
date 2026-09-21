@@ -89,10 +89,14 @@ export default function App() {
       const key = itemKey(item)
       const points = series.get(key)?.points ?? []
       const analysis = holdingAnalyses.get(key) ?? watchAnalyses.get(key)
-      out.push(assessHistory(key, item.name, points, analysis, store.certLastFetched))
+      out.push(assessHistory(key, item.name, points, analysis, store.certLastFetched, new Date(), {
+        cardId: item.cert ? store.certCardIds[item.cert] : undefined,
+        fetched: item.cert ? store.certDeepFetched[item.cert] : undefined,
+      }))
     }
     return out
-  }, [holdings, watchlist, series, holdingAnalyses, watchAnalyses, store.certLastFetched])
+  }, [holdings, watchlist, series, holdingAnalyses, watchAnalyses, store.certLastFetched,
+      store.certCardIds, store.certDeepFetched])
   const historyGaps = useMemo(() => rankGaps(assessed), [assessed])
   const refreshCost = useMemo(() => estimateRefresh({
     certs: [...holdings, ...watchlist].map((i) => i.cert).filter((c): c is string => !!c),

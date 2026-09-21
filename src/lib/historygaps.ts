@@ -53,6 +53,13 @@ export interface HistoryGap {
   /** Sales likely lost since the last fetch, at that cadence. 0 when none. */
   likelyMissed: number
   kind: GapKind
+  /**
+   * Why the one-call history fix cannot run for this card, or null when it
+   * can. A thin card that silently spends nothing is the worst outcome: the
+   * button reports two credits, nothing changes, and there is no way to learn
+   * why without reading the source.
+   */
+  blocked: 'no-card-id' | 'already-fetched' | 'endpoint-refused' | null
   /** 0-1. Higher means the card's numbers are further from trustworthy. */
   severity: number
   /** One sentence, for a person deciding where to spend their evening. */
@@ -93,6 +100,7 @@ export function assessHistory(
   analysis: ItemAnalysis | undefined,
   lastFetched: string | null,
   now = new Date(),
+  backfill: { cardId?: string; fetched?: { unavailable: boolean } } = {},
 ): HistoryGap {
   const trades = tradesOf(points)
   const reachDays = trades.length > 0 ? daysAgo(trades[0].date, now) : 0
@@ -117,10 +125,37 @@ export function assessHistory(
   const paceMiss = safeRefreshDays == null ? 0 : Math.max(0, 1 - safeRefreshDays / 30)
   const severity = Math.min(1, depthMiss * 0.7 + paceMiss * 0.3)
 
+  const blocked: HistoryGap['blocked'] = !shallow
+    ? null
+    : backfill.fetched?.unavailable
+      ? 'endpoint-refused'
+      : backfill.fetched
+        ? 'already-fetched'
+        : backfill.cardId
+          ? null
+          : 'no-card-id'
+
   return {
     key, name, reachDays, sampleSize: trades.length, tradesPerDay: rate,
-    safeRefreshDays, sinceFetchDays, likelyMissed, kind, severity,
-    reason: wordFor(kind, reachDays, trades.length, safeRefreshDays, likelyMissed, analysis),
+    safeRefreshDays, sinceFetchDays, likelyMissed, kind, severity, blocked,
+    reason: wordFor(kind, reachDays, trades.length, safeRefreshDays, likelyMissed, analysis)
+      + blockedWord(blocked),
+  }
+}
+
+/** Said out loud, because a silent skip is indistinguishable from a bug. */
+function blockedWord(blocked: HistoryGap['blocked']): string {
+  switch (blocked) {
+    case 'no-card-id':
+      return ' Its full history cannot be fetched: Card Ladder returned no card id for this'
+        + ' certificate, only an internal hash, which the sales endpoint rejects. That is why'
+        + ' pressing the button spends nothing on it.'
+    case 'already-fetched':
+      return ' Its full history has already been fetched — this is everything Card Ladder holds.'
+    case 'endpoint-refused':
+      return ' The full-history endpoint refused for this card, so it is not asked again.'
+    default:
+      return ''
   }
 }
 
