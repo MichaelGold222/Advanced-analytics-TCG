@@ -27,10 +27,11 @@ on:
         default: PSA
       card_name:
         description: >-
-          A card to look up BY NAME rather than by cert, e.g. "Playing in the
-          Sea Pikachu". The sales history belongs to the card at a grade, not
-          to a slab, so this is the lookup that matters when a cert carries no
-          card id. Used by the depth probe.
+          Cards to look up BY NAME rather than by cert, separated by | — the
+          sales history belongs to the card at a grade, not to a slab, so this
+          is the lookup that matters when a cert carries no card id. Include a
+          term that MUST match, such as Charizard: a zero-hit search proves
+          nothing on its own, since the query may simply be wrong.
         required: false
         default: ''
       probes:
@@ -616,17 +617,26 @@ jobs:
           PY3
 
             printf '\n=== search_cards, by name rather than by cert ===\n'
-            printf '  query: %s\n' "$CARD_NAME"
-            code=$(curl -sS -m 120 -o cards.json -w '%{http_code}' -D cards.head -G \
-              --data-urlencode "query=$CARD_NAME" --data-urlencode "limit=25" \
-              -H "X-API-Key: $KEY" "$BASE/scraper/$SCR/search_cards" || echo 000)
-            echo "  HTTP $code"
-            tr -d '\r' < cards.head | grep -iE '^x-credits-charged' | sed 's/^/  /' || true
-            if [ "$code" = "200" ]; then
-              python3 cards.py || { echo "  reader failed:"; head -c 400 cards.json | sed 's/^/  /'; echo; }
-            else
-              head -c 300 cards.json | sed 's/^/  /'; echo
-            fi
+            # Several queries in one run. A single zero-hit search cannot tell
+            # "this card is not catalogued" from "that is not what it is
+            # called here", and finding out has cost a run each time.
+            printf '%s' "$CARD_NAME" | tr '|' '\n' > queries.txt
+            while IFS= read -r Q; do
+              Q=$(printf '%s' "$Q" | sed 's/^ *//; s/ *$//')
+              [ -n "$Q" ] || continue
+              printf '\n  --- query: %s ---\n' "$Q"
+              code=$(curl -sS -m 120 -o cards.json -w '%{http_code}' -D cards.head -G \
+                --data-urlencode "query=$Q" --data-urlencode "limit=25" \
+                -H "X-API-Key: $KEY" "$BASE/scraper/$SCR/search_cards" || echo 000)
+              echo "  HTTP $code"
+              tr -d '\r' < cards.head | grep -iE '^x-credits-charged' | sed 's/^/  /' || true
+              if [ "$code" = "200" ]; then
+                python3 cards.py || { echo "  reader failed:"; head -c 400 cards.json | sed 's/^/  /'; echo; }
+                if [ -s found.txt ]; then break; fi
+              else
+                head -c 300 cards.json | sed 's/^/  /'; echo
+              fi
+            done < queries.txt
 
             while read -r CID; do
               [ -n "$CID" ] || continue
