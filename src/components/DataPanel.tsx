@@ -341,9 +341,17 @@ export function DataPanel({
                   Mapped: {Object.entries(e.mapped).map(([f, h]) => `${f} ← "${h}"`).join(', ') || 'nothing'}
                 </div>
                 {e.historyPoints > 0 && <div className="text-xs secondary mt-1">{e.historyPoints} historical price points read.</div>}
+                {e.ignoredHeaders.length > 0 && (
+                  <div className="text-xs secondary mt-1">
+                    Set aside: {e.ignoredHeaders.join(', ')} —{' '}
+                    {e.kind === 'watchlist'
+                      ? 'a watchlist is things not bought yet, so what they cost and what they might make do not apply.'
+                      : 'gain is worked out from cost and today\u2019s value rather than read from the sheet.'}
+                  </div>
+                )}
                 {e.unmappedHeaders.length > 0 && (
                   <div className="text-xs mt-1" style={{ color: 'var(--serious)' }}>
-                    Ignored columns: {e.unmappedHeaders.join(', ')}
+                    Not recognised: {e.unmappedHeaders.join(', ')}
                   </div>
                 )}
                 {e.issues.length > 0 && (

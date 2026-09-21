@@ -31,6 +31,8 @@ export interface ImportLogEntry {
   sheets: string[]
   mapped: Record<string, string>
   unmappedHeaders: string[]
+  /** Recognised and set aside on purpose, as opposed to not understood. */
+  ignoredHeaders: string[]
   issues: { row: number; message: string }[]
   historyPoints: number
 }
@@ -284,6 +286,7 @@ export const useStore = create<AppState>((setState, getState) => ({
       const sheets: string[] = []
       const mapped: Record<string, string> = {}
       const unmappedHeaders: string[] = []
+      const ignoredHeaders: string[] = []
       const issues: ImportLogEntry['issues'] = []
 
       for (const r of result.holdings) {
@@ -292,6 +295,7 @@ export const useStore = create<AppState>((setState, getState) => ({
         sheets.push(r.sheetName)
         Object.assign(mapped, r.mapped)
         unmappedHeaders.push(...r.unmappedHeaders)
+        ignoredHeaders.push(...r.ignoredHeaders)
         issues.push(...r.issues)
       }
       for (const r of result.watchlist) {
@@ -300,6 +304,7 @@ export const useStore = create<AppState>((setState, getState) => ({
         sheets.push(r.sheetName)
         Object.assign(mapped, r.mapped)
         unmappedHeaders.push(...r.unmappedHeaders)
+        ignoredHeaders.push(...r.ignoredHeaders)
         issues.push(...r.issues)
       }
 
@@ -316,7 +321,9 @@ export const useStore = create<AppState>((setState, getState) => ({
 
       const entry: ImportLogEntry = {
         at: new Date().toISOString(), file: file.name, kind, imported,
-        sheets: [...new Set(sheets)], mapped, unmappedHeaders: [...new Set(unmappedHeaders)],
+        sheets: [...new Set(sheets)], mapped,
+        unmappedHeaders: [...new Set(unmappedHeaders)],
+        ignoredHeaders: [...new Set(ignoredHeaders)],
         issues: issues.slice(0, 50), historyPoints,
       }
 

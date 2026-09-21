@@ -388,3 +388,66 @@ describe('a sheet with no recognisable cost column', () => {
     expect(items[0].costBasis).toBeGreaterThan(0)
   })
 })
+
+describe('a watchlist built from a holdings template', () => {
+  const watchSheet = (headers: Cell[], row: Cell[]): RawSheet =>
+    ({ name: 'Watchlist', rows: [headers, row] })
+
+  const HEADERS: Cell[] = [
+    'Card Name', 'Set', 'Card Number', 'Condition', 'Graded Cert #',
+    'Investment', 'Potential Profit', 'Asking Price',
+  ]
+  const ROW: Cell[] = ['Charizard', 'Base Set', '4', 'PSA 10', '93083876', 1200, 800, 2400]
+
+  it('does not read what a card cost onto something not yet bought', () => {
+    const r = rowsToWatchItems(watchSheet(HEADERS, ROW))
+    const item = r.items[0] as unknown as Record<string, unknown>
+    expect(item.askingPrice).toBe(2400)
+    // Nothing on a watch item should have picked up 1200 or 800.
+    expect(Object.values(item)).not.toContain(1200)
+    expect(Object.values(item)).not.toContain(800)
+  })
+
+  it('names them as set aside rather than as unreadable', () => {
+    const r = rowsToWatchItems(watchSheet(HEADERS, ROW))
+    expect(r.ignoredHeaders).toContain('Investment')
+    expect(r.ignoredHeaders).toContain('Potential Profit')
+    expect(r.unmappedHeaders).not.toContain('Investment')
+    expect(r.unmappedHeaders).not.toContain('Potential Profit')
+  })
+
+  it('does not claim to have mapped them to anything', () => {
+    const r = rowsToWatchItems(watchSheet(HEADERS, ROW))
+    expect(Object.values(r.mapped)).not.toContain('Investment')
+    expect(Object.values(r.mapped)).not.toContain('Potential Profit')
+    // The columns that do matter are still mapped as before.
+    expect(Object.values(r.mapped)).toContain('Asking Price')
+    expect(Object.values(r.mapped)).toContain('Graded Cert #')
+  })
+
+  it('sets aside the other ways a sheet says the same things', () => {
+    const r = rowsToWatchItems(watchSheet(
+      ['Card Name', 'Cost Basis', 'Purchase Date', 'Unrealized Gain', 'ROI'],
+      ['Lugia', 900, '2024-05-01', 300, 0.33],
+    ))
+    expect(r.unmappedHeaders).toEqual([])
+    expect(r.ignoredHeaders.length).toBeGreaterThanOrEqual(3)
+  })
+
+  it('still reads a genuinely unknown column back to the owner', () => {
+    const r = rowsToWatchItems(watchSheet(
+      [...HEADERS, 'Binder Slot'],
+      [...ROW, 'A3'],
+    ))
+    expect(r.unmappedHeaders).toContain('Binder Slot')
+  })
+
+  it('leaves cost alone on a holdings sheet, where it is the whole point', () => {
+    const r = rowsToHoldings({ name: 'Portfolio', rows: [HEADERS, ROW] })
+    const item = r.items[0] as unknown as Record<string, unknown>
+    expect(item.costBasis).toBe(1200)
+    // A stated profit is still not read: it is computed from cost and value.
+    expect(r.ignoredHeaders).toContain('Potential Profit')
+    expect(Object.values(r.mapped)).not.toContain('Potential Profit')
+  })
+})

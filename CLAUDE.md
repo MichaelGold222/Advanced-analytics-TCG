@@ -163,6 +163,28 @@ fourth:
 Nothing here knows about reprints, grading populations, or sets going in and out
 of fashion. It is a screen over the sales record, and the UI says so.
 
+### Ownership columns on a watchlist
+
+A watchlist is things not bought yet, so cost, purchase date and profit do not
+apply — but sheets carry those columns anyway, because people copy a holdings
+template or their export insists. `OWNERSHIP_FIELDS` in `ingest.ts` names them.
+They are recognised on purpose so they can be set aside and *said* to have been:
+previously "Investment" was silently mapped to a field nothing reads (so the log
+claimed it was in use) and "Potential Profit" came back as unrecognised (so a
+perfectly ordinary header read like a fault in the file).
+
+`profit` is a field only so it can be ignored — on holdings too, where gain is
+computed from cost and today's value rather than read from whatever the market
+was doing the day the cell was typed.
+
+Two of a kind needs the leftover scan, not just the column map: a field claims
+at most one column, so "Unrealized Gain" beside "ROI" left the second looking
+unreadable. `partitionLeftovers` sorts the remainder.
+
+Worth knowing: `costBasis` claims "Entry Price", so a watchlist using that
+header to mean "the price I would pay" has it set aside rather than read as a
+target. The log now names it, which is how anyone would find out.
+
 ### A trap worth remembering
 
 `npx tsc --noEmit` at the repo root checks **nothing** — the root tsconfig is

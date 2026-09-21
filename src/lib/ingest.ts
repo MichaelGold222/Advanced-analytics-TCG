@@ -56,9 +56,55 @@ const FIELD_ALIASES = {
   notes: ['notes', 'note', 'comments', 'comment', 'remarks'],
   askingPrice: ['asking price', 'ask', 'listed price', 'list price', 'offer price', 'seller price'],
   targetPrice: ['target price', 'max price', 'max bid', 'budget', 'target', 'my max'],
+  /**
+   * A profit or return column, recognised so that it can be ignored.
+   *
+   * Nothing reads it. Gain is computed from cost and current value, and a
+   * figure typed into a sheet is a snapshot of whatever the market was doing
+   * the day it was typed. Claiming the column is still worth doing: an
+   * unrecognised header gets listed back at the owner as if something had gone
+   * wrong with their file, and a header this common should not be a puzzle.
+   */
+  profit: [
+    'potential profit', 'unrealized gain', 'unrealised gain', 'unrealized', 'unrealised',
+    'profit loss', 'gain loss', 'profit', 'gain', 'p l', 'roi', 'return', 'upside',
+  ],
 } as const
 
 export type FieldName = keyof typeof FIELD_ALIASES
+
+/**
+ * Fields that describe owning a card, which a watchlist by definition does not.
+ *
+ * A watchlist is things not bought yet, so what they cost, when they were
+ * bought and what they have made are all answers to questions that have not
+ * been asked. Sheets carry the columns anyway — people copy a holdings
+ * template, or their export insists — and the columns are recognised precisely
+ * so they can be set aside on purpose and said to have been, rather than
+ * silently mapped to a field nothing reads or listed back as unrecognised.
+ */
+export const OWNERSHIP_FIELDS = ['costBasis', 'investment', 'purchaseDate', 'profit'] as const
+
+/**
+ * Whether a header is one of the given fields' by any of their names.
+ *
+ * Needed as well as the column map because a field claims at most one column,
+ * and a sheet happily carries two of a kind — "Unrealized Gain" beside "ROI",
+ * "Cost" beside "Total Cost". The map takes the better one and the rest would
+ * otherwise be reported as unreadable, which is the opposite of true: they are
+ * understood perfectly well and are simply not wanted here.
+ */
+export function matchesAnyField(header: string, fields: readonly FieldName[]): boolean {
+  return fields.some((f) => headerScore(header, FIELD_ALIASES[f]) > 0)
+}
+
+/** Split leftover headers into the ones meant for owners and the puzzles. */
+function partitionLeftovers(leftovers: string[], fields: readonly FieldName[]) {
+  const ignored: string[] = []
+  const unmapped: string[] = []
+  for (const h of leftovers) (matchesAnyField(h, fields) ? ignored : unmapped).push(h)
+  return { ignored, unmapped }
+}
 export type ColumnMap = Partial<Record<FieldName, number>>
 
 /** Lower-case, split camelCase, and reduce punctuation to single spaces. */
@@ -160,6 +206,12 @@ export interface ImportResult<T> {
   items: T[]
   /** Headers we could not place, echoed back so nothing vanishes silently. */
   unmappedHeaders: string[]
+  /**
+   * Headers recognised and deliberately set aside — cost, purchase date and
+   * profit on a watchlist, a stated profit anywhere. Kept apart from the
+   * unrecognised ones so "not relevant here" does not read as "unreadable".
+   */
+  ignoredHeaders: string[]
   mapped: Partial<Record<FieldName, string>>
   issues: ImportIssue[]
   priceHistory: Record<string, PricePoint[]>
@@ -228,7 +280,7 @@ export function rowsToHoldings(sheet: RawSheet): ImportResult<Holding> {
   const headerRow = findHeaderRow(sheet.rows)
   if (headerRow < 0) {
     return {
-      items: [], unmappedHeaders: [], mapped: {}, priceHistory: {}, sheetName: sheet.name,
+      items: [], unmappedHeaders: [], ignoredHeaders: [], mapped: {}, priceHistory: {}, sheetName: sheet.name,
       issues: [{ row: 0, message: 'No header row found. Expect a row with at least a card/item name column.' }],
     }
   }
@@ -312,11 +364,24 @@ export function rowsToHoldings(sheet: RawSheet): ImportResult<Holding> {
   }
 
   const claimed = new Set(Object.values(map))
+  // Cost and purchase date are read here; a stated profit still is not,
+  // because gain is computed from cost and today's value rather than taken
+  // from whatever the market was doing the day the cell was typed.
+  const leftover = partitionLeftovers(
+    headers.filter((h, i) => h && !claimed.has(i) && !dateCols.some((d) => d.col === i)),
+    ['profit'],
+  )
   return {
     items,
-    unmappedHeaders: headers.filter((h, i) => h && !claimed.has(i) && !dateCols.some((d) => d.col === i)),
+    unmappedHeaders: leftover.unmapped,
+    ignoredHeaders: [
+      ...(map.profit != null && headers[map.profit] ? [headers[map.profit]] : []),
+      ...leftover.ignored,
+    ],
     mapped: Object.fromEntries(
-      (Object.keys(map) as FieldName[]).map((f) => [f, headers[map[f]!]]),
+      (Object.keys(map) as FieldName[])
+        .filter((f) => f !== 'profit')
+        .map((f) => [f, headers[map[f]!]]),
     ) as Partial<Record<FieldName, string>>,
     issues,
     priceHistory,
@@ -328,7 +393,7 @@ export function rowsToWatchItems(sheet: RawSheet): ImportResult<WatchItem> {
   const headerRow = findHeaderRow(sheet.rows)
   if (headerRow < 0) {
     return {
-      items: [], unmappedHeaders: [], mapped: {}, priceHistory: {}, sheetName: sheet.name,
+      items: [], unmappedHeaders: [], ignoredHeaders: [], mapped: {}, priceHistory: {}, sheetName: sheet.name,
       issues: [{ row: 0, message: 'No header row found. Expect a row with at least a card/item name column.' }],
     }
   }
@@ -386,11 +451,24 @@ export function rowsToWatchItems(sheet: RawSheet): ImportResult<WatchItem> {
   }
 
   const claimed = new Set(Object.values(map))
+  const ignoredFields = OWNERSHIP_FIELDS.filter((f) => map[f] != null)
+  const leftover = partitionLeftovers(
+    headers.filter((h, i) => h && !claimed.has(i) && !dateCols.some((d) => d.col === i)),
+    OWNERSHIP_FIELDS,
+  )
   return {
     items,
-    unmappedHeaders: headers.filter((h, i) => h && !claimed.has(i) && !dateCols.some((d) => d.col === i)),
+    unmappedHeaders: leftover.unmapped,
+    // Said separately from the unrecognised ones, because "this is not
+    // relevant here" and "I do not know what this is" are different answers.
+    ignoredHeaders: [
+      ...ignoredFields.map((f) => headers[map[f]!]).filter(Boolean),
+      ...leftover.ignored,
+    ],
     mapped: Object.fromEntries(
-      (Object.keys(map) as FieldName[]).map((f) => [f, headers[map[f]!]]),
+      (Object.keys(map) as FieldName[])
+        .filter((f) => !(OWNERSHIP_FIELDS as readonly string[]).includes(f))
+        .map((f) => [f, headers[map[f]!]]),
     ) as Partial<Record<FieldName, string>>,
     issues,
     priceHistory,
