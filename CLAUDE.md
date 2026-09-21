@@ -195,9 +195,24 @@ holdings, counted as owned, and put its asking prices into the portfolio total
 — while the watchlist itself, being a replace, was emptied. Two wrong places at
 once, from one word in a filename.
 
-A name now decides only when it is a real one: a tab the owner deliberately
-called "Watchlist" inside a workbook that may hold both. `RawSheet.nameIsFilename`
-marks the invented ones. A CSV has no tabs, so the mode decides.
+`routeSheet` decides, and a name may overrule the button only when there is
+something to tell apart — that is, when the file holds more than one sheet. A
+workbook with a Portfolio tab and a Watchlist tab needs its names read; a
+single-sheet file *is* the thing that was uploaded, and whatever its one tab is
+called is not a second opinion about which button was pressed.
+`RawSheet.nameIsFilename` marks a CSV's invented name, which never counts.
+
+It was wrong twice, and the second time is the instructive one. Fixing only the
+CSV case left an .xlsx whose single tab was called "Collection" — which is what
+an export names it, and what anyone copying their holdings template would have
+— doing exactly the same thing. Proven by uploading such a file to the
+watchlist zone: three rows into holdings before, three into the watchlist
+after.
+
+**The log now says where every sheet went** (`WorkbookImport.routed`, rendered
+as `"Collection" went to watchlist`). Routing had been wrong twice with nothing
+on screen admitting a decision had been made at all, which is why it took a
+second report to find. Any future routing complaint should start there.
 
 The history route also checks shape, not just the name — a watchlist called
 "sales pipeline" matches the same words and is not a list of completed sales.

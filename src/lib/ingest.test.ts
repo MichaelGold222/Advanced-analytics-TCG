@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
-  findHeaderRow, importWorkbook, mapColumns, rowsToHoldings, rowsToPriceHistory, rowsToWatchItems,
+  findHeaderRow, importWorkbook, mapColumns, routeSheet, rowsToHoldings, rowsToPriceHistory,
+  rowsToWatchItems,
 } from './ingest'
 import type { Cell, RawSheet } from './ingest'
 
@@ -527,5 +528,46 @@ describe('routing a file to the right tab', () => {
     const said = r.issues.map((i) => i.message).join(' ')
     expect(said).toMatch(/No cost column was recognised/i)
     expect(said).not.toMatch(/looks like a watchlist/i)
+  })
+})
+
+describe('a workbook tab does not overrule the button either', () => {
+  const tab = (name: string): RawSheet => ({ name, rows: [['Card Name'], ['Charizard']] })
+
+  it('sends a single sheet where the button says, whatever the tab is called', () => {
+    // The exact case that got through: an .xlsx whose one tab is called
+    // "Collection", which is what an export names it and what anyone copying
+    // their holdings template would have.
+    for (const name of ['Collection', 'Portfolio', 'Holdings', 'Inventory', 'Sheet1']) {
+      expect(routeSheet(tab(name), 'watchlist', 1)).toBe('watchlist')
+      expect(routeSheet(tab(name), 'portfolio', 1)).toBe('holdings')
+    }
+  })
+
+  it('sends a single sheet called Watchlist to holdings if that is the button', () => {
+    expect(routeSheet(tab('Watchlist'), 'portfolio', 1)).toBe('holdings')
+  })
+
+  it('reads the tab names once a workbook holds more than one', () => {
+    expect(routeSheet(tab('Watchlist'), 'portfolio', 3)).toBe('watchlist')
+    expect(routeSheet(tab('Portfolio'), 'watchlist', 3)).toBe('holdings')
+  })
+
+  it('falls back to the button for a tab whose name says nothing', () => {
+    expect(routeSheet(tab('Sheet2'), 'watchlist', 3)).toBe('watchlist')
+    expect(routeSheet(tab('Sheet2'), 'portfolio', 3)).toBe('holdings')
+  })
+
+  it('never reads a CSV filename as a tab name, however many were found', () => {
+    const csv: RawSheet = { name: 'my collection', rows: [['Card Name']], nameIsFilename: true }
+    expect(routeSheet(csv, 'watchlist', 1)).toBe('watchlist')
+    expect(routeSheet(csv, 'watchlist', 5)).toBe('watchlist')
+  })
+
+  it('says where every sheet was sent', async () => {
+    const rows = [['Card Name', 'Asking Price'], ['Charizard', 24000]]
+    const file = new File([rows.map((r) => r.join(',')).join('\n')], 'my collection.csv', { type: 'text/csv' })
+    const r = await importWorkbook(file, 'watchlist')
+    expect(r.routed).toEqual([{ sheet: 'my collection', to: 'watchlist' }])
   })
 })

@@ -396,6 +396,18 @@ export function DataPanel({
                   <span className="font-medium">{e.file}</span>
                   <span className="text-xs muted">{relativeTime(e.at)} · {e.imported} rows · sheets: {e.sheets.join(', ')}</span>
                 </div>
+                {(e.routed ?? []).length > 0 && (
+                  <div className="text-xs mt-1">
+                    {(e.routed ?? []).map((r) => (
+                      <div key={`${r.sheet}-${r.to}`}>
+                        <span className="secondary">“{r.sheet}” went to </span>
+                        <strong style={{ color: r.to === 'holdings' ? 'var(--seq-550)' : 'var(--seq-450)' }}>
+                          {r.to}
+                        </strong>
+                      </div>
+                    ))}
+                  </div>
+                )}
                 <div className="text-xs secondary mt-1">
                   Mapped: {Object.entries(e.mapped ?? {}).map(([f, h]) => `${f} ← "${h}"`).join(', ') || 'nothing'}
                 </div>

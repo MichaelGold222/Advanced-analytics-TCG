@@ -555,6 +555,53 @@ export interface WorkbookImport {
   holdings: ImportResult<Holding>[]
   watchlist: ImportResult<WatchItem>[]
   priceHistory: Record<string, PricePoint[]>
+  /**
+   * Where each sheet was sent, so the log can say it.
+   *
+   * Routing has now been wrong twice in ways nobody could see from the
+   * outside: rows simply appeared in the wrong tab, with nothing on screen
+   * saying a decision had been made at all. Stating it turns "it linked my
+   * watchlist to my holdings" into one line naming the sheet and the
+   * destination.
+   */
+  routed: { sheet: string; to: 'holdings' | 'watchlist' | 'price history' }[]
+}
+
+export type SheetTarget = 'holdings' | 'watchlist'
+
+/**
+ * Where one sheet's rows belong.
+ *
+ * The button the person pressed decides, and a name may only overrule it when
+ * there is something to tell apart — that is, when the file holds more than one
+ * sheet. A workbook with a Portfolio tab and a Watchlist tab needs its names
+ * read; a file with a single sheet *is* the thing that was uploaded, and
+ * whatever that sheet happens to be called is not a second opinion about which
+ * button was pressed.
+ *
+ * Getting this wrong is expensive in a way that is easy to underrate. A
+ * watchlist landing in holdings is counted as owned, so asking prices become
+ * portfolio value; and because an import replaces, the watchlist it should have
+ * filled is emptied in the same move. Two wrong places at once.
+ *
+ * It was wrong twice. First a CSV's invented name was read as though it were a
+ * tab, so "my collection.csv" went to holdings. Then, with that fixed, a
+ * single-sheet workbook whose one tab was called "Collection" — which is what
+ * an export names it, and what anyone copying their holdings template would
+ * have — did exactly the same thing.
+ */
+export function routeSheet(
+  sheet: RawSheet,
+  mode: SheetTarget | 'portfolio',
+  sheetCount: number,
+): SheetTarget {
+  const chosen: SheetTarget = mode === 'watchlist' ? 'watchlist' : 'holdings'
+  // A CSV has no tabs; the name was made up from the filename.
+  const deliberate = sheet.nameIsFilename !== true && sheetCount > 1
+  if (!deliberate) return chosen
+  if (WATCH_SHEET.test(sheet.name)) return 'watchlist'
+  if (PORTFOLIO_SHEET.test(sheet.name)) return 'holdings'
+  return chosen
 }
 
 /**
@@ -574,7 +621,7 @@ export interface WorkbookImport {
  */
 export async function importWorkbook(file: File, mode: 'portfolio' | 'watchlist'): Promise<WorkbookImport> {
   const sheets = await readSheets(file)
-  const result: WorkbookImport = { holdings: [], watchlist: [], priceHistory: {} }
+  const result: WorkbookImport = { holdings: [], watchlist: [], priceHistory: {}, routed: [] }
 
   for (const sheet of sheets) {
     if (sheet.rows.length === 0) continue
@@ -586,27 +633,21 @@ export async function importWorkbook(file: File, mode: 'portfolio' | 'watchlist'
       const history = rowsToPriceHistory(sheet)
       if (Object.keys(history).length > 0) {
         mergeHistory(result.priceHistory, history)
+        result.routed.push({ sheet: sheet.name, to: 'price history' })
         continue
       }
     }
 
-    const deliberate = sheet.nameIsFilename !== true
-    const named = deliberate
-      ? WATCH_SHEET.test(sheet.name)
-        ? 'watchlist'
-        : PORTFOLIO_SHEET.test(sheet.name)
-          ? 'portfolio'
-          : null
-      : null
-
-    if ((named ?? mode) === 'watchlist') {
+    if (routeSheet(sheet, mode, sheets.length) === 'watchlist') {
       const r = rowsToWatchItems(sheet)
       result.watchlist.push(r)
       mergeHistory(result.priceHistory, r.priceHistory)
+      result.routed.push({ sheet: sheet.name, to: 'watchlist' })
     } else {
       const r = rowsToHoldings(sheet)
       result.holdings.push(r)
       mergeHistory(result.priceHistory, r.priceHistory)
+      result.routed.push({ sheet: sheet.name, to: 'holdings' })
     }
   }
   return result

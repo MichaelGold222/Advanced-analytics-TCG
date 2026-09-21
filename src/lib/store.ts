@@ -34,6 +34,8 @@ export interface ImportLogEntry {
   unmappedHeaders: string[]
   /** Recognised and set aside on purpose, as opposed to not understood. */
   ignoredHeaders: string[]
+  /** Which tab each sheet's rows were sent to. */
+  routed: { sheet: string; to: 'holdings' | 'watchlist' | 'price history' }[]
   issues: { row: number; message: string }[]
   historyPoints: number
 }
@@ -142,6 +144,7 @@ function migrate(saved: PersistedState): PersistedState {
       mapped: e.mapped ?? {},
       unmappedHeaders: e.unmappedHeaders ?? [],
       ignoredHeaders: e.ignoredHeaders ?? [],
+      routed: e.routed ?? [],
       issues: e.issues ?? [],
       sheets: e.sheets ?? [],
     })),
@@ -363,7 +366,7 @@ export const useStore = create<AppState>((setState, getState) => ({
 
       const entry: ImportLogEntry = {
         at: new Date().toISOString(), file: file.name, kind, imported,
-        sheets: [...new Set(sheets)], mapped,
+        sheets: [...new Set(sheets)], routed: result.routed, mapped,
         unmappedHeaders: [...new Set(unmappedHeaders)],
         ignoredHeaders: [...new Set(ignoredHeaders)],
         issues: issues.slice(0, 50), historyPoints,
