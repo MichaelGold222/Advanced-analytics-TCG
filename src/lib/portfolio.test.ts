@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest'
-import { analyzeHoldings, buildValueTrend, computePortfolioStats, holdingKey, unitValue } from './portfolio'
+import { itemKey } from './key'
+import {
+  analyzeHoldings, buildValueTrend, computePortfolioStats, holdingAsWatchItem, holdingKey,
+  suspectedWatchItems, unitValue,
+} from './portfolio'
 import type { Holding, PricePoint, PriceSeries, Segment } from './types'
 
 const NOW = new Date('2026-09-18T00:00:00Z')
@@ -215,5 +219,41 @@ describe('a value typed in by hand', () => {
     const stats = computePortfolioStats([h], new Map([[holdingKey(h), a(4200, 9900)]]))
     expect(stats.marketValue).toBe(12_000)
     expect(stats.unrealized).toBe(7000)
+  })
+})
+
+describe('rows that landed in the wrong tab', () => {
+  const holding = (over: Partial<Holding>): Holding => ({
+    id: 'h1', name: 'Charizard', quantity: 1, costBasis: 0,
+    segment: 'vintage', segmentReason: 'test', ...over,
+  })
+
+  it('spots a row with nothing paid and no purchase date', () => {
+    expect(suspectedWatchItems([holding({})])).toHaveLength(1)
+  })
+
+  it('leaves a genuine holding alone', () => {
+    expect(suspectedWatchItems([holding({ costBasis: 900 })])).toHaveLength(0)
+  })
+
+  it('leaves one alone that records when it was bought, cost or not', () => {
+    // Someone who logged the date but not the price still owns the card.
+    expect(suspectedWatchItems([holding({ purchaseDate: '2025-03-04' })])).toHaveLength(0)
+  })
+
+  it('reads the sheet price as an asking price when moving', () => {
+    const w = holdingAsWatchItem(holding({ userPrice: 2400 }))
+    expect(w.askingPrice).toBe(2400)
+    expect(w).not.toHaveProperty('costBasis')
+  })
+
+  it('carries the card’s identity across, so its prices still find it', () => {
+    const h = holding({ set: 'Base Set', number: '4', cert: '93083876', grade: 10, grader: 'PSA' })
+    const w = holdingAsWatchItem(h)
+    expect(itemKey(w)).toBe(itemKey(h))
+  })
+
+  it('does not carry a price that was never there', () => {
+    expect(holdingAsWatchItem(holding({})).askingPrice).toBeUndefined()
   })
 })

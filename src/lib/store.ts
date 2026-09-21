@@ -10,6 +10,7 @@ import { del, get, set } from 'idb-keyval'
 import { buildSeries } from './analytics'
 import { importWorkbook, mergeHistory, reclassify } from './ingest'
 import { itemKey } from './key'
+import { holdingAsWatchItem } from './portfolio'
 import { refreshQuotes, type PriceProvider, type RefreshTarget } from './pricing'
 import { isSupportedGrader, type PriceFeed } from './providers/cardladder'
 import {
@@ -84,6 +85,8 @@ interface AppState extends PersistedState {
   /** A value typed in by hand, which outranks anything fetched. Null clears it. */
   setHoldingValue(id: string, value: number | null): void
   removeHolding(id: string): void
+  /** Move holdings to the watchlist, keeping any prices already fetched. */
+  moveToWatchlist(ids: string[]): void
   refreshPrices(provider?: PriceProvider): Promise<void>
   refreshGraded(opts?: { onlyMissing?: boolean }): Promise<void>
   /** Fetch pictures for any of these certs that has none yet. */
@@ -397,6 +400,34 @@ export const useStore = create<AppState>((setState, getState) => ({
 
   removeHolding(id) {
     setState({ holdings: getState().holdings.filter((h) => h.id !== id) })
+    scheduleSave(getState())
+  },
+
+  /**
+   * Move holdings to the watchlist, where they should have been all along.
+   *
+   * Added because a routing bug put a watchlist into holdings, and telling
+   * someone to upload both sheets again is a poor answer when the rows are
+   * sitting right there and nothing about them needs re-reading. It is not a
+   * one-off repair: putting a row in the wrong tab is an ordinary mistake and
+   * this is the ordinary way back.
+   *
+   * Prices are keyed by card rather than by tab, so anything already fetched
+   * for these cards still applies to them on the other side.
+   */
+  moveToWatchlist(ids) {
+    const state = getState()
+    const moving = new Set(ids)
+    const picked = state.holdings.filter((h) => moving.has(h.id))
+    if (picked.length === 0) return
+    const already = new Set(state.watchlist.map((w) => itemKey(w)))
+    const added = picked
+      .map(holdingAsWatchItem)
+      .filter((w) => !already.has(itemKey(w)))
+    setState({
+      holdings: state.holdings.filter((h) => !moving.has(h.id)),
+      watchlist: [...state.watchlist, ...added],
+    })
     scheduleSave(getState())
   },
 

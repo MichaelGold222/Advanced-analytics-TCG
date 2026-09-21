@@ -5,7 +5,7 @@ import type { MarketIndex } from './marketindex'
 import { toISODate } from './stats'
 import { SEGMENTS } from './types'
 import type {
-  Holding, ItemAnalysis, PortfolioStats, PriceSeries, Segment, SegmentStats, ValueSnapshot,
+  Holding, ItemAnalysis, PortfolioStats, PriceSeries, Segment, SegmentStats, ValueSnapshot, WatchItem,
 } from './types'
 
 export function holdingKey(h: Pick<Holding, 'name' | 'set' | 'number' | 'grader' | 'grade'>): string {
@@ -168,4 +168,45 @@ export function buildValueTrend(
     }
     return { date, marketValue, costBasis, bySegment }
   })
+}
+
+/**
+ * Holdings that look like they were meant for the watchlist.
+ *
+ * Nothing was paid for them and nothing says when they were bought, which
+ * between them is the whole of what it means to own a card. A row like that
+ * still counts toward the portfolio total, at whatever its asking price
+ * implies, so being able to find them again matters.
+ *
+ * The test is deliberately conservative and the caller is expected to show
+ * what it found rather than act on it. A genuine holding whose sheet simply
+ * had no cost column looks identical from here, and moving one of those would
+ * be a second wrong move on top of the first.
+ */
+export function suspectedWatchItems(holdings: Holding[]): Holding[] {
+  return holdings.filter((h) => !(h.costBasis > 0) && !h.purchaseDate)
+}
+
+/** Turn a holding back into the watch item it should have been. */
+export function holdingAsWatchItem(h: Holding): WatchItem {
+  return {
+    id: `${h.id}#moved`,
+    name: h.name,
+    set: h.set,
+    number: h.number,
+    year: h.year,
+    condition: h.condition,
+    grader: h.grader,
+    grade: h.grade,
+    cert: h.cert,
+    // Whatever price the sheet carried was what someone is asking, not what
+    // was paid — that is the reading under which these rows are watch items
+    // at all.
+    askingPrice: h.userPrice != null && h.userPrice > 0 ? h.userPrice : undefined,
+    quantity: h.quantity,
+    notes: h.notes,
+    segmentOverride: h.segmentOverride ?? null,
+    segment: h.segment,
+    segmentReason: h.segmentReason,
+  }
 }

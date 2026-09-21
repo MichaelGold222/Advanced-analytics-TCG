@@ -11,13 +11,16 @@ import { SegmentBreakdown } from './components/SegmentBreakdown'
 import { TopHoldings, type HoldingBar } from './components/TopHoldings'
 import { UploadZone } from './components/UploadZone'
 import { ValueTrend } from './components/ValueTrend'
+import { MisplacedRows } from './components/MisplacedRows'
 import { WatchlistPanel } from './components/WatchlistPanel'
 import { useTheme } from './hooks/useTheme'
 import { analyzeItem, computeTrend } from './lib/analytics'
 import { money, pct, relativeTime } from './lib/format'
 import { itemKey } from './lib/key'
 import { buildRepeatSalesIndex } from './lib/marketindex'
-import { analyzeHoldings, buildValueTrend, computePortfolioStats, holdingKey, unitValue } from './lib/portfolio'
+import {
+  analyzeHoldings, buildValueTrend, computePortfolioStats, holdingKey, suspectedWatchItems, unitValue,
+} from './lib/portfolio'
 import { getParseKey } from './lib/providers/cardladder-client'
 import { selectSeries, useStore } from './lib/store'
 import { downloadTemplate, exportAnalysis } from './lib/workbook-out'
@@ -74,6 +77,9 @@ export default function App() {
   }, [watchlist, series, marketIndex])
 
   const stats = useMemo(() => computePortfolioStats(holdings, holdingAnalyses), [holdings, holdingAnalyses])
+  // Rows counting toward the portfolio total with nothing to say they were
+  // ever bought. Offered for moving rather than moved.
+  const misplaced = useMemo(() => suspectedWatchItems(holdings), [holdings])
   // Stored holdings keep whatever they were parsed as, so an importer fix only
   // reaches a sheet that is uploaded again. Say so rather than showing zeros.
   const costMissing = holdings.length > 0 && stats.costBasis === 0
@@ -315,13 +321,16 @@ export default function App() {
             <TopHoldings rows={topHoldings} concentration={stats.concentration} />
           </div>
         ) : tab === 'holdings' ? (
-          <HoldingsTable
-            holdings={holdings} analyses={holdingAnalyses}
-            onOverride={(id, s) => store.setSegmentOverride(id, s, 'holding')}
-            onSetValue={(id, v) => store.setHoldingValue(id, v)}
-            images={store.certImages}
-            onRemove={store.removeHolding}
-          />
+          <div className="space-y-4">
+            <MisplacedRows candidates={misplaced} onMove={store.moveToWatchlist} />
+            <HoldingsTable
+              holdings={holdings} analyses={holdingAnalyses}
+              onOverride={(id, s) => store.setSegmentOverride(id, s, 'holding')}
+              onSetValue={(id, v) => store.setHoldingValue(id, v)}
+              images={store.certImages}
+              onRemove={store.removeHolding}
+            />
+          </div>
         ) : tab === 'watchlist' ? (
           <WatchlistPanel
             watchlist={watchlist} analyses={watchAnalyses} series={series}
