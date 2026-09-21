@@ -405,30 +405,52 @@ jobs:
           # a result is printed alongside, in case this guess is wrong.
           echo
           echo "=== every id-ish field the responses carry ==="
-          python3 -c "
+          # Written to a file rather than passed with -c: the loop below reads
+          # ids.txt, and under `bash -e` a redirect from a file that was never
+          # created kills the step outright. An empty file is the safe floor.
+          : > ids.txt
+          cat > ids.py <<'PY2'
           import json, re, urllib.parse
-          cands = []
+
+          # A Firebase storage URL carries the document id of whatever it is a
+          # picture of: .../o/<collection>%2F<id>?alt=media. Only the `cards`
+          # collection gives a CARD id — a slab whose only photograph came from
+          # the auction listing has `sales%2F<slug>`, which is a sale, not a
+          # card, and was the reason the first attempt found nothing.
+          ranked, other, seen = [], [], set()
+
+          def note(path, value, first):
+              if value in seen: return
+              seen.add(value)
+              (ranked if first else other).append(value)
+              print('  %-58s = %s' % (path, value))
+
           def scan(path, node):
               if isinstance(node, dict):
                   for k, v in node.items(): scan(path + '/' + str(k), v)
               elif isinstance(node, list):
-                  for i, v in enumerate(node[:2]): scan(path + '[%d]' % i, v)
+                  for i, v in enumerate(node[:3]): scan(path + '[%d]' % i, v)
               elif isinstance(node, str):
-                  if re.search(r'(^|_)id$', path.rsplit('/', 1)[-1], re.I):
-                      cands.append((path, node))
-                  m = re.search(r'/o/cards%2F([^?/]+)', node)
-                  if m: cands.append((path + ' (from the picture URL)', urllib.parse.unquote(m.group(1))))
-          for f in ('blk.json', 'prof2.json'):
-              try: scan(f, json.load(open(f)))
-              except Exception: pass
-          seen = set()
-          out = []
-          for p, v in cands:
-              if v in seen: continue
-              seen.add(v); out.append(v)
-              print('  %-55s = %s' % (p, v))
-          open('ids.txt', 'w').write(chr(10).join(out))
-          " || true
+                  m = re.search(r'/o/([^%/]+)%2F([^?/]+)', node)
+                  if m:
+                      coll, ident = m.group(1), urllib.parse.unquote(m.group(2))
+                      note('%s (%s in the picture URL)' % (path, coll), ident, coll == 'cards')
+                  elif re.search(r'(^|_)id$', path.rsplit('/', 1)[-1], re.I):
+                      note(path, node, False)
+
+          for f in ('blk.json', 'prof2.json', 'bulk.json'):
+              try:
+                  scan(f, json.load(open(f)))
+              except Exception as e:
+                  print('  %-58s (unreadable: %s)' % (f, e))
+
+          # Card ids first: the others are long shots kept only because a
+          # refusal costs nothing.
+          open('ids.txt', 'w').write(chr(10).join(ranked + other))
+          print('  -> %d candidate%s, %d of them card ids'
+                % (len(ranked + other), '' if len(ranked + other) == 1 else 's', len(ranked)))
+          PY2
+          python3 ids.py || true
 
           while read -r CARD_ID; do
             [ -n "$CARD_ID" ] || continue
