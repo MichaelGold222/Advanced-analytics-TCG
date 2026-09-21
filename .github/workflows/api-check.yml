@@ -564,25 +564,23 @@ jobs:
           # no card id — and most seem not to — the way in is the card's name,
           # not its certificate. search_cards has never been called.
           if [ -n "$CARD_NAME" ]; then
-            printf '\n=== search_cards, by name rather than by cert ===\n'
-            for param in query q name search term; do
-              printf '\n  --- GET search_cards?%s=... ---\n' "$param"
-              code=$(curl -sS -m 120 -o cards.json -w '%{http_code}' -D cards.head -G \
-                --data-urlencode "$param=$CARD_NAME" \
-                -H "X-API-Key: $KEY" "$BASE/scraper/$SCR/search_cards" || echo 000)
-              echo "  HTTP $code"
-              tr -d '\r' < cards.head | grep -iE '^x-credits-charged' | sed 's/^/  /' || true
-              if [ "$code" != "200" ]; then
-                head -c 160 cards.json | sed 's/^/  /'; echo
-                continue
-              fi
-              python3 -c "
-          import json, re
-          d = json.load(open('cards.json'))
-          # Print what came back BEFORE judging it. The previous version
-          # reported "0 card ids" and showed nothing else, which is
-          # indistinguishable from an empty result, a renamed field and a
-          # response shape nobody guessed.
+            # Written to a file, like depth.py, rather than passed with -c.
+            # The -c version crashed before printing anything twice running,
+            # and each time the run had already paid for the response it then
+            # discarded. found.txt is created empty first, because under
+            # `bash -e` a redirect from a missing file kills the step and
+            # hides whatever went wrong.
+            : > found.txt
+            cat > cards.py <<'PY3'
+          import json, re, sys
+
+          try:
+              d = json.load(open('cards.json'))
+          except Exception as e:
+              print('   response was not JSON:', e)
+              print('   raw:', open('cards.json').read()[:400])
+              sys.exit()
+
           print('   top-level keys:', sorted(d) if isinstance(d, dict) else type(d).__name__)
           data = d.get('data') if isinstance(d, dict) else None
           if isinstance(data, dict):
@@ -590,29 +588,45 @@ jobs:
               for k, v in data.items():
                   if isinstance(v, list):
                       print('   data.%s: %d entries' % (k, len(v)))
-                      if v: print('     first:', json.dumps(v[0])[:400])
-          print('   raw:', json.dumps(d)[:500])
-          hits, ids = [], []
+                      if v:
+                          print('     first entry:', json.dumps(v[0])[:500])
+          print('   raw head:', json.dumps(d)[:400])
+
+          hits, seen_ids = [], []
           def walk(n):
               if isinstance(n, dict):
                   for key in ('id', 'card_id', 'cardId', 'slug'):
                       i = n.get(key)
                       if isinstance(i, str) and i:
-                          ids.append((key, i))
+                          seen_ids.append(key + '=' + i)
                           if not re.fullmatch(r'[0-9a-f]{40}', i):
                               hits.append((i, str(n.get('label') or n.get('name') or '')[:95]))
-                  for v in n.values(): walk(v)
+                  for v in n.values():
+                      walk(v)
               elif isinstance(n, list):
-                  for v in n[:40]: walk(v)
+                  for v in n[:40]:
+                      walk(v)
           walk(d)
-          print('   every id-ish value seen:', ids[:12] or 'none')
+
+          print('   id-ish values seen:', seen_ids[:10] or 'NONE')
           print('   usable card ids:', len(hits))
-          for i, label in hits[:12]:
+          for i, label in hits[:10]:
               print('    ', i, '|', label)
-          open('found.txt','w').write(chr(10).join(i for i, _ in hits[:12]))
-          " || true
-              break
-            done
+          open('found.txt', 'w').write(chr(10).join(i for i, _ in hits[:10]))
+          PY3
+
+            printf '\n=== search_cards, by name rather than by cert ===\n'
+            printf '  query: %s\n' "$CARD_NAME"
+            code=$(curl -sS -m 120 -o cards.json -w '%{http_code}' -D cards.head -G \
+              --data-urlencode "query=$CARD_NAME" --data-urlencode "limit=25" \
+              -H "X-API-Key: $KEY" "$BASE/scraper/$SCR/search_cards" || echo 000)
+            echo "  HTTP $code"
+            tr -d '\r' < cards.head | grep -iE '^x-credits-charged' | sed 's/^/  /' || true
+            if [ "$code" = "200" ]; then
+              python3 cards.py || { echo "  reader failed:"; head -c 400 cards.json | sed 's/^/  /'; echo; }
+            else
+              head -c 300 cards.json | sed 's/^/  /'; echo
+            fi
 
             while read -r CID; do
               [ -n "$CID" ] || continue
@@ -621,17 +635,17 @@ jobs:
                 -H "X-API-Key: $KEY" "$BASE/scraper/$SCR/get_card_sales?card_id=$CID" || echo 000)
               echo "  HTTP $code"
               tr -d '\r' < hist.head | grep -iE '^x-credits-charged' | sed 's/^/  /' || true
-              [ "$code" = "200" ] || { head -c 160 hist.json | sed 's/^/  /'; echo; continue; }
-              python3 -c "
+              [ "$code" = "200" ] || { head -c 200 hist.json | sed 's/^/  /'; echo; continue; }
+              python3 - <<'PY4' || true
           import json
           d = json.load(open('hist.json')).get('data', {})
           s = d.get('sales') or []
-          print('   ', d.get('label','')[:95])
+          print('   ', str(d.get('label', ''))[:95])
           print('    cert quoted:', d.get('cert_number'), '| total_sales:', d.get('total_sales'), '| points:', len(s))
           if s:
-              print('    oldest:', s[-1], )
-              print('    newest:', s[0])
-          " || true
+              print('    newest:', json.dumps(s[0])[:120])
+              print('    oldest:', json.dumps(s[-1])[:120])
+          PY4
               break
             done < found.txt
           fi
