@@ -693,3 +693,60 @@ describe('a band that does not span the window it is named after', () => {
     expect(r.oldest).toBeNull()
   })
 })
+
+describe('where the sales record does not reach', () => {
+  const NOW_ = new Date('2026-09-21T00:00:00Z')
+  const back = (n: number) => new Date(NOW_.getTime() - n * 86_400_000).toISOString().slice(0, 10)
+  const at = (d: number, price: number, source: PricePoint['source']): PricePoint =>
+    ({ date: back(d), price, source })
+
+  // The graded feed hands back the newest five sales, which on this card is a
+  // quarter of history. The owner's sheet is the only record of the rest.
+  const FETCHED = [
+    at(96, 3100, 'sale'), at(66, 3300, 'sale'), at(26, 3600, 'sale'),
+    at(12, 3500, 'sale'), at(4, 3400, 'sale'),
+  ]
+  const SHEET = [at(340, 6200, 'user'), at(250, 9400, 'user'), at(180, 8100, 'user')]
+
+  it('uses the owner’s own dated prices for the months the sales miss', () => {
+    // Previously the sheet was dropped the moment any sale existed, and a
+    // $9,400 peak from 250 days ago became a $3,600 "yearly high" over 92 days.
+    const r = computeRange({ key: 'k', points: [...SHEET, ...FETCHED] }, 3400, NOW_, WINDOW_DAYS)
+    expect(r.high).toBe(9400)
+    expect(r.low).toBe(3100)
+    expect(r.sampleSize).toBe(8)
+    expect(r.coversWindow).toBe(true)
+  })
+
+  it('says the band is not purely traded once they are in it', () => {
+    const r = computeRange({ key: 'k', points: [...SHEET, ...FETCHED] }, 3400, NOW_, WINDOW_DAYS)
+    expect(r.fromTrades).toBe(false)
+  })
+
+  it('lets the sales decide the period they do cover', () => {
+    // A sheet figure inside the sales' own span is an opinion beside better
+    // evidence, whatever it says — this is the guard the older tests encode.
+    const inside = [...FETCHED, at(30, 9900, 'user')]
+    expect(computeRange({ key: 'k', points: inside }, 3400, NOW_, WINDOW_DAYS).high).toBe(3600)
+  })
+
+  it('still refuses an ask, an old snapshot and a quote at any date', () => {
+    const noise = [
+      ...FETCHED, at(300, 9900, 'listing'), at(300, 9900, 'snapshot'),
+      at(300, 9900, 'market'), at(300, 9900, 'mid'),
+    ]
+    expect(computeRange({ key: 'k', points: noise }, 3400, NOW_, WINDOW_DAYS).high).toBe(3600)
+  })
+
+  it('keeps the whole sheet when nothing has sold at all', () => {
+    const r = computeRange({ key: 'k', points: SHEET }, 8000, NOW_, WINDOW_DAYS)
+    expect(r.high).toBe(9400)
+    expect(r.fromTrades).toBe(false)
+  })
+
+  it('counts a record newer than the last fetched sale, too', () => {
+    // A sale the owner knows about that the feed has not picked up yet.
+    const r = computeRange({ key: 'k', points: [...FETCHED, at(1, 4200, 'user')] }, 4200, NOW_, WINDOW_DAYS)
+    expect(r.high).toBe(4200)
+  })
+})

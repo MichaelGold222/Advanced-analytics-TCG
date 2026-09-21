@@ -504,14 +504,35 @@ Drift is in **logs** everywhere internally. Printing it as a percentage without
 `Math.expm1` understates every fast mover: a card at 1.25 in logs is up 249% a
 year, not 125%.
 
-### A traded range is built from trades
+### A band is built from prices, and the sales do not reach far enough
 
 `computeRange` filtered on the window and nothing else, so the high and low
-were drawn from asking prices nobody took, figures typed into a sheet, and
-quotes this app captured on past runs. A single ask set a yearly high the card
-never reached. It now prefers `source === 'sale'` and falls back to the wider
-set only when nothing has sold, with `fromTrades` saying which — because "the
-market has not traded below this" is only a true sentence about trades.
+were drawn from asking prices nobody took and quotes this app captured on past
+runs. A single ask set a yearly high the card never reached. Filtering to
+`source === 'sale'` fixed that and **broke something worse in the same stroke**:
+the owner's own dated prices went out with the asks, and since the feed only
+ever hands back five sales, those records are the only evidence of any month
+before them. A card with a year of sheet history and five fetched sales had the
+history silently dropped the moment the sales arrived — a $9,400 price from 250
+days ago became a $3,600 "yearly high" over 92 days.
+
+The rule now is about **reach**, not about source alone:
+
+- Where the sales record covers a period, the sales decide it. A sheet figure
+  of $2,200 beside six sales between $870 and $1,450 is an opinion however it
+  got there, and the tests that guard this predate the fix and still pass
+  untouched.
+- Where the sales record does not reach — before the oldest fetched sale, or
+  after the newest — a dated price from the owner's sheet is the only evidence
+  of that period anyone has, and it counts. This is the same judgement
+  `PAIRABLE_SOURCES` makes in marketindex.ts, where a `user` point is trusted
+  to form half of a repeat sale.
+- Asks, quotes, midpoints and snapshots never count at any date, and remain
+  the fallback only when nothing else exists.
+
+`fromTrades` keeps its original meaning — every point under the band is a
+completed sale — because "the market has not traded below this" is only a true
+sentence about trades. A mixed band says so in its own words instead.
 
 ### The entry price has to be one somebody would accept
 

@@ -52,6 +52,16 @@ export const WINDOW_DAYS = 365
 export const WINDOW_COVERED_FRACTION = 0.75
 
 /**
+ * Sources that are a price rather than an opinion about one.
+ *
+ * Deliberately the same pair as `PAIRABLE_SOURCES` in marketindex.ts: a sale
+ * is a price paid, and a dated figure in the owner's sheet is a price for one
+ * card on one date. Quotes, asks, midpoints and this app's own snapshots are
+ * opinions, and a band made of them is not a band.
+ */
+export const PRICED_SOURCES: ReadonlySet<PricePoint['source']> = new Set(['sale', 'user'])
+
+/**
  * How many recent sales the median is taken over.
  *
  * For graded cards this is the method that matters: a median of the last few
@@ -241,14 +251,36 @@ export function computeRange(
   windowDays = WINDOW_DAYS,
 ): RangeResult {
   const inWindow = pointsInWindow(series.points, now, windowDays)
-  // A traded range has to be built from trades. Everything else in the series
-  // is somebody's opinion: an asking price nobody took, a figure typed into a
-  // sheet, a quote this app captured on a past run. Mixed in, they set a high
-  // the card never reached and a low nobody ever sold at — and then the
-  // sentence "the market has not traded below this" is simply false.
-  const trades = inWindow.filter((p) => p.source === 'sale')
-  const fromTrades = trades.length > 0
-  const windowed = fromTrades ? trades : inWindow
+  // A band is built from prices, and an opinion is not a price. An asking
+  // price nobody took, a market quote, a midpoint and this app's own captured
+  // snapshots all set a high the card never reached and a low nobody ever
+  // sold at, and then "the market has not traded below this" is simply false.
+  //
+  // But a DATED PRICE FROM THE OWNER'S SHEET is a price for one card on one
+  // date, which is exactly what a band is made of — the same reasoning that
+  // puts `user` in `PAIRABLE_SOURCES` over in marketindex.ts, where such a
+  // point is trusted to form half of a repeat sale. Excluding it here cost
+  // real money: a card with a year of the owner's own records and five
+  // fetched sales had the records silently dropped the moment the sales
+  // arrived, and a $9,400 peak from 250 days ago became a $3,600 high over
+  // 92 days. The deepest history the app has was being thrown away by the
+  // very thing meant to make the band honest.
+  const sales = inWindow.filter((p) => p.source === 'sale')
+  // Where sales exist for a period, they decide it — a completed sale is
+  // better evidence than a typed figure, and a sheet saying $2,200 beside six
+  // sales between $870 and $1,450 is an opinion however it got there. Where
+  // the sales record does not REACH, the owner's own dated prices are the
+  // only evidence of that period that anyone has.
+  const covered = sales.length > 0
+    ? { first: sales[0].date, last: sales[sales.length - 1].date }
+    : null
+  const own = inWindow.filter((p) =>
+    p.source === 'user' && (!covered || p.date < covered.first || p.date > covered.last))
+  const priced = [...sales, ...own].sort((a, b) => a.date.localeCompare(b.date))
+  const windowed = priced.length > 0 ? priced : inWindow
+  // Reserved for what it has always claimed: every point under this band is a
+  // completed sale, so a sentence about what the market did is true of it.
+  const fromTrades = priced.length > 0 && own.length === 0
 
   if (windowed.length === 0) {
     return {
@@ -384,7 +416,9 @@ export function computeEntry(
     rationale.push(
       range.fromTrades
         ? 'Fewer than four completed sales this year, so the target is reasoned from fair value rather than read off the band.'
-        : 'No completed sales on record this year, so the band is asking prices and stored figures — the target is reasoned from fair value instead.',
+        : tradePrices.length > 0
+          ? 'The band mixes completed sales with dated prices from your own sheet, so the target is reasoned from fair value rather than read off it.'
+          : 'No completed sales on record this year, so the band is asking prices and stored figures — the target is reasoned from fair value instead.',
     )
   }
   if (stretchEntry >= entryPrice - 0.005 && range.low != null) {

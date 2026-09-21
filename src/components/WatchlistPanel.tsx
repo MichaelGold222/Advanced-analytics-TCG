@@ -349,7 +349,13 @@ function Reasoning({
           <Row label="History covered" value={`${Math.round(analysis.allTimeRange.coverageDays)} days · ${analysis.allTimeRange.sampleSize} points`} />
           <Row
             label="Built from"
-            value={range.fromTrades ? `${range.sampleSize} completed sales` : 'asking prices and stored figures'}
+            value={
+              range.fromTrades
+                ? `${range.sampleSize} completed sales`
+                : range.sampleSize > 0
+                  ? `${range.sampleSize} prices — completed sales and dated figures from your sheet`
+                  : 'asking prices and stored figures'
+            }
           />
           <Row label="Reliability" value={range.estimated ? 'Estimated — thin history' : 'Measured'} />
         </dl>
