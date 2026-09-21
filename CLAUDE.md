@@ -613,6 +613,43 @@ rate, does one fetch still keep up?
 Typed figures are excluded from the rate: a `user` point says a price on a
 date, nothing about how often the card changes hands.
 
+### Tracking the highs forward is a cron job, and it was never wired up
+
+`scripts/fetch-prices.ts` says in its own docstring that it "runs on a schedule
+in CI". Nothing ran it — there was no workflow, so it was dead code, and the
+one path that could have been accumulating history for months was not running
+at all.
+
+`.github/workflows/prices.yml` runs it now, and `mergeFeeds` makes running it
+worth doing. Without the merge a schedule is pointless: the upstream returns
+the newest few sales per cert, so writing the response straight out leaves a
+file holding a sliding few weeks, and running it weekly for a year produces
+exactly as little history as running it once. Simulated over 52 weekly runs
+against a card selling weekly:
+
+| | sales | high | low | reaches back |
+|---|---|---|---|---|
+| truth | 52 | $1,400 | $600 | 12 months |
+| merged | 52 | $1,400 | $600 | 12 months |
+| overwritten | 5 | $1,400 | $1,319 | 5 weeks |
+
+The low is the tell. The high happened to survive; the low was wrong by more
+than double.
+
+Three things about it worth keeping:
+
+- **The record lives in the repository, not in a browser.** It outlives cleared
+  site data and is readable from any machine — which matters most if a paid
+  backfill ever lands in it.
+- **A cert missing from a run keeps what it had.** A bad night upstream must
+  not delete history that was already paid for.
+- **A run that adds nothing makes no commit**, so the log does not fill with
+  fifty-two rows that only moved `fetchedAt`.
+
+**The schedule is committed commented out.** ~3 credits a run, ~12 a month
+weekly, out of 200 — but after emptying the balance once already, nothing here
+starts spending on its own. The owner uncomments the cron.
+
 ### What is still missing
 
 Nothing measures whether the 80% bands actually contain the price 80% of the

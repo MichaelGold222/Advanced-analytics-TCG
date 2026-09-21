@@ -2,9 +2,10 @@ import { describe, expect, it } from 'vitest'
 import {
   CALL_OVERHEAD_MS, CREDITS_PER_CALL, FETCH_CONCURRENCY, MAX_CERTS_PER_CALL, MIN_BATCH_SIZE, MS_PER_CERT,
   TARGET_CALLS,
-  batchCerts, buildFeed, estimateFetch, isSupportedGrader, mergeSalePoints, parseBulkResponse,
-  planBatchSize, parseCertImages, salesToPricePoints, venueOf,
+  batchCerts, buildFeed, estimateFetch, isSupportedGrader, mergeFeeds, mergeSalePoints,
+  parseBulkResponse, planBatchSize, parseCertImages, salesToPricePoints, venueOf,
 } from './cardladder'
+import type { PriceFeed } from './cardladder'
 import { computeFmv } from '../analytics'
 import type { PricePoint } from '../types'
 
@@ -408,5 +409,55 @@ describe('the sales the picture search carries', () => {
   it('still drops a row with neither', () => {
     const body = { data: { results: [{ cert_number: '1' }] } }
     expect(parseCertImages(body, [{ cert_number: '1', grading_company: 'PSA' }])).toHaveLength(0)
+  })
+})
+
+describe('a feed that is written every week', () => {
+  const feed = (byCert: PriceFeed['byCert']): PriceFeed =>
+    ({ fetchedAt: '2026-09-21T00:00:00Z', source: 'test', byCert, errors: [] })
+  const p = (date: string, price: number): PricePoint => ({ date, price, source: 'sale' })
+  const entry = (sales: PricePoint[], over: Partial<PriceFeed['byCert'][string]> = {}) =>
+    ({ grader: 'PSA', clValue: 100, lastSalePrice: 100, sales, ...over })
+
+  it('deepens rather than sliding, which is the whole point of a schedule', () => {
+    // Week one holds March to May; week two's response has moved on to June.
+    // Overwriting would leave a file that knows only about June.
+    const week1 = feed({ '123': entry([p('2026-03-01', 100), p('2026-05-01', 110)]) })
+    const week2 = feed({ '123': entry([p('2026-05-01', 110), p('2026-06-01', 130)]) })
+    const merged = mergeFeeds(week1, week2)
+    expect(merged.byCert['123'].sales.map((s) => s.date))
+      .toEqual(['2026-03-01', '2026-05-01', '2026-06-01'])
+  })
+
+  it('keeps a cert the new run could not reach', () => {
+    // A bad night upstream must not delete history already paid for.
+    const week1 = feed({ '123': entry([p('2026-03-01', 100)]), '456': entry([p('2026-04-01', 200)]) })
+    const week2 = feed({ '123': entry([p('2026-06-01', 130)]) })
+    const merged = mergeFeeds(week1, week2)
+    expect(merged.byCert['456'].sales).toHaveLength(1)
+    expect(merged.byCert['123'].sales).toHaveLength(2)
+  })
+
+  it('keeps the old value when the new run has none', () => {
+    const week1 = feed({ '123': entry([p('2026-03-01', 100)], { clValue: 4200 }) })
+    const week2 = feed({ '123': entry([p('2026-06-01', 130)], { clValue: null }) })
+    expect(mergeFeeds(week1, week2).byCert['123'].clValue).toBe(4200)
+  })
+
+  it('takes the new value when there is one', () => {
+    const week1 = feed({ '123': entry([p('2026-03-01', 100)], { clValue: 4200 }) })
+    const week2 = feed({ '123': entry([p('2026-06-01', 130)], { clValue: 4600 }) })
+    expect(mergeFeeds(week1, week2).byCert['123'].clValue).toBe(4600)
+  })
+
+  it('is just the new feed on a first run', () => {
+    const only = feed({ '123': entry([p('2026-03-01', 100)]) })
+    expect(mergeFeeds(null, only)).toEqual(only)
+  })
+
+  it('adds a cert that was not there before', () => {
+    const week1 = feed({ '123': entry([p('2026-03-01', 100)]) })
+    const week2 = feed({ '789': entry([p('2026-06-01', 300)]) })
+    expect(Object.keys(mergeFeeds(week1, week2).byCert).sort()).toEqual(['123', '789'])
   })
 })

@@ -1,0 +1,75 @@
+# Keep the sales record deepening, so the yearly high becomes a real one.
+#
+# The upstream returns only the newest few sales per certificate. Fetched once
+# and stored, that is a few weeks of history; fetched on a schedule and MERGED,
+# it is a record that only ever grows — and after twelve months the 52-week
+# high in public/prices.json is a true 52-week high, with no manual entry and
+# no dependence on a browser's IndexedDB surviving.
+#
+# It writes to the repository rather than to a browser, so the history outlives
+# cleared site data and is readable from any machine. The file holds cert
+# numbers and public sale prices only — never cost basis, which is why the cert
+# list comes from the PORTFOLIO_CERTS secret and not from a tracked file.
+#
+# COST: about 3 credits a run for a whole collection, out of 200 a month.
+# Weekly is ~12 a month. A card that sells more often than the feed's few-sale
+# window can carry needs a tighter interval — Data & settings says which cards
+# those are and how often each needs fetching.
+#
+# THE SCHEDULE IS deliberately COMMENTED OUT. Turn it on yourself, when you
+# have decided what it should cost you; nothing here should start spending
+# credits on its own.
+name: Refresh sold comps
+
+on:
+  workflow_dispatch:
+  # Uncomment to run every Monday at 09:00 UTC (~12 credits a month):
+  # schedule:
+  #   - cron: '0 9 * * 1'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: prices
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: Fetch and merge
+        env:
+          PARSE_API_KEY: ${{ secrets.PARSE_API_KEY }}
+          PORTFOLIO_CERTS: ${{ secrets.PORTFOLIO_CERTS }}
+        run: |
+          if [ -z "$PARSE_API_KEY" ] || [ -z "$PORTFOLIO_CERTS" ]; then
+            echo "PARSE_API_KEY and PORTFOLIO_CERTS must both be set. Nothing fetched."
+            exit 1
+          fi
+          npx tsx scripts/fetch-prices.ts public/prices.json
+
+      - name: Commit only if the record actually grew
+        run: |
+          # A run that adds nothing must not make a commit: an empty history of
+          # commits is easier to read than one with fifty-two "no change" rows,
+          # and a diff that only moves fetchedAt is noise.
+          if git diff --quiet -- public/prices.json; then
+            echo "No change to the sales record."
+            exit 0
+          fi
+          added=$(git diff --numstat -- public/prices.json | awk '{print $1}')
+          git config user.name 'github-actions[bot]'
+          git config user.email 'github-actions[bot]@users.noreply.github.com'
+          git add public/prices.json
+          git commit -m "Deepen the sales record ($added lines added)"
+          git push

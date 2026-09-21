@@ -20,7 +20,7 @@ import { readFile, writeFile, mkdir } from 'node:fs/promises'
 import { dirname } from 'node:path'
 import Papa from 'papaparse'
 import {
-  batchCerts, buildFeed, isSupportedGrader, parseBulkResponse,
+  batchCerts, buildFeed, isSupportedGrader, mergeFeeds, parseBulkResponse,
   type CertPrices, type CertRequest, type PriceFeed, type SupportedGrader,
 } from '../src/lib/providers/cardladder'
 import { rowsToHoldings, type Cell } from '../src/lib/ingest'
@@ -30,6 +30,25 @@ const KEY = process.env.PARSE_API_KEY ?? ''
 const SCRAPER = process.env.PARSE_SCRAPER_ID ?? ''
 const OUT = process.argv[2] ?? 'public/prices.json'
 const PORTFOLIO = process.argv[3] ?? process.env.PORTFOLIO_PATH ?? ''
+
+/** The feed the last run left, or null on a first run or an unreadable file. */
+async function readFeed(path: string): Promise<PriceFeed | null> {
+  try {
+    const parsed: unknown = JSON.parse(await readFile(path, 'utf8'))
+    const feed = parsed as PriceFeed
+    return feed && typeof feed === 'object' && feed.byCert ? feed : null
+  } catch {
+    // Missing on the first run, and a corrupt file must not stop the fetch —
+    // but it must not silently become an empty history either, which is why
+    // the run prints the before and after counts.
+    return null
+  }
+}
+
+function countSales(feed: PriceFeed | null): number {
+  if (!feed?.byCert) return 0
+  return Object.values(feed.byCert).reduce((n, e) => n + (e.sales?.length ?? 0), 0)
+}
 
 function die(message: string): never {
   console.error(`\n  ${message}\n`)
@@ -205,12 +224,20 @@ async function main() {
     }
   }
 
-  const feed = buildFeed(entries, errors)
+  // Merged with whatever the last run wrote, never replacing it. The upstream
+  // hands back only the newest few sales per cert, so overwriting would leave
+  // a file holding a sliding window of recent weeks — running this weekly for
+  // a year would then produce exactly as little history as running it once.
+  const previous = await readFeed(OUT)
+  const feed = mergeFeeds(previous, buildFeed(entries, errors))
   const withSales = entries.filter((e) => e.points.length > 0).length
+  const before = countSales(previous)
+  const after = countSales(feed)
   await mkdir(dirname(OUT), { recursive: true })
   await writeFile(OUT, `${JSON.stringify(feed, null, 2)}\n`)
 
   console.log(`\n  ${OUT}: ${entries.length} certs, ${withSales} with sold comps, ${errors.length} unmatched.`)
+  console.log(`  sales on record: ${before} -> ${after} (+${after - before} new)`)
   if (entries.length > 0 && withSales === 0) {
     die('Every cert resolved but none carried sales. Something changed upstream; not overwriting with empty data would be safer — check the output.')
   }

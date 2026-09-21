@@ -198,6 +198,35 @@ export interface PriceFeed {
   errors: { cert: string; message: string }[]
 }
 
+/**
+ * Fold a new run's results into the feed the last run wrote.
+ *
+ * Without this a scheduled fetch is pointless. The upstream returns only the
+ * newest few sales per cert, so writing the response straight out means the
+ * file holds a sliding window of the last few weeks and nothing before it —
+ * running it weekly for a year would leave exactly as little history as
+ * running it once. Merged, the file is a record that only ever deepens, and
+ * after twelve months the 52-week high in it is a real one.
+ *
+ * A cert absent from the new run keeps whatever the old file held: a bad
+ * night upstream must not delete history that was already paid for. Its
+ * metadata is only replaced when the new run actually has a figure.
+ */
+export function mergeFeeds(previous: PriceFeed | null, next: PriceFeed): PriceFeed {
+  if (!previous?.byCert) return next
+  const byCert: PriceFeed['byCert'] = { ...previous.byCert }
+  for (const [cert, entry] of Object.entries(next.byCert)) {
+    const old = byCert[cert]
+    byCert[cert] = {
+      grader: entry.grader || old?.grader || '',
+      clValue: entry.clValue ?? old?.clValue ?? null,
+      lastSalePrice: entry.lastSalePrice ?? old?.lastSalePrice ?? null,
+      sales: mergeSalePoints(old?.sales ?? [], entry.sales),
+    }
+  }
+  return { ...next, byCert }
+}
+
 export function buildFeed(entries: CertPrices[], errors: PriceFeed['errors'] = []): PriceFeed {
   const byCert: PriceFeed['byCert'] = {}
   for (const e of entries) {
