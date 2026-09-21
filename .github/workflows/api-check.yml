@@ -25,6 +25,14 @@ on:
         description: PSA, BGS, CGC or SGC
         required: false
         default: PSA
+      card_name:
+        description: >-
+          A card to look up BY NAME rather than by cert, e.g. "Playing in the
+          Sea Pikachu". The sales history belongs to the card at a grade, not
+          to a slab, so this is the lookup that matters when a cert carries no
+          card id. Used by the depth probe.
+        required: false
+        default: ''
       probes:
         description: >-
           Which questions to ask, comma separated. Each one spends the owner's
@@ -324,6 +332,7 @@ jobs:
           KEY: ${{ secrets.PARSE_API_KEY }}
           CERT: ${{ inputs.cert }}
           GRADER: ${{ inputs.grader }}
+          CARD_NAME: ${{ inputs.card_name }}
         run: |
           case ",$PROBES," in *,all,*|*,depth,*) ;; *) echo "skipped — not in '$PROBES'"; exit 0 ;; esac
           [ -n "$KEY" ] || exit 0
@@ -422,7 +431,6 @@ jobs:
           except Exception:
               print('  no spec'); raise SystemExit
           for p, ops in sorted(d.get('paths', {}).items()):
-              if 'card_sales' not in p and 'sales' not in p: continue
               print(' ', p)
               for verb, op in ops.items():
                   params = [(q.get('name'), q.get('in'), q.get('required')) for q in op.get('parameters', [])]
@@ -520,3 +528,66 @@ jobs:
             fi
             break
           done < ids.txt
+
+          # The lookup that actually matters.
+          #
+          # A sales history belongs to a CARD AT A GRADE, not to a slab: asking
+          # for card_id Zrxi8aY5mAA6roFkKUVX answered with cert 110284828,
+          # which is a different slab of the same card. So when a cert carries
+          # no card id — and most seem not to — the way in is the card's name,
+          # not its certificate. search_cards has never been called.
+          if [ -n "$CARD_NAME" ]; then
+            printf '\n=== search_cards, by name rather than by cert ===\n'
+            for param in query q name search term; do
+              printf '\n  --- GET search_cards?%s=... ---\n' "$param"
+              code=$(curl -sS -m 120 -o cards.json -w '%{http_code}' -D cards.head -G \
+                --data-urlencode "$param=$CARD_NAME" \
+                -H "X-API-Key: $KEY" "$BASE/scraper/$SCR/search_cards" || echo 000)
+              echo "  HTTP $code"
+              tr -d '\r' < cards.head | grep -iE '^x-credits-charged' | sed 's/^/  /' || true
+              if [ "$code" != "200" ]; then
+                head -c 160 cards.json | sed 's/^/  /'; echo
+                continue
+              fi
+              python3 -c "
+          import json, re
+          d = json.load(open('cards.json'))
+          hits = []
+          def walk(n):
+              if isinstance(n, dict):
+                  i = n.get('id')
+                  if isinstance(i, str) and not re.fullmatch(r'[0-9a-f]{40}', i):
+                      hits.append((i, str(n.get('label') or n.get('name') or '')[:95]))
+                  for v in n.values(): walk(v)
+              elif isinstance(n, list):
+                  for v in n[:40]: walk(v)
+          walk(d)
+          print('   card ids found:', len(hits))
+          for i, label in hits[:12]:
+              print('    ', i, '|', label)
+          open('found.txt','w').write(chr(10).join(i for i, _ in hits[:12]))
+          " || true
+              break
+            done
+
+            while read -r CID; do
+              [ -n "$CID" ] || continue
+              printf '\n  --- GET get_card_sales?card_id=%s ---\n' "$CID"
+              code=$(curl -sS -m 120 -o hist.json -w '%{http_code}' -D hist.head \
+                -H "X-API-Key: $KEY" "$BASE/scraper/$SCR/get_card_sales?card_id=$CID" || echo 000)
+              echo "  HTTP $code"
+              tr -d '\r' < hist.head | grep -iE '^x-credits-charged' | sed 's/^/  /' || true
+              [ "$code" = "200" ] || { head -c 160 hist.json | sed 's/^/  /'; echo; continue; }
+              python3 -c "
+          import json
+          d = json.load(open('hist.json')).get('data', {})
+          s = d.get('sales') or []
+          print('   ', d.get('label','')[:95])
+          print('    cert quoted:', d.get('cert_number'), '| total_sales:', d.get('total_sales'), '| points:', len(s))
+          if s:
+              print('    oldest:', s[-1], )
+              print('    newest:', s[0])
+          " || true
+              break
+            done < found.txt
+          fi
