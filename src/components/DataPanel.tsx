@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Download, FileSpreadsheet, KeyRound, Layers, Plug, Trash2 } from 'lucide-react'
 import { UploadZone } from './UploadZone'
+import { HistoryGapsPanel } from './HistoryGapsPanel'
 import {
   getApiBaseOverride, getApiKey, isFileOrigin, pokemonTcgIo, setApiBaseOverride, setApiKey,
   type ConnectionResult,
@@ -10,6 +11,7 @@ import { getParseKey, setParseKey } from '../lib/providers/cardladder-client'
 import { estimateFetch } from '../lib/providers/cardladder'
 import type { UsageInfo } from '../lib/providers/cardladder-client'
 import type { ImportLogEntry, ImportMode, RefreshState } from '../lib/store'
+import type { HistoryGap } from '../lib/historygaps'
 
 interface Props {
   importLog: ImportLogEntry[]
@@ -30,6 +32,10 @@ interface Props {
   onClearList: (kind: 'portfolio' | 'watchlist') => void
   holdingCount: number
   watchCount: number
+  /** Cards whose record is too thin or too stale to trust, worst first. */
+  historyGaps: HistoryGap[]
+  /** How many cards were assessed, so "6 of 32" can be said. */
+  gapTotal: number
 }
 
 /**
@@ -67,7 +73,7 @@ function ConfirmButton({
 export function DataPanel({
   importLog, refresh, gradedRefresh, certLastFetched, certCount, missingCerts, photoCount, usage,
   onImport, onTemplate, onExport, onClear, onClearList, onRefreshGraded,
-  holdingCount, watchCount,
+  holdingCount, watchCount, historyGaps, gapTotal,
 }: Props) {
   const [key, setKey] = useState(getApiKey())
   const [saved, setSaved] = useState(false)
@@ -94,6 +100,7 @@ export function DataPanel({
 
   return (
     <div className="space-y-4">
+      <HistoryGapsPanel gaps={historyGaps} total={gapTotal} />
       <div className="grid gap-4 lg:grid-cols-2 items-start">
         <section className="card p-4">
           <h2 className="text-sm font-semibold mb-3">Import</h2>

@@ -19,6 +19,7 @@ import { useTheme } from './hooks/useTheme'
 import { analyzeItem, computeTrend } from './lib/analytics'
 import { money, pct, relativeTime } from './lib/format'
 import { itemKey } from './lib/key'
+import { assessHistory, rankGaps } from './lib/historygaps'
 import { buildRepeatSalesIndex } from './lib/marketindex'
 import {
   analyzeHoldings, buildValueTrend, computePortfolioStats, holdingKey, suspectedWatchItems, unitValue,
@@ -77,6 +78,22 @@ export default function App() {
     }
     return out
   }, [watchlist, series, marketIndex])
+
+  // Which cards' numbers cannot be trusted yet, and why. Covers holdings and
+  // watchlist together: the thin-record problem is about the certificate, not
+  // about which list the card is sitting in.
+  const assessed = useMemo(() => {
+    const out = []
+    for (const item of [...holdings, ...watchlist]) {
+      const key = itemKey(item)
+      const points = series.get(key)?.points ?? []
+      const analysis = holdingAnalyses.get(key) ?? watchAnalyses.get(key)
+      out.push(assessHistory(key, item.name, points, analysis, store.certLastFetched))
+    }
+    return out
+  }, [holdings, watchlist, series, holdingAnalyses, watchAnalyses, store.certLastFetched])
+  const historyGaps = useMemo(() => rankGaps(assessed), [assessed])
+  const gapTotal = assessed.length
 
   const stats = useMemo(() => computePortfolioStats(holdings, holdingAnalyses), [holdings, holdingAnalyses])
   // Rows counting toward the portfolio total with nothing to say they were
@@ -395,6 +412,7 @@ export default function App() {
                   .map((i) => i.cert),
               ).size
             }
+            historyGaps={historyGaps} gapTotal={gapTotal}
             usage={store.usage} onRefreshGraded={(o) => void store.refreshGraded(o)}
             onImport={store.importFile} onTemplate={handleTemplate} onExport={handleExport}
             onClear={() => void store.clearAll()}

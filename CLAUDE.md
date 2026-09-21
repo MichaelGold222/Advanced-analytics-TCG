@@ -585,6 +585,34 @@ built on it produces figures with no meaning.
 must stay where it started, at every horizon. That is what both bugs broke, and
 it is what the tests now assert.
 
+### Two different reasons a number is wrong, and only one is fixed by backfilling
+
+`historygaps.ts`, shown in Data & settings. The owner asked for accurate
+numbers and had no way to find out which ones were not, so "get history for
+all 32 cards" looked like the only option when the real list is usually much
+shorter.
+
+- **Thin.** The record does not reach back a year, so the "yearly" high is the
+  high of however many days it does reach. Fixed once, by getting sales in
+  from anywhere.
+- **Outpaced.** The card sells more often than one fetch can carry, so sales
+  are lost *permanently* between refreshes — the feed returns the newest few
+  and anything that scrolled off is gone. Backfilling does nothing for this;
+  only refreshing more often does. A card can be perfectly covered today and
+  drifting out of true from tomorrow, which is why it is labelled apart rather
+  than folded into one warning.
+
+`SALES_PER_FETCH` is the measured five, and `safeRefreshDays` is that over the
+card's trade rate: how long a refresh can wait before the card outruns it. The
+rate is taken over the **last five sales only**. A wider slice was the first
+implementation and it was wrong in the exact way the feature exists to catch —
+a backfilled year of quiet trading averaged away a slab that had started
+selling daily. The window is the same size as the thing it tests: at this
+rate, does one fetch still keep up?
+
+Typed figures are excluded from the rate: a `user` point says a price on a
+date, nothing about how often the card changes hands.
+
 ### What is still missing
 
 Nothing measures whether the 80% bands actually contain the price 80% of the
