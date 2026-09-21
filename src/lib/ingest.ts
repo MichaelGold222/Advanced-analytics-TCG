@@ -15,6 +15,16 @@ export type Cell = string | number | boolean | Date | null
 export interface RawSheet {
   name: string
   rows: Cell[][]
+  /**
+   * True when `name` is really the file's name, not a tab the owner named.
+   *
+   * A CSV has no sheet names, so one is made up from the filename. That
+   * invented name must never outrank the button the person pressed: a
+   * workbook tab called "Watchlist" is a deliberate statement about its
+   * contents, and `my collection sept.csv` is what a file happened to be
+   * called.
+   */
+  nameIsFilename?: boolean
 }
 
 /** Canonical fields we try to find, best alias first. */
@@ -335,10 +345,29 @@ export function rowsToHoldings(sheet: RawSheet): ImportResult<Holding> {
     }
   }
 
+  // A sheet with asking or target prices and nothing about what was paid is a
+  // list of things being considered, not things owned. Landing it here counts
+  // it in the portfolio total and reports asking prices as wealth, so say so
+  // plainly rather than importing it quietly and being believed.
+  const noCost = map.costBasis == null && map.investment == null
+  if (noCost && (map.askingPrice != null || map.targetPrice != null) && items.length > 0) {
+    const tell = [
+      map.askingPrice != null ? `"${headers[map.askingPrice]}"` : null,
+      map.targetPrice != null ? `"${headers[map.targetPrice]}"` : null,
+    ].filter(Boolean).join(' and ')
+    issues.push({
+      row: headerRow + 1,
+      message: `This looks like a watchlist rather than holdings: it has ${tell} and no column for what `
+        + 'was paid. Imported as holdings it counts toward the portfolio total as though these were owned. '
+        + 'If that is not what you wanted, upload it again under "Upload watchlist", which replaces the '
+        + 'watchlist, and then re-upload your real holdings sheet to clear these rows out.',
+    })
+  }
+
   // No cost column means every return reads as if the collection were free.
   // The header is usually there and simply spelled in a way we did not expect,
   // so name what was ignored: that is the column they need to point at.
-  if (map.costBasis == null && map.investment == null && items.length > 0) {
+  if (noCost && map.askingPrice == null && map.targetPrice == null && items.length > 0) {
     const claimed = new Set(Object.values(map))
     const ignored = headers.filter((h, i) => h && !claimed.has(i) && !dateCols.some((d) => d.col === i))
     issues.push({
@@ -509,12 +538,13 @@ export function rowsToPriceHistory(sheet: RawSheet): Record<string, PricePoint[]
 
 const HISTORY_SHEET = /price|history|sales|comps|sold/i
 const WATCH_SHEET = /watch|buy|target|wish|acquis|shopping/i
+const PORTFOLIO_SHEET = /portfolio|holding|collection|inventory|owned/i
 
 export async function readSheets(file: File): Promise<RawSheet[]> {
   if (/\.csv$/i.test(file.name) || file.type === 'text/csv') {
     const text = await file.text()
     const parsed = Papa.parse<string[]>(text, { skipEmptyLines: true })
-    return [{ name: file.name.replace(/\.csv$/i, ''), rows: parsed.data as Cell[][] }]
+    return [{ name: file.name.replace(/\.csv$/i, ''), rows: parsed.data as Cell[][], nameIsFilename: true }]
   }
   const { default: readXlsxFile } = await import('read-excel-file/browser')
   const sheets = await readXlsxFile(file)
@@ -527,19 +557,49 @@ export interface WorkbookImport {
   priceHistory: Record<string, PricePoint[]>
 }
 
-/** Route each sheet by its name, then merge every price observation found. */
+/**
+ * Route each sheet, then merge every price observation found.
+ *
+ * The rule is that the button the person pressed outranks any guess made from
+ * a name. It did not used to, and the cost of that was severe: a watchlist
+ * uploaded through the watchlist zone from a file called something like
+ * "my collection.csv" was routed to holdings, where it was counted as owned
+ * and its asking prices went into the portfolio total — while the watchlist
+ * itself, being a replace, was emptied. Two wrong places at once, from a word
+ * in a filename.
+ *
+ * So a name only decides where a sheet goes when the name is a real one: a tab
+ * the owner deliberately called "Watchlist" inside a workbook that may well
+ * hold both. A CSV has no tabs, its name is the file's, and the mode decides.
+ */
 export async function importWorkbook(file: File, mode: 'portfolio' | 'watchlist'): Promise<WorkbookImport> {
   const sheets = await readSheets(file)
   const result: WorkbookImport = { holdings: [], watchlist: [], priceHistory: {} }
 
   for (const sheet of sheets) {
     if (sheet.rows.length === 0) continue
+
+    // Long-format comps, but only when the sheet really is that shape. The
+    // name alone is not enough: a watchlist called "sales pipeline" matches
+    // the same words and is not a list of completed sales.
     if (HISTORY_SHEET.test(sheet.name)) {
-      mergeHistory(result.priceHistory, rowsToPriceHistory(sheet))
-      continue
+      const history = rowsToPriceHistory(sheet)
+      if (Object.keys(history).length > 0) {
+        mergeHistory(result.priceHistory, history)
+        continue
+      }
     }
-    const isWatch = WATCH_SHEET.test(sheet.name) || (mode === 'watchlist' && !/portfolio|holding|collection/i.test(sheet.name))
-    if (isWatch) {
+
+    const deliberate = sheet.nameIsFilename !== true
+    const named = deliberate
+      ? WATCH_SHEET.test(sheet.name)
+        ? 'watchlist'
+        : PORTFOLIO_SHEET.test(sheet.name)
+          ? 'portfolio'
+          : null
+      : null
+
+    if ((named ?? mode) === 'watchlist') {
       const r = rowsToWatchItems(sheet)
       result.watchlist.push(r)
       mergeHistory(result.priceHistory, r.priceHistory)

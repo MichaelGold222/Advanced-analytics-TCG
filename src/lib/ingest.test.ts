@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest'
-import { findHeaderRow, mapColumns, rowsToHoldings, rowsToPriceHistory, rowsToWatchItems } from './ingest'
+import {
+  findHeaderRow, importWorkbook, mapColumns, rowsToHoldings, rowsToPriceHistory, rowsToWatchItems,
+} from './ingest'
 import type { Cell, RawSheet } from './ingest'
 
 const sheet = (rows: Cell[][], name = 'Portfolio'): RawSheet => ({ name, rows })
@@ -449,5 +451,81 @@ describe('a watchlist built from a holdings template', () => {
     // A stated profit is still not read: it is computed from cost and value.
     expect(r.ignoredHeaders).toContain('Potential Profit')
     expect(Object.values(r.mapped)).not.toContain('Potential Profit')
+  })
+})
+
+describe('routing a file to the right tab', () => {
+  const WATCH_ROWS: Cell[][] = [
+    ['Card Name', 'Set', 'Graded Cert #', 'Asking Price', 'Target Price'],
+    ['Charizard', 'Base Set', '93083876', 24000, 20000],
+  ]
+  const csv = (name: string, rows: Cell[][]): File =>
+    new File([rows.map((r) => r.join(',')).join('\n')], `${name}.csv`, { type: 'text/csv' })
+
+  it('sends a watchlist upload to the watchlist however the file is named', async () => {
+    // The word that used to divert it: a filename is not a sheet name.
+    for (const name of ['my collection sept', 'pokemon portfolio', 'card holdings 2026']) {
+      const r = await importWorkbook(csv(name, WATCH_ROWS), 'watchlist')
+      expect(r.watchlist.flatMap((w) => w.items)).toHaveLength(1)
+      expect(r.holdings.flatMap((h) => h.items)).toHaveLength(0)
+    }
+  })
+
+  it('sends a portfolio upload to holdings however the file is named', async () => {
+    const rows: Cell[][] = [
+      ['Card Name', 'Set', 'Cost Basis', 'Quantity'],
+      ['Lugia', 'Neo Genesis', 900, 1],
+    ]
+    for (const name of ['things to watch', 'buy list', 'wishlist']) {
+      const r = await importWorkbook(csv(name, rows), 'portfolio')
+      expect(r.holdings.flatMap((h) => h.items)).toHaveLength(1)
+      expect(r.watchlist.flatMap((w) => w.items)).toHaveLength(0)
+    }
+  })
+
+  it('still honours a tab the owner deliberately named', async () => {
+    const r = await importWorkbook(csv('anything', WATCH_ROWS), 'portfolio')
+    // A CSV has no tabs, so the mode decides and this lands in holdings.
+    expect(r.holdings.flatMap((h) => h.items)).toHaveLength(1)
+
+    // A real workbook tab named Watchlist does outrank the mode.
+    const sheets: RawSheet[] = [{ name: 'Watchlist', rows: WATCH_ROWS }]
+    const routed = sheets.map((sh) => (/watch/i.test(sh.name) ? 'watchlist' : 'portfolio'))
+    expect(routed).toEqual(['watchlist'])
+  })
+
+  it('does not read a watchlist as price history just for matching a word', async () => {
+    // "sales" matches the history pattern, but this is not long-format comps.
+    const r = await importWorkbook(csv('q4 sales pipeline', WATCH_ROWS), 'watchlist')
+    expect(r.watchlist.flatMap((w) => w.items)).toHaveLength(1)
+    expect(Object.keys(r.priceHistory)).toHaveLength(0)
+  })
+
+  it('still reads real long-format comps as price history', async () => {
+    const r = await importWorkbook(csv('sales history', [
+      ['Card Name', 'Set', 'Date', 'Price'],
+      ['Charizard', 'Base Set', '2026-01-15', 22000],
+      ['Charizard', 'Base Set', '2026-04-02', 23500],
+    ]), 'portfolio')
+    expect(Object.values(r.priceHistory).flat()).toHaveLength(2)
+    expect(r.holdings.flatMap((h) => h.items)).toHaveLength(0)
+  })
+
+  it('says so loudly when a watchlist is imported as holdings anyway', () => {
+    const r = rowsToHoldings({ name: 'anything', rows: WATCH_ROWS })
+    expect(r.items).toHaveLength(1)
+    const said = r.issues.map((i) => i.message).join(' ')
+    expect(said).toMatch(/looks like a watchlist rather than holdings/i)
+    expect(said).toMatch(/counts toward the portfolio total/i)
+  })
+
+  it('keeps the plain missing-cost advice for a real holdings sheet', () => {
+    const r = rowsToHoldings({
+      name: 'portfolio',
+      rows: [['Card Name', 'Set', 'Quantity'], ['Lugia', 'Neo Genesis', 1]],
+    })
+    const said = r.issues.map((i) => i.message).join(' ')
+    expect(said).toMatch(/No cost column was recognised/i)
+    expect(said).not.toMatch(/looks like a watchlist/i)
   })
 })

@@ -185,6 +185,33 @@ Worth knowing: `costBasis` claims "Entry Price", so a watchlist using that
 header to mean "the price I would pay" has it set aside rather than read as a
 target. The log now names it, which is how anyone would find out.
 
+### Routing a sheet to the right tab
+
+The button the person pressed outranks any guess made from a name. It did not
+used to, and the cost was severe: `importWorkbook` treated a CSV's filename as
+if it were a sheet name, so a watchlist uploaded through the watchlist zone
+from a file called "my collection.csv" matched `/collection/`, was routed to
+holdings, counted as owned, and put its asking prices into the portfolio total
+— while the watchlist itself, being a replace, was emptied. Two wrong places at
+once, from one word in a filename.
+
+A name now decides only when it is a real one: a tab the owner deliberately
+called "Watchlist" inside a workbook that may hold both. `RawSheet.nameIsFilename`
+marks the invented ones. A CSV has no tabs, so the mode decides.
+
+The history route also checks shape, not just the name — a watchlist called
+"sales pipeline" matches the same words and is not a list of completed sales.
+
+Belt and braces: a sheet with asking or target prices and no cost column that
+lands in holdings anyway now says so at import, because landing there counts it
+in the portfolio total and reports asking prices as wealth.
+
+**Recovery, if it happens again:** re-upload the watchlist through "Upload
+watchlist" (a replace, so it restores that tab), then re-upload the real
+holdings sheet through "Upload portfolio" (also a replace, which clears the
+stray rows). Prices already fetched are keyed by card, not by tab, so nothing
+fetched is lost either way.
+
 ### A trap worth remembering
 
 `npx tsc --noEmit` at the repo root checks **nothing** — the root tsconfig is
