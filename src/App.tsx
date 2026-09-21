@@ -72,7 +72,7 @@ export default function App() {
     for (const w of watchlist) {
       const key = itemKey(w)
       const s = series.get(key) ?? { key, points: [] }
-      out.set(key, analyzeItem(s, w.askingPrice ?? null, new Date(), marketIndex))
+      out.set(key, analyzeItem(s, w.askingPrice ?? null, new Date(), { index: marketIndex }))
     }
     return out
   }, [watchlist, series, marketIndex])

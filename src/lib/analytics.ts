@@ -380,12 +380,27 @@ function slopeOf(xs: number[], ys: number[]): number | null {
  * `askingPrice` is what the user is being quoted; without one we judge the
  * current market against itself using FMV as the reference.
  */
+export interface AnalyseOptions {
+  index?: MarketIndex | null
+  /**
+   * Whether to simulate this item's future.
+   *
+   * Off for holdings, which never display one. A forecast is two thousand
+   * simulated paths per card and costs some fifty milliseconds; over a
+   * ninety-slab collection that is four seconds of blocked main thread on
+   * every single state change — every deletion, every keystroke in an asking
+   * price, every segment correction — spent entirely on numbers nothing reads.
+   */
+  withForecast?: boolean
+}
+
 export function analyzeItem(
   series: PriceSeries,
   askingPrice?: number | null,
   now = new Date(),
-  index?: MarketIndex | null,
+  options: AnalyseOptions = {},
 ): ItemAnalysis {
+  const { index = null, withForecast = true } = options
   const fmv = computeFmv(series, now)
   const reference = askingPrice ?? null
   const range = compute52WeekRange(series, reference ?? fmv.fmv, now)
@@ -397,10 +412,12 @@ export function analyzeItem(
   const lastSale = lastSaleAt(series, now)
   // Returns are figured against what a buyer would actually pay: the asking
   // price when there is one, otherwise what the card is worth.
-  const forecast = computeForecast(series.points, lastSale?.price ?? fmv.fmv, {
-    index,
-    basis: reference ?? lastSale?.price ?? fmv.fmv,
-  })
+  const forecast = withForecast
+    ? computeForecast(series.points, lastSale?.price ?? fmv.fmv, {
+      index,
+      basis: reference ?? lastSale?.price ?? fmv.fmv,
+    })
+    : null
   return {
     key: series.key, fmv, range, sixMonthRange, twoYearRange, allTimeRange, entry, referencePrice: reference,
     lastSale,

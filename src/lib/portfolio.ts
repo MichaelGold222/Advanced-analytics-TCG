@@ -47,7 +47,9 @@ export function analyzeHoldings(
     const key = holdingKey(h)
     if (out.has(key)) continue
     const series = seriesByKey.get(key) ?? { key, points: [] }
-    out.set(key, analyzeItem(series, null, now, index))
+    // No forecast: nothing on the holdings side draws one, and simulating
+    // every slab on every edit is where the delay came from.
+    out.set(key, analyzeItem(series, null, now, { index, withForecast: false }))
   }
   return out
 }

@@ -310,6 +310,52 @@ function seededRandom(seed: number): () => number {
  * have tripled across six sales would otherwise be projected to triple again,
  * which is an artefact of the sample rather than a claim anyone would make.
  */
+/**
+ * Results already computed, keyed by everything that went into them.
+ *
+ * `computeForecast` is pure and expensive — two thousand simulated paths, some
+ * fifty milliseconds — and React recomputes an entire watchlist whenever any
+ * part of it changes. Typing a single digit into one card's asking price
+ * re-simulated every other card, none of whose inputs had moved.
+ *
+ * The key covers every argument, so a hit is the answer the call would have
+ * produced. Anything less than that would serve a stale forecast, which is far
+ * worse than a slow one.
+ */
+const cache = new Map<string, ForecastResult | null>()
+
+/** Beyond this the cache is dropped wholesale; it is a speed aid, not storage. */
+const CACHE_LIMIT = 400
+
+/** FNV-1a over the content, so the key changes when any price or date does. */
+function hash(parts: string): string {
+  let h = 2166136261
+  for (let i = 0; i < parts.length; i++) {
+    h ^= parts.charCodeAt(i)
+    h = Math.imul(h, 16777619)
+  }
+  return (h >>> 0).toString(36)
+}
+
+function cacheKey(
+  points: PricePoint[],
+  from: number,
+  options: Required<Pick<ForecastOptions, 'horizons' | 'prior' | 'projectionYears'>>
+    & { index: MarketIndex | null; basis: number | null },
+): string {
+  const series = points.map((p) => `${p.date}:${p.price}:${p.source}`).join(',')
+  const market = options.index
+    ? `${options.index.periodDays}:${options.index.pairCount}:${options.index.cardCount}:${
+      options.index.points.map((pt) => pt.logLevel.toFixed(6)).join(',')
+    }`
+    : 'none'
+  return [
+    hash(series), points.length, from, options.basis ?? 'x',
+    options.horizons.join('-'), options.projectionYears.join('-'), options.prior,
+    hash(market),
+  ].join('|')
+}
+
 export function computeForecast(
   points: PricePoint[],
   from: number | null,
@@ -320,6 +366,23 @@ export function computeForecast(
     basis = null, projectionYears = PROJECTION_YEARS,
   } = options
   if (from == null || !(from > 0)) return null
+
+  const key = cacheKey(points, from, { horizons, prior, projectionYears, index, basis })
+  if (cache.has(key)) return cache.get(key) ?? null
+  const result = simulate(points, from, { horizons, prior, index, basis, projectionYears })
+  if (cache.size >= CACHE_LIMIT) cache.clear()
+  cache.set(key, result)
+  return result
+}
+
+function simulate(
+  points: PricePoint[],
+  from: number,
+  {
+    horizons, prior, index, basis, projectionYears,
+  }: Required<Pick<ForecastOptions, 'horizons' | 'prior' | 'projectionYears'>>
+    & { index: MarketIndex | null; basis: number | null },
+): ForecastResult | null {
   const returns = dailyReturns(points)
   if (returns.length < MIN_RETURNS_FOR_FORECAST) return null
 
@@ -350,21 +413,48 @@ export function computeForecast(
     ? drawsAt(beta!.residuals, split.idiosyncratic)
     : drawsAt(returns.map((r) => r.rate), volatility)
 
-  const rand = seededRandom(Math.round(from * 1000) + returns.length * 7919)
-  const pick = (pool: number[]) => pool[Math.floor(rand() * pool.length) % pool.length]
-  const shock = () => pick(draws) + (marketDraws ? split!.beta * pick(marketDraws) : 0)
+  // A seed per path, not one stream shared by the whole run.
+  //
+  // With a single stream, each path consumed as many draws as the longest
+  // horizon asked for, so path two started at a different place depending on
+  // how far out anything had been asked to go — and adding a ten-year
+  // projection quietly moved the one-month band. Seeding each path on its own
+  // index makes a path the same walk whatever else is being computed, which is
+  // what anyone would assume of a number that does not change when reloaded.
+  const baseSeed = Math.round(from * 1000) + returns.length * 7919
+  const shockerFor = (seed: number) => {
+    const rand = seededRandom(seed)
+    const pick = (pool: number[]) => pool[Math.floor(rand() * pool.length) % pool.length]
+    return () => pick(draws) + (marketDraws ? split!.beta * pick(marketDraws) : 0)
+  }
 
-  const bands = horizons.map((horizonDays) => {
-    const ends: number[] = []
-    // The trend's contribution per day, weakening as it goes. Computed once
-    // rather than per path, since every path carries the same trend.
-    const perDay = Array.from({ length: horizonDays }, (_, d) => cumulativeDrift(driftPerDay, d, d + 1))
-    for (let path = 0; path < SIM_PATHS; path++) {
-      let logPrice = Math.log(from)
-      for (let day = 0; day < horizonDays; day++) logPrice += perDay[day] + shock()
-      ends.push(Math.exp(logPrice))
+  // One walk per path, reading off every horizon as it passes, rather than a
+  // fresh set of paths for each. Cheaper — a year of days instead of the four
+  // horizons added together — and truer: the six-month band is now the same
+  // futures the one-month band came from, so a path that ran up early is the
+  // one still up later. Sampling each horizon separately let them disagree
+  // about the same simulated world.
+  const ordered = [...horizons].sort((a, b) => a - b)
+  const longest = ordered[ordered.length - 1]
+  // The trend's contribution per day, weakening as it goes. Computed once
+  // rather than per path, since every path carries the same trend.
+  const perDay = Array.from({ length: longest }, (_, d) => cumulativeDrift(driftPerDay, d, d + 1))
+  const endsAt = new Map<number, number[]>(ordered.map((h) => [h, []]))
+  for (let path = 0; path < SIM_PATHS; path++) {
+    const shock = shockerFor(baseSeed + path * 7919)
+    let logPrice = Math.log(from)
+    let next = 0
+    for (let day = 0; day < longest; day++) {
+      logPrice += perDay[day] + shock()
+      while (next < ordered.length && ordered[next] === day + 1) {
+        endsAt.get(ordered[next])!.push(Math.exp(logPrice))
+        next++
+      }
     }
-    ends.sort((a, b) => a - b)
+  }
+
+  const bands = ordered.map((horizonDays) => {
+    const ends = endsAt.get(horizonDays)!.sort((a, b) => a - b)
     const at = (q: number) => ends[Math.min(ends.length - 1, Math.floor(q * ends.length))]
     return {
       horizonDays,
@@ -387,9 +477,10 @@ export function computeForecast(
   // a normal approximation would quietly throw away.
   const maxYears = Math.max(...projectionYears)
   const steps = Math.ceil((maxYears * 365) / PROJECTION_STEP_DAYS)
+  const poolShock = shockerFor(baseSeed + 1_000_003)
   const monthlyPool = Array.from({ length: 600 }, () => {
     let sum = 0
-    for (let d = 0; d < PROJECTION_STEP_DAYS; d++) sum += shock()
+    for (let d = 0; d < PROJECTION_STEP_DAYS; d++) sum += poolShock()
     return sum
   })
   const stepDrift = Array.from({ length: steps }, (_, i) =>
@@ -400,6 +491,7 @@ export function computeForecast(
   }))
   const endsByYear = new Map<number, number[]>(wanted.map((w) => [w.years, []]))
   for (let path = 0; path < SIM_PATHS; path++) {
+    const rand = seededRandom(baseSeed + 2_000_003 + path * 7919)
     let logPrice = Math.log(from)
     let next = 0
     for (let i = 0; i < steps; i++) {

@@ -222,6 +222,34 @@ deleted freely and the prices are still there when the right sheet arrives.
 "Clear all data" is none of these: it takes the snapshots and the photographs
 with it.
 
+### Why the app was slow, and what keeps it fast
+
+Deleting one holding from a 90-slab collection took **12.7 seconds** in a real
+browser. React recomputes every analysis whenever any part of the state
+changes, and each analysis ran a two-thousand-path Monte Carlo. Three changes,
+measured at each step:
+
+- **Holdings do not get a forecast** (`withForecast: false`). Nothing on that
+  side draws one — only the watchlist detail and the ranking read it — so the
+  entire cost was being paid for numbers no one saw. `analyzeHoldings(90)` went
+  4,323ms to 19ms on its own.
+- **`computeForecast` caches on its inputs.** The key covers every argument, so
+  a hit is exactly what the call would have returned. A re-render that changes
+  nothing now costs 3ms instead of 880ms; typing a digit into one asking price
+  re-simulates that card alone.
+- **All horizons come off one set of paths.** Each used to get its own run, so
+  the bands cost a year plus six months plus a quarter plus a month of
+  simulated days instead of a year. Cheaper, and truer — the six-month band is
+  now the same futures the one-month band came from.
+
+Each path is seeded on its own index rather than drawing from one shared
+stream. Otherwise a path starts wherever the previous one stopped, and adding a
+ten-year projection silently moves the one-month band.
+
+A delete is now ~110ms. If this regresses, measure `analyzeHoldings` first: it
+is where a stray forecast, or anything else per-card and expensive, will show
+up immediately.
+
 ### Stored state is older than the code
 
 `hydrate` runs `migrate()` over whatever came back from IndexedDB, filling in

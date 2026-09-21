@@ -357,3 +357,56 @@ describe('the long view', () => {
       .toEqual(computeForecast(RISING, 1000)!.projections)
   })
 })
+
+describe('one set of futures, read at every horizon', () => {
+  it('does not change a near band by asking for a further one', () => {
+    // Each horizon used to get its own run of paths, drawn one after another,
+    // so adding a longer horizon shifted every band before it. The horizons
+    // are now readings off the same walks and must be independent.
+    const short = computeForecast(RISING, 1330, { horizons: [30, 90] })!
+    const long = computeForecast(RISING, 1330, { horizons: [30, 90, 180, 365] })!
+    expect(long.bands.slice(0, 2)).toEqual(short.bands)
+  })
+
+  it('widens as the horizon lengthens, since the same paths carry on', () => {
+    const f = computeForecast(RISING, 1330)!
+    const widths = f.bands.map((b) => Math.log(b.high / b.low))
+    for (let i = 1; i < widths.length; i++) expect(widths[i]).toBeGreaterThan(widths[i - 1])
+  })
+
+  it('returns the horizons in order however they were asked for', () => {
+    const f = computeForecast(RISING, 1330, { horizons: [365, 30, 180] })!
+    expect(f.bands.map((b) => b.horizonDays)).toEqual([30, 180, 365])
+  })
+})
+
+describe('repeating a forecast', () => {
+  it('gives an identical answer, cached or not', () => {
+    const a = computeForecast(RISING, 1330)!
+    const b = computeForecast(RISING, 1330)!
+    expect(b).toEqual(a)
+  })
+
+  it('recomputes when a price changes rather than serving the old one', () => {
+    const a = computeForecast(RISING, 1330)!
+    const moved = RISING.map((p, i) => (i === 0 ? { ...p, price: p.price * 1.4 } : p))
+    const b = computeForecast(moved, 1330)!
+    expect(b.volatility).not.toBe(a.volatility)
+  })
+
+  it('recomputes when the price it starts from changes', () => {
+    const a = computeForecast(RISING, 1330)!
+    const b = computeForecast(RISING, 1500)!
+    expect(b.from).toBe(1500)
+    expect(b.bands[0].mid).not.toBe(a.bands[0].mid)
+  })
+
+  it('recomputes the return when only the basis changes', () => {
+    const a = computeForecast(RISING, 1330, { basis: 1000 })!
+    const b = computeForecast(RISING, 1330, { basis: 2000 })!
+    expect(a.basis).toBe(1000)
+    expect(b.basis).toBe(2000)
+    const roi = (f: typeof a) => f.projections.find((p) => p.years === 1)!.roiMid
+    expect(roi(a)).toBeGreaterThan(roi(b))
+  })
+})
