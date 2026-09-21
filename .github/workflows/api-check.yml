@@ -620,7 +620,10 @@ jobs:
             # Several queries in one run. A single zero-hit search cannot tell
             # "this card is not catalogued" from "that is not what it is
             # called here", and finding out has cost a run each time.
-            printf '%s' "$CARD_NAME" | tr '|' '\n' > queries.txt
+            # printf '%s' leaves no trailing newline, and `read` drops a final
+            # line without one — so the LAST query was silently never run, in
+            # three separate runs, each reported as though it had been.
+            printf '%s\n' "$CARD_NAME" | tr '|' '\n' > queries.txt
             while IFS= read -r Q; do
               Q=$(printf '%s' "$Q" | sed 's/^ *//; s/ *$//')
               [ -n "$Q" ] || continue
@@ -637,6 +640,46 @@ jobs:
                 head -c 300 cards.json | sed 's/^/  /'; echo
               fi
             done < queries.txt
+
+            # If no name matched, stop guessing and go at it by SET instead.
+            # list_sets gives Card Ladder's own set names, so the spelling
+            # comes from them rather than from a sheet; get_pokemon_set_psa_prices
+            # then lists that set's cards WITH their ids.
+            if [ ! -s found.txt ]; then
+              printf '\n=== no name matched: asking what sets exist instead ===\n'
+              code=$(curl -sS -m 120 -o sets.json -w '%{http_code}' -D sets.head -G \
+                --data-urlencode "game=Pokemon" \
+                -H "X-API-Key: $KEY" "$BASE/scraper/$SCR/list_sets" || echo 000)
+              echo "  HTTP $code"
+              tr -d '\r' < sets.head | grep -iE '^x-credits-charged' | sed 's/^/  /' || true
+              python3 - <<'PY5' || { echo "  unreadable:"; head -c 300 sets.json | sed 's/^/  /'; echo; }
+          import json, re
+          d = json.load(open('sets.json'))
+          names = []
+          def walk(n):
+              if isinstance(n, dict):
+                  for k, v in n.items():
+                      if k in ('name', 'set', 'set_name', 'label') and isinstance(v, str):
+                          names.append(v)
+                      else:
+                          walk(v)
+              elif isinstance(n, list):
+                  for v in n:
+                      walk(v)
+          walk(d)
+          print('   sets returned:', len(names))
+          # Anything that could plausibly hold a Japanese promo, since that is the
+          # spelling the sheet and the catalogue are most likely to disagree about.
+          hits = [n for n in names if re.search(r'japan|promo|sm |sun', n, re.I)]
+          print('   japanese / promo sets:', len(hits))
+          for n in hits[:40]:
+              print('    ', n)
+          if not hits:
+              print('   first 40 of whatever came back:')
+              for n in names[:40]:
+                  print('    ', n)
+          PY5
+            fi
 
             while read -r CID; do
               [ -n "$CID" ] || continue
