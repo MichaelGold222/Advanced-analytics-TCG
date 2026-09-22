@@ -1,0 +1,163 @@
+# Can Alt reach the cards Card Ladder cannot?
+#
+# Card Ladder's wrapper is keyed on a card id that 31 of 32 certificates in
+# this collection cannot produce, so a promo is unreachable there at any price.
+# Alt indexes by CERTIFICATE, which this app already holds for every row — so
+# if its sales are deep enough, the whole problem goes away and bulk lookups
+# make it cheap.
+#
+# ONE call is all this makes. The Card Ladder probe cost about ten credits
+# across several runs, a good part of that on bugs in the probe rather than on
+# the question, and that is not happening again.
+name: Alt API check
+
+on:
+  workflow_dispatch:
+    inputs:
+      cert:
+        description: A certificate number to look up
+        required: false
+        default: '77865285'
+      grader:
+        description: PSA, BGS, CGC or SGC
+        required: false
+        default: PSA
+
+env:
+  BASE: https://api.parse.bot
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Look one cert up at Alt
+        env:
+          KEY: ${{ secrets.PARSE_API_KEY }}
+          CERT: ${{ inputs.cert }}
+          GRADER: ${{ inputs.grader }}
+        run: |
+          [ -n "$KEY" ] || { echo "PARSE_API_KEY is not set."; exit 0; }
+
+          # Resolving the scraper is metadata and is charged nothing.
+          curl -sS -m 30 -o tasks.json -H "X-API-Key: $KEY" "$BASE/dispatch/tasks?limit=100" || true
+          cat > pick.py <<'PY1'
+          import json, re, sys
+          try:
+              d = json.load(open('tasks.json'))
+          except Exception as e:
+              print('could not list tasks:', e); sys.exit()
+          tasks = d.get('tasks', d) if isinstance(d, dict) else d
+          print('tasks on the account:')
+          for t in tasks:
+              print('  ', t.get('id'), '|', t.get('slug'), '|', t.get('name'), '|', t.get('status'))
+          for t in tasks:
+              blob = ' '.join(str(t.get(k, '')) for k in ('slug', 'url', 'name'))
+              if re.search(r'\balt\b|alt\.xyz|alt-xyz', blob, re.I):
+                  open('task.txt', 'w').write(str(t.get('id')))
+                  print('\nAlt task:', t.get('id'))
+                  sys.exit()
+          print('\nNo Alt API on this account — subscribe to it at parse.bot first.')
+          PY1
+          : > task.txt
+          python3 pick.py || true
+          TASK=$(cat task.txt)
+          [ -n "$TASK" ] || exit 0
+
+          curl -sS -m 30 -o detail.json -H "X-API-Key: $KEY" "$BASE/dispatch/tasks/$TASK" || true
+          SCR=$(python3 -c "
+          import json
+          try:
+              print(json.load(open('detail.json')).get('result_scraper_id') or '')
+          except Exception:
+              print('')
+          ")
+          [ -n "$SCR" ] || { echo "that API has not finished building"; exit 0; }
+          echo "scraper: $SCR"
+
+          echo
+          echo "=== what it exposes (free: read from the spec) ==="
+          curl -sS -m 30 -o spec.json -H "X-API-Key: $KEY" "$BASE/v1/apis/$SCR/openapi.json" || true
+          python3 - <<'PY2' || true
+          import json
+          try:
+              d = json.load(open('spec.json'))
+          except Exception as e:
+              print('  no spec:', e); raise SystemExit
+          for p, ops in sorted(d.get('paths', {}).items()):
+              print(' ', p)
+              for verb, op in ops.items():
+                  params = [(q.get('name'), q.get('in'), q.get('required')) for q in op.get('parameters', [])]
+                  print('   ', verb.upper(), params or 'no query params')
+                  for ct, spec in (op.get('requestBody') or {}).get('content', {}).items():
+                      print('    body', ct, json.dumps(spec.get('schema'))[:260])
+          PY2
+
+          echo
+          echo "=== THE question: lookup_cert for $CERT ($GRADER) — one call ==="
+          code=$(curl -sS -m 180 -o alt.json -w '%{http_code}' -D alt.head -G \
+            --data-urlencode "cert_number=$CERT" --data-urlencode "grading_company=$GRADER" \
+            -H "X-API-Key: $KEY" "$BASE/scraper/$SCR/lookup_cert" || echo 000)
+          echo "HTTP $code"
+          tr -d '\r' < alt.head | grep -iE '^x-credits' | sed 's/^/  /' || true
+
+          python3 - <<'PY3' || { echo "  unreadable:"; head -c 600 alt.json; echo; }
+          import json
+          from datetime import datetime
+
+          d = json.load(open('alt.json'))
+          print('  top-level keys:', sorted(d) if isinstance(d, dict) else type(d).__name__)
+          data = d.get('data') if isinstance(d, dict) else None
+          if isinstance(data, dict):
+              print('  data keys:', sorted(data))
+              for k, v in data.items():
+                  if not isinstance(v, (dict, list)):
+                      print('   ', k, '=', str(v)[:90])
+
+          # Any list of dated prices, wherever it is and whatever it is called.
+          def parse_any(s):
+              for f in ('%Y-%m-%d', '%m/%d/%Y', '%Y-%m-%dT%H:%M:%S', '%Y-%m-%dT%H:%M:%S.%fZ', '%Y-%m-%dT%H:%M:%SZ'):
+                  try:
+                      return datetime.strptime(str(s)[:26], f)
+                  except Exception:
+                      pass
+              return None
+
+          best = []
+          def walk(node, path):
+              global best
+              if isinstance(node, dict):
+                  for k, v in node.items():
+                      walk(v, path + '/' + str(k))
+              elif isinstance(node, list) and node and isinstance(node[0], dict):
+                  dated = []
+                  for r in node:
+                      if not isinstance(r, dict):
+                          continue
+                      t = next((parse_any(r[k]) for k in r if 'date' in k.lower() and parse_any(r[k])), None)
+                      p = next((r[k] for k in r if k.lower() in ('price', 'amount', 'sale_price', 'value', 'sold_price')
+                                and isinstance(r[k], (int, float))), None)
+                      if t and p:
+                          dated.append((t, p))
+                  if len(dated) > len(best):
+                      best = dated
+                      print('  dated prices under %s: %d  (keys: %s)' % (path, len(dated), sorted(node[0])[:12]))
+                  for v in node[:3]:
+                      walk(v, path + '[]')
+          walk(d, '')
+
+          if best:
+              best.sort()
+              print()
+              print('  SPANS %s to %s' % (best[0][0].date(), best[-1][0].date()))
+              prices = [p for _, p in best]
+              print('  full range: $%.0f - $%.0f from %d points' % (min(prices), max(prices), len(prices)))
+              newest = best[-1][0]
+              for label, days in (('LAST 12 MONTHS', 365), ('LAST 6 MONTHS', 182)):
+                  cut = newest.timestamp() - days * 86400
+                  w = [p for t, p in best if t.timestamp() >= cut]
+                  if w:
+                      print('  %s: $%.0f - $%.0f from %d points' % (label, min(w), max(w), len(w)))
+          else:
+              print('  no dated prices found anywhere in the response')
+              print('  raw head:', json.dumps(d)[:700])
+          PY3
