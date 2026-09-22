@@ -468,6 +468,29 @@ each was reproduced and measured in a browser before and after.
   checkbox moved the row the cursor was on by 79px. It belongs *below* the
   table, stuck to the bottom of the viewport.
 
+### A fetch that worked, on a page that never redrew
+
+`selectSeries` reads seven fields of the store. The `useMemo` in `App.tsx`
+that calls it listed six. The missing one was **`certSales`** — the field
+holding every fetched sale.
+
+So every graded price fetch wrote its results into state and the page went on
+drawing the old ones, until something unrelated changed or it was reloaded.
+That masked an entire evening's work: Alt stored 10,768 sales across 32 cards
+and a card still displayed the five it had that morning, which read as the
+fetch having failed. Several rounds went into "why is this not working" on
+calls that had all succeeded.
+
+The memo cannot depend on `store` itself — that changes on every keystroke —
+so the list is written by hand, which means it rots silently and nothing in
+React can tell. `selectseries.test.ts` reads both sides out of the source and
+compares them: every `state.x` in `selectSeries` must appear in the memo's
+dependency array. Removing `certSales` again makes it fail, which was checked
+rather than assumed.
+
+**If a field is added to `selectSeries`, add it to that array in the same
+commit.**
+
 ### Stored state is older than the code
 
 `hydrate` runs `migrate()` over whatever came back from IndexedDB, filling in

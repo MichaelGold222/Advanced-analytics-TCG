@@ -51,13 +51,22 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  const { holdings, watchlist, uploadedHistory, snapshots, quotes, feed } = store
+  const { holdings, watchlist, uploadedHistory, snapshots, quotes, feed, certSales } = store
 
+  // This list must name EVERY field `selectSeries` reads. It did not name
+  // `certSales`, which is the one holding every fetched sale — so a price
+  // fetch wrote its results into state and the page went on drawing the old
+  // ones until something unrelated changed or it was reloaded. Hours were
+  // spent tonight on fetches that had in fact worked: Alt stored 10,768 sales
+  // across 32 cards and a card still showed the five it had that morning.
+  //
+  // The memo cannot depend on `store` itself, since that changes on every
+  // keystroke. So the list is written by hand, which means it rots silently;
+  // if a field is added to `selectSeries`, add it here in the same commit.
   const series = useMemo(
     () => selectSeries(store),
-    // Rebuilt whenever any price input or item list changes.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [holdings, watchlist, uploadedHistory, snapshots, quotes, feed],
+    [holdings, watchlist, uploadedHistory, snapshots, quotes, feed, certSales],
   )
 
   // One index for the whole collection, built once from every repeat sale in
