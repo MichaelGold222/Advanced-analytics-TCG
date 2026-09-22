@@ -216,6 +216,7 @@ export function DataPanel({
           })()}
 
           {certCount > 0 && (
+            <>
             <p className="text-xs muted mt-2 leading-relaxed">
               <strong>Alt is keyed on the certificate</strong>, so it reaches cards Card Ladder
               cannot — a promo has no entry in the catalogue Card Ladder looks a card up in, and
@@ -229,6 +230,7 @@ export function DataPanel({
               One consequence worth knowing: with two years kept, the “all-time” high is the
               two-year high, so a card that peaked before then reads as nearer its top than it is.
             </p>
+            </>
           )}
 
           {certCount === 0 && (
