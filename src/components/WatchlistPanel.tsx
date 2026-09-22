@@ -463,6 +463,8 @@ function BandRow({ label, note, r }: { label: string; note: string | null; r: Ra
  */
 function bandRows(analysis: ItemAnalysis) {
   const windows = [
+    { label: '1 month', r: analysis.oneMonthRange },
+    { label: '3 months', r: analysis.threeMonthRange },
     { label: '6 months', r: analysis.sixMonthRange },
     { label: '1 year', r: analysis.range },
     { label: '2 years', r: analysis.twoYearRange },

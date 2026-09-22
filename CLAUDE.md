@@ -527,6 +527,22 @@ Drift is in **logs** everywhere internally. Printing it as a percentage without
 `Math.expm1` understates every fast mover: a card at 1.25 in logs is up 249% a
 year, not 125%.
 
+### Five windows, now that there is history to fill them
+
+`oneMonthRange`, `threeMonthRange`, `sixMonthRange`, `range` (52 weeks),
+`twoYearRange`, `allTimeRange`. The short two were added only after Alt put
+several hundred sales behind each card: against five sales spanning five days
+they would have been the same two numbers as every other window, which is the
+failure the collapsing band table exists to hide.
+
+On a card selling several times a week the one-month band is the one that
+describes what is happening now, and the twelve-month band is what it did —
+$560 this month against $1,000 nine months ago, on the worked example. Both
+are worth seeing, which is the argument for having both.
+
+`bandRows` still drops a window whose band equals the shorter one below it, so
+a thin card shows one row rather than six identical ones.
+
 ### A band is built from prices, and the sales do not reach far enough
 
 `computeRange` filtered on the window and nothing else, so the high and low

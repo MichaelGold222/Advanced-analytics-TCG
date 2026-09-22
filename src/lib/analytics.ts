@@ -224,6 +224,16 @@ function weightedBlend(windowed: PricePoint[], now: Date): FmvResult {
 }
 
 /** Half a year, for the shorter of the high-water marks. */
+/**
+ * A month and a quarter.
+ *
+ * Worth having only now the record is deep. Against five sales spanning five
+ * days these would have been the same two numbers as every other window; with
+ * several hundred sales a month is a real band, and on a card trading several
+ * times a week it is the one that describes what is happening today.
+ */
+export const ONE_MONTH_DAYS = 30
+export const THREE_MONTH_DAYS = 91
 export const SIX_MONTH_DAYS = 182
 
 /** Two years, long enough to hold a full cycle for most modern cards. */
@@ -543,6 +553,8 @@ export function analyzeItem(
   const fmv = computeFmv(series, now)
   const reference = askingPrice ?? null
   const range = compute52WeekRange(series, reference ?? fmv.fmv, now)
+  const oneMonthRange = computeRange(series, reference ?? fmv.fmv, now, ONE_MONTH_DAYS)
+  const threeMonthRange = computeRange(series, reference ?? fmv.fmv, now, THREE_MONTH_DAYS)
   const sixMonthRange = computeRange(series, reference ?? fmv.fmv, now, SIX_MONTH_DAYS)
   const twoYearRange = computeRange(series, reference ?? fmv.fmv, now, TWO_YEAR_DAYS)
   const allTimeRange = computeRange(series, reference ?? fmv.fmv, now, ALL_TIME_DAYS)
@@ -558,7 +570,8 @@ export function analyzeItem(
     })
     : null
   return {
-    key: series.key, fmv, range, sixMonthRange, twoYearRange, allTimeRange, entry, referencePrice: reference,
+    key: series.key, fmv, range, oneMonthRange, threeMonthRange, sixMonthRange, twoYearRange,
+    allTimeRange, entry, referencePrice: reference,
     lastSale,
     forecast,
     quote: series.quote, quoteExcluded: series.quoteExcluded,

@@ -103,6 +103,8 @@ export function HoldingsTable({
               <th className="num">Invested</th>
               <th className="num" title="Median of the last 5 completed comps across every venue. A steadier estimate than any one sale, shown for reference.">Median of 5</th>
               <th className="num" title="The most recent completed sale of this exact card at this grade">Last sold</th>
+              <th className="num" title="Lowest this card has traded in the last 30 days — the band it is actually trading in now.">1-mo low</th>
+              <th className="num" title="Highest this card has traded in the last 30 days.">1-mo high</th>
               <th className="num" title="Lowest this card has traded in the last 6 months. Where the sales on record do not reach back that far, the actual span is shown under the figure.">6-mo low</th>
               <th className="num" title="Highest this card has traded in the last 6 months. Where the sales on record do not reach back that far, the actual span is shown under the figure.">6-mo high</th>
               <th className="num" title="Highest this card has traded in the last 12 months. Where the sales on record do not reach back that far, the actual span is shown under the figure — a 12-month label over three months of sales is not a yearly high.">Yearly high</th>
@@ -152,6 +154,8 @@ export function HoldingsTable({
                       onCancel={() => setEditingId(null)}
                     />
                   </td>
+                  <td className="num"><LowCell range={a?.oneMonthRange} fmv={fmv} /></td>
+                  <td className="num"><HighCell range={a?.oneMonthRange} fmv={fmv} /></td>
                   <td className="num"><LowCell range={a?.sixMonthRange} fmv={fmv} /></td>
                   <td className="num"><HighCell range={a?.sixMonthRange} fmv={fmv} /></td>
                   <td className="num"><HighCell range={a?.range} fmv={fmv} /></td>

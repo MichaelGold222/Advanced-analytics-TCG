@@ -270,6 +270,14 @@ export interface ItemAnalysis {
   fmv: FmvResult
   /** Twelve-month high and low. */
   range: RangeResult
+  /**
+   * One month. On a card selling several times a week this is the band that
+   * is actually being traded in right now, and it only became measurable once
+   * the record went from five sales to several hundred.
+   */
+  oneMonthRange: RangeResult
+  /** Three months — a quarter, which is long enough to survive a quiet week. */
+  threeMonthRange: RangeResult
   /** The same over six months, which turns sooner than the yearly figure. */
   sixMonthRange: RangeResult
   /** Two years: long enough to hold a full cycle for most modern cards. */

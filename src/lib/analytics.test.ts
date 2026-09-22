@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
-  LISTING_HAIRCUT, SIX_MONTH_DAYS, TREND_FLAT_BAND, WINDOW_DAYS, analyzeItem, buildSeries, compute52WeekRange,
+  LISTING_HAIRCUT, ONE_MONTH_DAYS, SIX_MONTH_DAYS, THREE_MONTH_DAYS, TREND_FLAT_BAND, WINDOW_DAYS,
+  analyzeItem, buildSeries, compute52WeekRange,
   computeEntry, computeFmv, computeRange, computeTrend, gradedPricingNote, lastSaleAt,
 } from './analytics'
 import type { PricePoint, PriceSeries } from './types'
@@ -748,5 +749,59 @@ describe('where the sales record does not reach', () => {
     // A sale the owner knows about that the feed has not picked up yet.
     const r = computeRange({ key: 'k', points: [...FETCHED, at(1, 4200, 'user')] }, 4200, NOW_, WINDOW_DAYS)
     expect(r.high).toBe(4200)
+  })
+})
+
+describe('the short windows, which only mean something on a deep record', () => {
+  const NOW_ = new Date('2026-09-22T00:00:00Z')
+  const back = (n: number) => new Date(NOW_.getTime() - n * 86_400_000).toISOString().slice(0, 10)
+  const sale = (d: number, price: number): PricePoint => ({ date: back(d), price, source: 'sale' })
+
+  // What a card looks like once Alt's history is in: hundreds of sales, and a
+  // price that moved through the year.
+  const DEEP: PricePoint[] = [
+    sale(320, 900), sale(250, 1000), sale(200, 640), sale(120, 480),
+    sale(80, 430), sale(60, 500), sale(45, 520), sale(25, 470),
+    sale(20, 560), sale(12, 505), sale(6, 525), sale(2, 540),
+  ]
+  const at = (days: number) => computeRange({ key: 'k', points: DEEP }, 540, NOW_, days)
+
+  it('reads a month as the last month, not the year', () => {
+    const r = at(ONE_MONTH_DAYS)
+    expect(r.high).toBe(560)
+    expect(r.low).toBe(470)
+  })
+
+  it('widens through the quarter', () => {
+    const q = at(THREE_MONTH_DAYS)
+    expect(q.low).toBe(430)
+    expect(q.high).toBe(560)
+  })
+
+  it('nests: each window contains the shorter one', () => {
+    const [m, q, h, y] = [ONE_MONTH_DAYS, THREE_MONTH_DAYS, SIX_MONTH_DAYS, WINDOW_DAYS].map(at)
+    expect(q.high).toBeGreaterThanOrEqual(m.high!)
+    expect(h.high).toBeGreaterThanOrEqual(q.high!)
+    expect(y.high).toBeGreaterThanOrEqual(h.high!)
+    expect(q.low).toBeLessThanOrEqual(m.low!)
+    expect(y.low).toBeLessThanOrEqual(h.low!)
+  })
+
+  it('shows the year reaching prices the month never saw', () => {
+    // The point of having both: $1,000 nine months ago, $560 this month.
+    expect(at(WINDOW_DAYS).high).toBe(1000)
+    expect(at(ONE_MONTH_DAYS).high).toBe(560)
+  })
+
+  it('is honest when a month holds nothing', () => {
+    const stale = computeRange({ key: 'k', points: [sale(200, 500)] }, 500, NOW_, ONE_MONTH_DAYS)
+    expect(stale.high).toBeNull()
+    expect(stale.sampleSize).toBe(0)
+  })
+
+  it('carries them on the analysis', () => {
+    const a = analyzeItem(buildSeries('k', DEEP, [], undefined, { graded: true }), 540, NOW_, { withForecast: false })
+    expect(a.oneMonthRange.high).toBe(560)
+    expect(a.threeMonthRange.low).toBe(430)
   })
 })
