@@ -37,6 +37,8 @@ interface Props {
   /** Cards whose record is too thin or too stale to trust, worst first. */
   /** What pressing the button will cost, before it is pressed. */
   cost: RefreshCost
+  /** Fetch sales history from Alt, by certificate — the route promos need. */
+  onFetchFromAlt: () => void
   historyGaps: HistoryGap[]
   /** How many cards were assessed, so "6 of 32" can be said. */
   gapTotal: number
@@ -77,7 +79,7 @@ function ConfirmButton({
 export function DataPanel({
   importLog, refresh, gradedRefresh, certLastFetched, certCount, missingCerts, photoCount, usage,
   onImport, onTemplate, onExport, onClear, onClearList, onRefreshGraded,
-  holdingCount, watchCount, historyGaps, gapTotal, cost,
+  holdingCount, watchCount, historyGaps, gapTotal, cost, onFetchFromAlt,
 }: Props) {
   const [key, setKey] = useState(getApiKey())
   const [saved, setSaved] = useState(false)
@@ -161,6 +163,14 @@ export function DataPanel({
                 ? `Fetching ${gradedRefresh.done}/${gradedRefresh.total}…`
                 : `Fetch sold comps for ${certCount} slab${certCount === 1 ? '' : 's'}`}
             </button>
+            <button
+              type="button" className="btn"
+              onClick={() => onFetchFromAlt()}
+              disabled={gradedRefresh.running || certCount === 0}
+              title="Alt indexes by certificate, so it reaches promos and anything else Card Ladder's catalogue does not carry. Measured: 1,422 sales spanning six years for a card Card Ladder had five of."
+            >
+              Get real history from Alt ({certCount} slab{certCount === 1 ? '' : 's'})
+            </button>
             {missingCerts > 0 && certLastFetched && (
               <button
                 type="button" className="btn" onClick={() => onRefreshGraded({ onlyMissing: true })}
@@ -204,6 +214,16 @@ export function DataPanel({
               </p>
             )
           })()}
+
+          {certCount > 0 && (
+            <p className="text-xs muted mt-2 leading-relaxed">
+              <strong>Alt is keyed on the certificate</strong>, so it reaches cards Card Ladder
+              cannot — a promo has no entry in the catalogue Card Ladder looks a card up in, and
+              31 of these certificates return an internal hash rather than a card id. Measured on
+              one of them: 1,422 sales back to 2020, a true twelve-month band of $198–$1,000,
+              for 2 credits. The same card showed $462–$568 here, from five sales over 57 days.
+            </p>
+          )}
 
           {certCount === 0 && (
             <p className="text-xs mt-2 leading-relaxed" style={{ color: 'var(--serious)' }}>

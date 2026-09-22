@@ -426,6 +426,9 @@ export default function App() {
               ).size
             }
             historyGaps={historyGaps} gapTotal={gapTotal} cost={refreshCost}
+            onFetchFromAlt={() => void store.fetchFromAlt(
+              [...holdings, ...watchlist].map((i) => i.cert).filter((c): c is string => !!c),
+            )}
             usage={store.usage} onRefreshGraded={(o) => void store.refreshGraded(o)}
             onImport={store.importFile} onTemplate={handleTemplate} onExport={handleExport}
             onClear={() => void store.clearAll()}

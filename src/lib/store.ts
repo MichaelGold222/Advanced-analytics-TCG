@@ -8,6 +8,7 @@
 import { create } from 'zustand'
 import { del, get, set } from 'idb-keyval'
 import { WINDOW_COVERED_FRACTION, WINDOW_DAYS, buildSeries } from './analytics'
+import { AltError, fetchAltCerts } from './providers/alt-client'
 import { importWorkbook, mergeHistory, reclassify } from './ingest'
 import { itemKey } from './key'
 import { holdingAsWatchItem } from './portfolio'
@@ -124,6 +125,8 @@ interface AppState extends PersistedState {
   refreshImages(certs: { cert_number: string; grading_company: 'PSA' | 'BGS' | 'CGC' | 'SGC' }[]): Promise<void>
   /** Walk the full sales history of any card whose record is still too short. */
   backfillHistory(): Promise<void>
+  /** Fetch real sales history from Alt, by certificate, for every card. */
+  fetchFromAlt(certs: string[]): Promise<void>
   /** Add price history a person pasted in, for a card the API cannot reach. */
   addPastedHistory(key: string, points: PricePoint[]): void
   /**
@@ -498,6 +501,88 @@ export const useStore = create<AppState>((setState, getState) => ({
           : `Could not fetch that card: ${err instanceof Error ? err.message : String(err)}`,
       })
       return 'refused'
+    }
+  },
+
+  /**
+   * Sales history from Alt, keyed on the certificate.
+   *
+   * This is the route that works where the others do not. Card Ladder reaches
+   * a card only through a card id, and 31 of 32 certificates here cannot
+   * produce one — a promo is not in the catalogue collection it reads. Alt
+   * indexes by certificate, which every row already has.
+   *
+   * Measured on cert 77865285, a promo Card Ladder could not touch: 1,422
+   * sales spanning 2020 to 2026, a real twelve-month band of $198-$1,000 from
+   * 394 of them, for 2 credits. The app's own figure at the time was
+   * $462-$568 "over 57 days" — a yearly high wrong by 43%, because five sales
+   * happened to land on a quiet stretch.
+   *
+   * Merged like everything else, so it deepens the record rather than
+   * replacing it, and nothing already fetched is lost.
+   */
+  async fetchFromAlt(certs) {
+    const key = getParseKey()
+    if (!key) {
+      setState({ error: 'Add your Parse API key in Data & settings first.' })
+      return
+    }
+    const list = [...new Set(certs.filter(Boolean))]
+    if (list.length === 0) return
+
+    setState({
+      gradedRefresh: {
+        ...getState().gradedRefresh, running: true, done: 0, total: list.length,
+        unmatched: [], failed: [], startedAt: Date.now(), phase: 'history',
+      },
+    })
+
+    try {
+      const { certs: got, missing, creditsCharged, creditsRemaining } = await fetchAltCerts(list, {
+        key,
+        onProgress: (done, total) => setState({
+          gradedRefresh: { ...getState().gradedRefresh, done, total, phase: 'history' },
+        }),
+      })
+
+      const certSales = { ...getState().certSales }
+      const certFacts = { ...getState().certFacts }
+      const certDeepFetched = { ...getState().certDeepFetched }
+      const at = new Date().toISOString()
+      for (const c of got) {
+        if (c.sales.length > 0) certSales[c.cert] = mergeSalePoints(certSales[c.cert] ?? [], c.sales)
+        if (c.altValue != null || c.population != null) {
+          certFacts[c.cert] = {
+            clValue: certFacts[c.cert]?.clValue ?? c.altValue ?? null,
+            pop: c.population ?? certFacts[c.cert]?.pop ?? null,
+          }
+        }
+        // Alt answering means the card is reachable, whatever Card Ladder said.
+        certDeepFetched[c.cert] = {
+          at, sales: c.sales.length, unavailable: false, underlying: c.salesCount ?? c.sales.length,
+        }
+      }
+
+      setState({
+        certSales, certFacts, certDeepFetched,
+        certLastFetched: at,
+        usage: creditsRemaining == null ? getState().usage : {
+          ...getState().usage, creditsRemaining,
+        } as AppState['usage'],
+        error: missing.length > 0
+          ? `Alt had nothing for ${missing.length} certificate${missing.length === 1 ? '' : 's'}: ${missing.slice(0, 5).join(', ')}${missing.length > 5 ? '…' : ''}. Spent ${creditsCharged} credits.`
+          : null,
+      })
+      scheduleSave(getState())
+    } catch (err) {
+      // Whatever arrived before the failure is already merged and kept.
+      setState({
+        error: err instanceof AltError ? err.message
+          : `Alt lookup failed: ${err instanceof Error ? err.message : String(err)}`,
+      })
+    } finally {
+      setState({ gradedRefresh: { ...getState().gradedRefresh, running: false, startedAt: null } })
+      scheduleSave(getState())
     }
   },
 

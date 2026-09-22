@@ -645,6 +645,43 @@ save a credit; it would only throw away the sales in the reply.
 Pinned in tests (`what a full refresh costs`), because the ordering is worth
 real money and an innocent-looking edit could reverse it.
 
+### Alt is the source that works, because it is keyed on the certificate
+
+Measured, Alt check run 2, on cert 77865285 — the 2019 Japanese SM promo
+Card Ladder could not reach by any route:
+
+```
+sales_count      1422
+spans            2020-09-13 to 2026-09-19
+full range       $6 - $3,325
+LAST 12 MONTHS   $198 - $1,000  from 394 sales
+LAST 6 MONTHS    $405 - $1,000  from 195 sales
+charged          2 credits
+```
+
+The app's own figure for that card at that moment was **$462-$568 "over 57
+days"**, from the five sales the Card Ladder feed returns. The real yearly
+high was $1,000 — **wrong by 43%**, because a five-sale window happened to
+land on a quiet stretch. That is the whole problem this project had, in one
+card.
+
+Why it works where the rest did not: **Alt indexes by certificate**, which
+every row here already carries. There is no catalogue lookup in between to
+fail, so a promo is no harder than a Charizard. `lookup_cert` takes
+`cert_number`, `lookup_certs` takes `cert_numbers` — how many per call is
+NOT yet measured, so `ALT_CERTS_PER_CALL` starts at 25: a wrong guess should
+cost one modest call rather than the collection.
+
+The rows are **individual sales**, not the aggregated `{date, price, count}`
+Card Ladder serves, so a high is the real high rather than a floor on one.
+Each carries `auction_house`, `grade_number` and `listing_url`. `population`
+and `alt_value` come in the same response — population being the exogenous
+signal this model has wanted throughout.
+
+`subject_to_change` marks an unsettled auction result. Those are kept: excluding
+them would quietly drop the most recent sales, which are the ones a band most
+needs. Worth revisiting if such prices turn out to move.
+
 ### One promo could not be fetched at all — how far that generalises is UNTESTED
 
 Measured, runs 31-42, on **exactly one card**. It was first written up here as
