@@ -262,8 +262,47 @@ describe('how the entry call reads', () => {
     const entry = computeEntry(fmv, range, s, 97, NOW)
     expect(entry.anchoredOnTrades).toBe(true)
     const text = entry.rationale.join(' ')
-    expect(text).toMatch(/Sales this year ran/)
-    expect(text).toMatch(/off the high/)
+    // The wording changed when the target stopped being read off the whole
+    // year. What it must still do is justify the number by NAMED trades
+    // rather than by a discount to fair value — and now say which trades.
+    expect(text).toMatch(/Read off the last \d+ sales/)
+    expect(text).toMatch(/a quarter of those went at or below/)
+    expect(text).toMatch(/off the (year|window)'s high/)
+  })
+
+  it('reads the target off recent sales, not the whole year', () => {
+    // The complaint that prompted this: a card trading at $1,200 was given a
+    // target of $650 — a real price, from a market it had long since left.
+    const back = (n: number) => new Date(NOW.getTime() - n * 86_400_000).toISOString().slice(0, 10)
+    const sale = (d: number, price: number): PricePoint => ({ date: back(d), price, source: 'sale' })
+    const risen = series([
+      sale(330, 600), sale(300, 620), sale(280, 640), sale(250, 660),
+      sale(60, 1180), sale(40, 1200), sale(20, 1220), sale(5, 1210),
+    ])
+    const fmv = computeFmv(risen, NOW)
+    const range = compute52WeekRange(risen, 1200, NOW)
+    const entry = computeEntry(fmv, range, risen, 1200, NOW)
+
+    expect(entry.anchoredOnTrades).toBe(true)
+    // Anchored on the four recent sales around $1,200, not the year's spread.
+    expect(entry.entryPrice!).toBeGreaterThan(1000)
+    expect(entry.stretchEntry!).toBeGreaterThan(1000)
+    // The year's low is still reported as the year's low; it is simply not
+    // offered as somewhere to bid.
+    expect(range.low).toBe(600)
+  })
+
+  it('says when the high is history rather than a discount on offer', () => {
+    const back = (n: number) => new Date(NOW.getTime() - n * 86_400_000).toISOString().slice(0, 10)
+    const sale = (d: number, price: number): PricePoint => ({ date: back(d), price, source: 'sale' })
+    const fallen = series([
+      sale(300, 3000), sale(280, 2900), sale(260, 3100),
+      sale(30, 900), sale(20, 920), sale(10, 880), sale(2, 910),
+    ])
+    const fmv = computeFmv(fallen, NOW)
+    const range = compute52WeekRange(fallen, 900, NOW)
+    const text = computeEntry(fmv, range, fallen, 900, NOW).rationale.join(' ')
+    expect(text).toMatch(/history rather than a discount on offer/)
   })
 })
 
@@ -803,5 +842,54 @@ describe('the short windows, which only mean something on a deep record', () => 
     const a = analyzeItem(buildSeries('k', DEEP, [], undefined, { graded: true }), 540, NOW_, { withForecast: false })
     expect(a.oneMonthRange.high).toBe(560)
     expect(a.threeMonthRange.low).toBe(430)
+  })
+})
+
+describe('one wild print must not set the high', () => {
+  const NOW_ = new Date('2026-09-22T00:00:00Z')
+  const back = (n: number) => new Date(NOW_.getTime() - n * 86_400_000).toISOString().slice(0, 10)
+  const sale = (d: number, p: number): PricePoint => ({ date: back(d), price: p, source: 'sale' })
+
+  // The reported card: ~350 sales around $3,200, one print at $10,187. The app
+  // showed a yearly high of $10,187 and called the card 67% below its high.
+  const busy = () => {
+    const pts: PricePoint[] = []
+    for (let i = 0; i < 350; i++) pts.push(sale(1 + i, 3200 + Math.round(Math.sin(i / 9) * 450)))
+    return pts
+  }
+  const band = (pts: PricePoint[]) => computeRange({ key: 'k', points: pts }, 3300, NOW_, WINDOW_DAYS)
+
+  it('drops a price three times everything else', () => {
+    const r = band([...busy(), sale(210, 10_187)])
+    expect(r.high).toBeLessThan(4000)
+    expect(r.excluded).toBe(1)
+  })
+
+  it('leaves the band otherwise exactly where it was', () => {
+    const clean = band(busy())
+    const dirty = band([...busy(), sale(210, 10_187)])
+    expect(dirty.high).toBe(clean.high)
+    expect(dirty.low).toBe(clean.low)
+  })
+
+  it('keeps a genuine run, because the market moved with it', () => {
+    // A hundred sales at $9,000 is a rally, not an outlier, and must survive.
+    const rally = busy()
+    for (let i = 0; i < 100; i++) rally.push(sale(150 + i, 8800 + i))
+    expect(band(rally).high).toBeGreaterThan(8000)
+    expect(band(rally).excluded).toBe(0)
+  })
+
+  it('keeps every price while the record is thin', () => {
+    const few = [sale(5, 100), sale(4, 110), sale(3, 105), sale(2, 900)]
+    const r = band(few)
+    expect(r.high).toBe(900)
+    expect(r.excluded).toBe(0)
+  })
+
+  it('says how many sales the high actually rests on', () => {
+    expect(band(busy()).highSupport).toBeGreaterThan(5)
+    const lone = [...Array.from({ length: 40 }, (_, i) => sale(i + 1, 100)), sale(50, 140)]
+    expect(band(lone).highSupport).toBe(1)
   })
 })

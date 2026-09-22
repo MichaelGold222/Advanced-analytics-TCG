@@ -384,6 +384,18 @@ function Reasoning({
             }
           />
           <Row label="Reliability" value={range.estimated ? 'Estimated — thin history' : 'Measured'} />
+          {range.excluded > 0 && (
+            <Row
+              label="Set aside as outliers"
+              value={`${range.excluded} price${range.excluded === 1 ? '' : 's'} far from the rest`}
+            />
+          )}
+          {range.high != null && range.highSupport <= 2 && range.sampleSize >= 12 && (
+            <Row
+              label="The high rests on"
+              value={`${range.highSupport} sale${range.highSupport === 1 ? '' : 's'} — treat it as one print, not a level`}
+            />
+          )}
         </dl>
       </div>
 

@@ -52,6 +52,55 @@ export const WINDOW_DAYS = 365
 export const WINDOW_COVERED_FRACTION = 0.75
 
 /**
+ * Below this many trades, every price counts toward the band.
+ *
+ * With a handful of comps an outlier cannot be told from the market, which is
+ * the long-standing rule here. Above it, one wild print should not define a
+ * high — and once Alt's history is in, a card carries hundreds.
+ *
+ * Thirty rather than twelve: at twelve, a card whose price genuinely doubled
+ * across the window had the top of its own run trimmed off, because a dozen
+ * widely spread points give a narrow robust scale. The trim is for records
+ * deep enough that one price among hundreds is plainly not the market.
+ */
+export const MIN_FOR_ROBUST_BAND = 30
+
+/**
+ * How far from the median a price may sit and still set the band, in robust
+ * deviations of the LOG price.
+ *
+ * Logs because a band is multiplicative: $10,187 against a $3,300 median is
+ * three times the money, and measuring that in dollars makes the threshold
+ * depend on how expensive the card is. Deliberately generous — a genuine
+ * rally moves the median and widens the spread, so it survives; a single
+ * print at three times everything else does not.
+ *
+ * The failure it exists for: a Pikachu trading at $3,300 across 1,053 sales
+ * showed a yearly high of $10,187, so the app reported it as 67% below its
+ * high and called that a discount. It was one sale — a lot, a mislabelled
+ * grade, or a bad record.
+ */
+export const BAND_OUTLIER_DEVIATIONS = 4
+
+/**
+ * How near another sale must be to count as corroborating a price, and how
+ * many it takes.
+ *
+ * Distance from the median is not enough on its own, and assuming otherwise
+ * would have hidden real peaks: a hundred sales at $8,800 on a card usually
+ * trading at $3,200 is a rally, but every one of them sits far from the
+ * median, so a purely robust-scale test threw the whole run away. That is a
+ * worse failure than the one being fixed — it deletes exactly the history a
+ * drawdown is measured against.
+ *
+ * What separates them is corroboration. A price the market paid repeatedly is
+ * a level; a price it paid once is a print. So a far-from-median price is
+ * dropped only when almost nothing else traded near it.
+ */
+export const BAND_SUPPORT_TOLERANCE = 0.15
+export const BAND_MIN_SUPPORT = 3
+
+/**
  * Sources that are a price rather than an opinion about one.
  *
  * Deliberately the same pair as `PAIRABLE_SOURCES` in marketindex.ts: a sale
@@ -254,6 +303,43 @@ export const ALL_TIME_DAYS = 36_500
  * the six-month mark; the confidence gates scale with it, because 120 days of
  * coverage means something different inside a six-month window than a year.
  */
+/**
+ * Drop prices that are both far from the rest AND stand alone.
+ *
+ * Two tests, and both must fail a price before it goes. The robust-scale test
+ * finds candidates; the corroboration test decides. See
+ * BAND_SUPPORT_TOLERANCE — a rally of a hundred sales passes the second test
+ * even though every one of them fails the first, which is the whole point.
+ */
+function withoutLonePrints(points: PricePoint[]): { kept: PricePoint[]; dropped: PricePoint[] } {
+  const logs = points.map((p) => Math.log(effectivePrice(p)))
+  const m = median(logs)
+  const scale = mad(logs)
+  // Everything at one price: nothing is an outlier, and a zero scale would
+  // make every difference infinite.
+  if (!(scale > 0)) return { kept: points, dropped: [] }
+
+  const kept: PricePoint[] = []
+  const dropped: PricePoint[] = []
+  for (let i = 0; i < points.length; i++) {
+    const far = Math.abs(logs[i] - m) > BAND_OUTLIER_DEVIATIONS * scale
+    if (!far) { kept.push(points[i]); continue }
+    const price = effectivePrice(points[i])
+    const lo = price * (1 - BAND_SUPPORT_TOLERANCE)
+    const hi = price * (1 + BAND_SUPPORT_TOLERANCE)
+    // Itself excluded: the question is whether anything ELSE traded there.
+    let near = 0
+    for (let j = 0; j < points.length && near < BAND_MIN_SUPPORT; j++) {
+      if (j === i) continue
+      const other = effectivePrice(points[j])
+      if (other >= lo && other <= hi) near++
+    }
+    ;(near >= BAND_MIN_SUPPORT ? kept : dropped).push(points[i])
+  }
+  // Never let this empty the band.
+  return kept.length > 0 ? { kept, dropped } : { kept: points, dropped: [] }
+}
+
 export function computeRange(
   series: PriceSeries,
   reference: number | null,
@@ -296,28 +382,43 @@ export function computeRange(
     return {
       high: null, low: null, position: null, coverageDays: 0, sampleSize: 0,
       confidence: 'none', estimated: true, fromTrades: false,
+      excluded: 0, highSupport: 0,
       windowDays, oldest: null, newest: null, coversWindow: false,
     }
   }
-  const prices = windowed.map(effectivePrice)
+  // One wild price must not define a band built from hundreds. See
+  // BAND_OUTLIER_DEVIATIONS: judged on log price, so the test does not depend
+  // on how expensive the card is, and only once there are enough trades to
+  // tell an outlier from the market.
+  const { kept, dropped } = windowed.length >= MIN_FOR_ROBUST_BAND
+    ? withoutLonePrints(windowed)
+    : { kept: windowed, dropped: [] as PricePoint[] }
+
+  const prices = kept.map(effectivePrice)
   const high = Math.max(...prices)
   const low = Math.min(...prices)
-  const coverageDays = daysBetween(windowed[0].date, windowed[windowed.length - 1].date)
+  // How many trades sit within a tenth of the high. A high resting on one
+  // sale is a different thing from one the market repeatedly paid, and the
+  // difference is invisible in the number itself.
+  const highSupport = prices.filter((x) => x >= high * 0.9).length
+  const coverageDays = daysBetween(kept[0].date, kept[kept.length - 1].date)
 
   let confidence: Confidence = 'low'
   const wide = coverageDays / windowDays
-  if (wide >= 0.82 && windowed.length >= 20) confidence = 'high'
-  else if (wide >= 0.33 && windowed.length >= 8) confidence = 'medium'
+  if (wide >= 0.82 && kept.length >= 20) confidence = 'high'
+  else if (wide >= 0.33 && kept.length >= 8) confidence = 'medium'
 
   const position = reference != null && high > low ? clamp01((reference - low) / (high - low)) : reference != null ? 0.5 : null
 
-  const oldest = windowed[0].date
-  const newest = windowed[windowed.length - 1].date
+  const oldest = kept[0].date
+  const newest = kept[kept.length - 1].date
 
   return {
-    high, low, position, coverageDays, sampleSize: windowed.length, confidence,
+    high, low, position, coverageDays, sampleSize: kept.length, confidence,
+    excluded: dropped.length,
+    highSupport,
     // A band with no trades under it is indicative whatever its coverage.
-    estimated: !fromTrades || wide < 0.25 || windowed.length < 8,
+    estimated: !fromTrades || wide < 0.25 || kept.length < 8,
     fromTrades,
     windowDays,
     oldest,
@@ -348,6 +449,21 @@ export const DEFAULT_DISCOUNT = 0.12
  */
 export const MIN_TRADES_FOR_TRADED_ENTRY = 4
 
+/**
+ * How recent a sale has to be to say what the card costs today.
+ *
+ * The entry target was the 25th percentile of the WHOLE twelve-month window,
+ * which on a card that has risen is dragged down by last year's prices: a card
+ * trading at $1,200 was given a target of $650, a real price from a market
+ * that no longer exists. "What could I buy this at" is a question about now.
+ *
+ * A quiet card may have nothing inside the window, so the most recent
+ * `ENTRY_MAX_TRADES` are used instead — recency preferred, but never at the
+ * cost of having too few prices to read a percentile from.
+ */
+export const ENTRY_RECENT_DAYS = 90
+export const ENTRY_MAX_TRADES = 30
+
 export function computeEntry(
   fmvResult: FmvResult,
   range: RangeResult,
@@ -376,7 +492,17 @@ export function computeEntry(
 
   // Where the card has actually changed hands this year, which is the only
   // set of prices anyone has ever accepted for it.
-  const tradePrices = windowed.filter((p) => p.source === 'sale').map(effectivePrice)
+  // Recent sales, not the year's. See ENTRY_RECENT_DAYS.
+  const allTrades = windowed
+    .filter((p) => p.source === 'sale')
+    .sort((a, b) => b.date.localeCompare(a.date))
+  const fresh = allTrades.filter((p) => daysAgo(p.date, now) <= ENTRY_RECENT_DAYS)
+  const recentTrades = (fresh.length >= MIN_TRADES_FOR_TRADED_ENTRY ? fresh : allTrades)
+    .slice(0, ENTRY_MAX_TRADES)
+  const tradePrices = recentTrades.map(effectivePrice)
+  const tradeSpanDays = recentTrades.length > 1
+    ? daysBetween(recentTrades[recentTrades.length - 1].date, recentTrades[0].date)
+    : 0
   const anchoredOnTrades = range.fromTrades
     && range.low != null && range.high != null && range.high > range.low
     && tradePrices.length >= MIN_TRADES_FOR_TRADED_ENTRY
@@ -393,10 +519,12 @@ export function computeEntry(
     // target like that is not patient, it is unreachable, and an entry price
     // nobody will ever meet is the same as having none.
     const quarter = percentile(tradePrices, 0.25)
-    entryPrice = clamp(quarter, range.low!, range.high!)
-    // The floor: the market has not gone below this, so there is nothing
-    // deeper to wait for.
-    stretchEntry = range.low!
+    entryPrice = clamp(quarter, Math.min(...tradePrices), range.high!)
+    // The floor is the lowest of those same recent sales. The year's low is
+    // the wrong number here for the same reason the year's percentile was:
+    // it can be a price from before the card moved, so waiting for it is
+    // waiting for the past.
+    stretchEntry = Math.min(...tradePrices)
   } else {
     // No usable record of trades, so fall back to reasoning from fair value.
     const discountEntry = fmv * (1 - requiredDiscount)
@@ -413,10 +541,22 @@ export function computeEntry(
   const askingDownFromHigh = down(reference)
 
   if (anchoredOnTrades) {
+    // Says WHICH sales, because the answer used to be "this year's" and that
+    // produced targets from a market the card had long since left.
+    const span = tradeSpanDays >= 1
+      ? `the last ${recentTrades.length} sales, spanning ${Math.round(tradeSpanDays)} days`
+      : `the last ${recentTrades.length} sales`
     rationale.push(
-      `Sales this year ran ${money(range.low!)} to ${money(range.high!)}. The target of ${money(entryPrice)} is `
-      + `${pct(entryDownFromHigh ?? 0)} off the high, and a quarter of the year's sales went at or below it.`,
+      `Read off ${span}: ${money(Math.min(...tradePrices))} to ${money(Math.max(...tradePrices))}. `
+      + `The target of ${money(entryPrice)} is a price a quarter of those went at or below`
+      + `${entryDownFromHigh != null ? `, and ${pct(entryDownFromHigh)} off the ${range.windowDays >= 360 ? 'year' : 'window'}'s high of ${money(range.high!)}` : ''}.`,
     )
+    if (range.high != null && Math.max(...tradePrices) < range.high * 0.7) {
+      rationale.push(
+        `It traded as high as ${money(range.high)} earlier in the window but has not been near that recently, `
+        + `so the distance from that high is history rather than a discount on offer.`,
+      )
+    }
   } else {
     rationale.push(
       volatility == null
@@ -431,7 +571,11 @@ export function computeEntry(
           : 'No completed sales on record this year, so the band is asking prices and stored figures — the target is reasoned from fair value instead.',
     )
   }
-  if (stretchEntry >= entryPrice - 0.005 && range.low != null) {
+  if (anchoredOnTrades && stretchEntry >= entryPrice - 0.005) {
+    rationale.push(
+      `Nothing recent went below ${money(stretchEntry)}, so there is no deeper bid worth waiting for.`,
+    )
+  } else if (!anchoredOnTrades && stretchEntry >= entryPrice - 0.005 && range.low != null) {
     rationale.push(`The market has not traded below ${money(range.low)} this year, so there is no deeper bid worth waiting for.`)
   }
   if (range.estimated && range.sampleSize > 0) rationale.push('The 52-week band is built on thin history — treat the high and low as indicative.')

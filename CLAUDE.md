@@ -573,6 +573,48 @@ The rule now is about **reach**, not about source alone:
 completed sale — because "the market has not traded below this" is only a true
 sentence about trades. A mixed band says so in its own words instead.
 
+### A lone print is not a high, and a rally is not an outlier
+
+Reported: a Pikachu trading around $3,300 across 1,053 sales showed a yearly
+high of **$10,187**, so the app called it 67% below its high and read that as
+a discount. One sale — a lot, a mislabelled grade, or a bad record — was
+setting the band, the volatility (264%) and the entry target.
+
+The obvious fix is wrong, and its own test caught it. Rejecting prices far
+from the median in robust scale also threw away **a hundred sales at $8,800 on
+a card usually trading at $3,200** — a genuine rally, every point of which is
+far from the median. That deletes exactly the history a drawdown is measured
+against, which is worse than the bug being fixed.
+
+What separates them is **corroboration**, not distance. A price the market
+paid repeatedly is a level; a price it paid once is a print. So a far-from-
+median price is dropped only when fewer than `BAND_MIN_SUPPORT` (3) other
+sales traded within `BAND_SUPPORT_TOLERANCE` (15%) of it. Below
+`MIN_FOR_ROBUST_BAND` (30) trades nothing is dropped at all — with a handful
+of comps an outlier cannot be told from the market.
+
+Where a wide distribution makes even a lone print statistically unremarkable,
+it is kept and **disclosed instead**: `highSupport` counts the sales within a
+tenth of the high, and the panel says "the high rests on 1 sale — treat it as
+one print, not a level". `excluded` reports anything dropped, because silently
+discarding a person's data is not on.
+
+### The entry target is read off recent sales, not the year
+
+Reported: "a card that normally sells for 1.2k you're never gonna buy around
+650". Correct — the target was the 25th percentile of the **whole twelve-month
+window**, so on a card that had risen it was dragged down by last year's
+prices. A real price, from a market the card had long since left.
+
+It now uses sales from the last `ENTRY_RECENT_DAYS` (90), or the most recent
+`ENTRY_MAX_TRADES` (30) where a quiet card has too few, and the floor is the
+lowest of those rather than the year's low — waiting for the year's low is
+waiting for the past. The rationale names which sales it used and over what
+span, and says so plainly when the window's high is far above anything recent:
+"it traded as high as X earlier in the window but has not been near that
+recently, so the distance from that high is history rather than a discount on
+offer".
+
 ### The entry price has to be one somebody would accept
 
 The old target was fair value minus a volatility-derived discount, up to thirty

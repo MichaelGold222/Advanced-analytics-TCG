@@ -149,6 +149,17 @@ export interface RangeResult {
   confidence: Confidence
   /** True when the window is too thin to be a real 52-week high. */
   estimated: boolean
+  /**
+   * Prices dropped as outliers before the high and low were taken. Zero on a
+   * thin record, where every price counts.
+   */
+  excluded: number
+  /**
+   * How many trades sit within a tenth of the high. A high resting on ONE
+   * sale is a different thing from one the market paid repeatedly, and the
+   * number alone cannot show the difference.
+   */
+  highSupport: number
   /** The window that was asked for, in days. */
   windowDays: number
   /** The oldest and newest points the band rests on. */
