@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { ALT_CREDITS_PER_LOOKUP, altSales, parseAltCert, parseAltCerts } from './alt'
+import { ALT_CREDITS_PER_LOOKUP, KEEP_YEARS, altSales, parseAltCert, parseAltCerts } from './alt'
 
 /**
  * The shape run 2 of the Alt check returned for cert 77865285 — the 2019
@@ -22,45 +22,65 @@ const LIVE = {
   },
 }
 
+const NOW = new Date('2026-09-22T00:00:00Z')
+const read = (cert = '77865285') => parseAltCert(LIVE, cert, NOW)!
+
 describe('what Alt gives that nothing else could', () => {
-  it('reads every sale, dated, for a cert with no card id anywhere', () => {
-    const c = parseAltCert(LIVE, '77865285')!
+  it('reads the dated sales for a cert with no card id anywhere', () => {
+    const c = read()
     expect(c.cert).toBe('77865285')
-    expect(c.sales).toHaveLength(4)
     expect(c.sales.map((s) => s.date)).toEqual([
-      '2020-09-13', '2025-11-08', '2026-03-02', '2026-09-19',
+      '2025-11-08', '2026-03-02', '2026-09-19',
     ])
   })
 
   it('gives the real high, not a floor on one', () => {
     // Card Ladder aggregates into {date, price, count}, so an averaged point
     // hides its extremes. These are individual sales.
-    const prices = parseAltCert(LIVE, '77865285')!.sales.map((s) => s.price)
+    const prices = read().sales.map((s) => s.price)
     expect(Math.max(...prices)).toBe(1000)
-    expect(Math.min(...prices)).toBe(6)
   })
 
   it('counts them as completed sales, since that is what they are', () => {
-    expect(parseAltCert(LIVE, '')!.sales.every((s) => s.source === 'sale')).toBe(true)
+    expect(read('').sales.every((s) => s.source === 'sale')).toBe(true)
   })
 
   it('keeps the auction house as the venue', () => {
-    const byDate = new Map(parseAltCert(LIVE, '')!.sales.map((s) => [s.date, s]))
+    const byDate = new Map(read('').sales.map((s) => [s.date, s]))
     expect(byDate.get('2026-03-02')!.venue).toBe('Goldin')
   })
 
   it('carries the population, which no price series contains', () => {
-    expect(parseAltCert(LIVE, '')!.population).toBe(7856)
+    expect(read('').population).toBe(7856)
   })
 
-  it('reports what Alt says it holds, so a short response is visible', () => {
-    const c = parseAltCert(LIVE, '')!
+  it('reports what Alt holds even when it kept less', () => {
+    // 1,422 on record against 3 kept must read as a trim, not a short answer.
+    const c = read('')
     expect(c.salesCount).toBe(1422)
     expect(c.sales.length).toBeLessThan(c.salesCount!)
   })
 
   it('is priced at the measured two credits a certificate', () => {
     expect(ALT_CREDITS_PER_LOOKUP).toBe(2)
+  })
+})
+
+describe('keeping two years rather than six', () => {
+  // Alt has no date parameter, so this saves no credits. It saves the browser
+  // from ~45,000 points across the collection, walked by every analysis.
+  it('drops a sale older than the window', () => {
+    const old = altSales({ sales: [{ date: '2020-09-13T00:00:00Z', price: 6 }] }, NOW)
+    expect(old).toHaveLength(0)
+  })
+
+  it('keeps one just inside it', () => {
+    const inside = altSales({ sales: [{ date: '2025-01-01T00:00:00Z', price: 300 }] }, NOW)
+    expect(inside).toHaveLength(1)
+  })
+
+  it('keeps the window at the longest span anything reports', () => {
+    expect(KEEP_YEARS).toBe(2)
   })
 })
 

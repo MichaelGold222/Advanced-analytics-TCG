@@ -220,8 +220,14 @@ export function DataPanel({
               <strong>Alt is keyed on the certificate</strong>, so it reaches cards Card Ladder
               cannot — a promo has no entry in the catalogue Card Ladder looks a card up in, and
               31 of these certificates return an internal hash rather than a card id. Measured on
-              one of them: 1,422 sales back to 2020, a true twelve-month band of $198–$1,000,
-              for 2 credits. The same card showed $462–$568 here, from five sales over 57 days.
+              one of them: 1,422 sales on record, a true twelve-month band of $198–$1,000, for
+              2 credits. The same card showed $462–$568 here, from five sales over 57 days.
+              The last <strong>two years</strong> are kept — Alt has no date filter so this
+              saves no credits, but the whole collection at full depth would be some
+              forty-five thousand points for the browser to walk on every change.</p>
+            <p className="text-xs muted mt-1 leading-relaxed">
+              One consequence worth knowing: with two years kept, the “all-time” high is the
+              two-year high, so a card that peaked before then reads as nearer its top than it is.
             </p>
           )}
 

@@ -672,6 +672,17 @@ fail, so a promo is no harder than a Charizard. `lookup_cert` takes
 NOT yet measured, so `ALT_CERTS_PER_CALL` starts at 25: a wrong guess should
 cost one modest call rather than the collection.
 
+**Only the last `KEEP_YEARS` (2) are kept.** Alt has no date parameter, so
+this saves no credits — it returns everything either way. The reason is what
+happens afterwards: 32 cards at 1,422 sales each is some forty-five thousand
+points in the browser's store, walked by every analysis, every repeat-sales
+pair and every simulation. Two years is about twelve thousand. It is also the
+longest window anything here reports, and a 2020 peak is a poor reference for
+a buy decision today. The cost, which the UI states: the "all-time" high
+becomes the two-year high, so a card that peaked earlier reads as nearer its
+top than it is. `salesCount` keeps the full figure so "1,422 on record, 394
+kept" is visible rather than looking like a short response.
+
 The rows are **individual sales**, not the aggregated `{date, price, count}`
 Card Ladder serves, so a high is the real high rather than a floor on one.
 Each carries `auction_house`, `grade_number` and `listing_url`. `population`

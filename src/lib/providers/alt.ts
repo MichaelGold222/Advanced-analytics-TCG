@@ -25,6 +25,23 @@
  */
 import type { PricePoint } from '../types'
 
+/**
+ * How much history to keep.
+ *
+ * Alt returns everything it has — 1,422 sales back to 2020 for one card — and
+ * there is no date parameter, so asking for less does not cost less. The
+ * reason to trim is what happens afterwards: 32 cards at that depth is some
+ * forty-five thousand points in the browser's store, walked by every analysis,
+ * every repeat-sales pair and every simulation. Two years is about twelve
+ * thousand, which stays quick.
+ *
+ * Two years is also the longest window anything here reports, and a 2020 peak
+ * is a poor reference for a buy decision today. The cost of the trim, stated
+ * plainly: the "all-time" high becomes the two-year high, so a card that
+ * peaked before that reads as nearer its top than it is.
+ */
+export const KEEP_YEARS = 2
+
 /** Measured: 2 credits for one certificate, 1,422 sales. */
 export const ALT_CREDITS_PER_LOOKUP = 2
 
@@ -36,7 +53,11 @@ export interface AltCert {
   altValue: number | null
   /** Graded population — exogenous, and the model has wanted it for a while. */
   population: number | null
-  /** What Alt says it holds, so a truncated response is visible as one. */
+  /**
+   * Every sale Alt says it holds, including the ones older than `KEEP_YEARS`
+   * that were not kept — so "1,422 on record, 394 kept" is visible rather
+   * than looking like a short response.
+   */
   salesCount: number | null
 }
 
@@ -62,9 +83,11 @@ function isoDay(v: unknown): string {
  * most recent sales, which are the ones a band most needs; the flag rides
  * along so it can be reconsidered if those turn out to move.
  */
-export function altSales(node: unknown): PricePoint[] {
+export function altSales(node: unknown, now = new Date()): PricePoint[] {
   const rows = (node as { sales?: unknown[] })?.sales
   if (!Array.isArray(rows)) return []
+  const cutoff = new Date(now.getTime() - KEEP_YEARS * 365.25 * 86_400_000)
+    .toISOString().slice(0, 10)
   const seen = new Set<string>()
   const out: PricePoint[] = []
   for (const r of rows) {
@@ -73,6 +96,7 @@ export function altSales(node: unknown): PricePoint[] {
     const price = num(row.price)
     const date = isoDay(row.date)
     if (!price || !date) continue
+    if (date < cutoff) continue
     const sig = `${date}|${price}`
     if (seen.has(sig)) continue
     seen.add(sig)
@@ -83,7 +107,7 @@ export function altSales(node: unknown): PricePoint[] {
 }
 
 /** One `lookup_cert` or one entry of a `lookup_certs` response. */
-export function parseAltCert(node: unknown, fallbackCert: string): AltCert | null {
+export function parseAltCert(node: unknown, fallbackCert: string, now = new Date()): AltCert | null {
   const data = (node as { data?: unknown })?.data ?? node
   if (!data || typeof data !== 'object') return null
   const d = data as Record<string, unknown>
@@ -94,7 +118,7 @@ export function parseAltCert(node: unknown, fallbackCert: string): AltCert | nul
   const pop = d.population
   return {
     cert,
-    sales: altSales(d),
+    sales: altSales(d, now),
     altValue: num(d.alt_value) ?? num((d.alt_value as Record<string, unknown>)?.value),
     population: typeof pop === 'number' && Number.isFinite(pop)
       ? pop
