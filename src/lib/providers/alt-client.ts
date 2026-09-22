@@ -13,6 +13,7 @@ const SCRAPER_STORAGE = 'aa-tcg.altScraperId'
 export const ALT_CERTS_PER_CALL = 25
 
 let cachedScraper: string | null = null
+let lastResolved: { id: string; task: string; blob: string } | null = null
 
 export class AltError extends Error {
   readonly status: number
@@ -48,9 +49,16 @@ export async function resolveAltScraper(key: string, signal?: AbortSignal): Prom
   const body = await res.json() as { tasks?: unknown[] } | unknown[]
   const tasks = (Array.isArray(body) ? body : body.tasks ?? []) as Record<string, unknown>[]
 
-  const match = tasks.find((t) => /\balt\b|alt\.xyz|alt-xyz/i.test(
-    ['slug', 'url', 'name'].map((k) => String(t[k] ?? '')).join(' '),
-  ))
+  const blobOf = (t: Record<string, unknown>) =>
+    ['slug', 'url', 'name'].map((k) => String(t[k] ?? '')).join(' ')
+
+  // Card Ladder is also on this account, and picking it would send Alt's
+  // endpoints to the wrong API. Excluded explicitly rather than trusted to
+  // lose a fuzzy match.
+  const match = tasks.find((t) => {
+    const blob = blobOf(t)
+    return /\balt\b|alt\.xyz|alt-xyz/i.test(blob) && !/cardladder|card-ladder/i.test(blob)
+  })
   if (!match) {
     throw new AltError(404, 'No Alt API on your Parse account. Subscribe to it at parse.bot, then try again.')
   }
@@ -63,8 +71,20 @@ export async function resolveAltScraper(key: string, signal?: AbortSignal): Prom
   if (!id) throw new AltError(409, 'That Alt API has not finished building yet.')
 
   cachedScraper = id
+  lastResolved = { id, task: String(match.id ?? ''), blob: blobOf(match).trim() }
   try { localStorage.setItem(SCRAPER_STORAGE, id) } catch { /* private window */ }
   return id
+}
+
+/**
+ * Which Parse API the last lookup actually talked to.
+ *
+ * Two APIs sit on this account and the wrong one would explain a call that
+ * charges and returns nothing useful. Worth being able to see rather than
+ * reason about.
+ */
+export function lastResolvedAlt(): { id: string; task: string; blob: string } | null {
+  return lastResolved
 }
 
 export interface AltFetchResult {

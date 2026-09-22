@@ -8,7 +8,7 @@
 import { create } from 'zustand'
 import { del, get, set } from 'idb-keyval'
 import { WINDOW_COVERED_FRACTION, WINDOW_DAYS, buildSeries } from './analytics'
-import { AltError, fetchAltCerts } from './providers/alt-client'
+import { AltError, fetchAltCerts, lastResolvedAlt } from './providers/alt-client'
 import { KEEP_YEARS } from './providers/alt'
 import { importWorkbook, mergeHistory, reclassify } from './ingest'
 import { itemKey } from './key'
@@ -582,9 +582,9 @@ export const useStore = create<AppState>((setState, getState) => ({
         // Three different outcomes that used to share one sentence. Alt counts
         // its own results, so which one it is need not be guessed at.
         error: unreadSample != null
-          ? `Alt answered for ${counts.found} card${counts.found === 1 ? '' : 's'} but this build could not read the response — that is a bug here, not a gap at Alt. Shape: ${unreadSample}`
+          ? `Alt answered for ${counts.found} card${counts.found === 1 ? '' : 's'} but this build could not read the response — that is a bug here, not a gap at Alt. API: ${lastResolvedAlt()?.blob || 'unknown'}. Shape: ${unreadSample}`
           : got.length === 0 && (counts.found ?? 0) === 0
-            ? `Alt has no record of ${missing.length} certificate${missing.length === 1 ? '' : 's'}: ${missing.slice(0, 5).join(', ')}${missing.length > 5 ? '…' : ''}. Spent ${creditsCharged} credits.`
+            ? `Alt has no record of ${missing.length} certificate${missing.length === 1 ? '' : 's'}: ${missing.slice(0, 5).join(', ')}${missing.length > 5 ? '…' : ''}. Spent ${creditsCharged} credits, asking ${lastResolvedAlt()?.blob || 'an unidentified API'}.`
             : missing.length > 0
               ? `${got.length} of ${list.length} from Alt — ${kept.toLocaleString()} sales kept of ${onRecord.toLocaleString()} on record, ${creditsCharged} credits. No record of: ${missing.slice(0, 5).join(', ')}${missing.length > 5 ? '…' : ''}`
               : got.length > 0
