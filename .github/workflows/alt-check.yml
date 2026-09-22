@@ -22,6 +22,14 @@ on:
         description: PSA, BGS, CGC or SGC
         required: false
         default: PSA
+      certs:
+        description: >-
+          Two or three certs, comma separated, to call lookup_certs with. Its
+          response shape has never been measured — the app guessed it, guessed
+          wrong, and reported "nothing for 32 certificates" after a call that
+          had in fact succeeded.
+        required: false
+        default: ''
 
 env:
   BASE: https://api.parse.bot
@@ -161,3 +169,48 @@ jobs:
               print('  no dated prices found anywhere in the response')
               print('  raw head:', json.dumps(d)[:700])
           PY3
+
+      - name: What does lookup_certs actually answer with?
+        if: inputs.certs != ''
+        env:
+          KEY: ${{ secrets.PARSE_API_KEY }}
+          CERTS: ${{ inputs.certs }}
+        run: |
+          [ -n "$KEY" ] || exit 0
+          [ -s detail.json ] || { echo "no Alt scraper resolved"; exit 0; }
+          SCR=$(python3 -c "
+          import json
+          print(json.load(open('detail.json')).get('result_scraper_id') or '')
+          ")
+          [ -n "$SCR" ] || exit 0
+
+          echo "=== GET lookup_certs?cert_numbers=$CERTS ==="
+          code=$(curl -sS -m 180 -o bulk.json -w '%{http_code}' -D bulk.head -G \
+            --data-urlencode "cert_numbers=$CERTS" \
+            -H "X-API-Key: $KEY" "$BASE/scraper/$SCR/lookup_certs" || echo 000)
+          echo "HTTP $code"
+          tr -d '\r' < bulk.head | grep -iE '^x-credits' | sed 's/^/  /' || true
+
+          # Print the SHAPE, in full. The app failed because this was guessed.
+          python3 - <<'PY4' || { echo "  not JSON:"; head -c 800 bulk.json; echo; }
+          import json
+          d = json.load(open('bulk.json'))
+
+          def shape(node, path='', depth=0):
+              pad = '  ' * (depth + 1)
+              if isinstance(node, dict):
+                  print('%s%s {%s}' % (pad, path or '<root>', ', '.join(sorted(node)[:14])))
+                  for k, v in list(node.items())[:14]:
+                      if isinstance(v, (dict, list)):
+                          shape(v, k, depth + 1)
+                      else:
+                          print('%s  %s = %s' % (pad, k, str(v)[:70]))
+              elif isinstance(node, list):
+                  print('%s%s [%d]' % (pad, path or '<root>', len(node)))
+                  if node:
+                      shape(node[0], path + '[0]', depth + 1)
+
+          shape(d)
+          print()
+          print('raw head:', json.dumps(d)[:1200])
+          PY4
