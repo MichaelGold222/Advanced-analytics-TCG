@@ -87,25 +87,18 @@ export function slope(xs: number[], ys: number[]): number | null {
 }
 
 /**
- * Annualized volatility from an irregular price series.
- * Log returns are scaled by the actual day gap so that a monthly-sampled
- * series is not mistaken for a calm one.
+ * There is deliberately no general `annualizedVolatility` here.
+ *
+ * Scaling a log return by the root of the ACTUAL day gap — the obvious
+ * implementation, and the one that used to live at this spot — reads two
+ * buyers paying a few per cent apart on consecutive days as the card moving
+ * that far in a day, and annualizes it into the hundreds of per cent. It was
+ * invisible while cards had five sales apiece and became the headline figure
+ * the moment a backfill gave them hundreds.
+ *
+ * Volatility is measured by `dailyReturns` in forecast.ts, which floors the
+ * spacing at `MIN_GAP_DAYS`, over the prices `bandEvidence` admits.
  */
-export function annualizedVolatility(points: { date: string; price: number }[]): number | null {
-  const s = [...points]
-    .filter((p) => p.price > 0)
-    .sort((a, b) => a.date.localeCompare(b.date))
-  if (s.length < 3) return null
-  const rates: number[] = []
-  for (let i = 1; i < s.length; i++) {
-    const dt = daysBetween(s[i - 1].date, s[i].date)
-    if (dt <= 0) continue
-    // Daily-equivalent log return.
-    rates.push(Math.log(s[i].price / s[i - 1].price) / Math.sqrt(dt))
-  }
-  if (rates.length < 2) return null
-  return stdev(rates) * Math.sqrt(365)
-}
 
 export function daysBetween(a: string, b: string): number {
   const ms = Date.parse(b) - Date.parse(a)

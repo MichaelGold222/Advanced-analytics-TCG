@@ -893,3 +893,50 @@ describe('one wild print must not set the high', () => {
     expect(band(lone).highSupport).toBe(1)
   })
 })
+
+describe('the volatility beside the band is measured over the same prices', () => {
+  const NOW_ = new Date('2026-09-22T00:00:00Z')
+  const back = (n: number) => new Date(NOW_.getTime() - n * 86_400_000).toISOString().slice(0, 10)
+  const at = (d: number, p: number, source: PricePoint['source'] = 'sale'): PricePoint =>
+    ({ date: back(d), price: p, source })
+
+  /**
+   * A card that trades daily around $3,300, each sale a different buyer a few
+   * per cent either side. The value is going nowhere; only the buyers differ.
+   */
+  const daily = () => {
+    let seed = 7
+    const rnd = () => { seed = (seed * 1103515245 + 12345) % 2147483648; return seed / 2147483648 }
+    return Array.from({ length: 360 }, (_, i) => at(360 - i, Math.round(3300 * (1 + (rnd() - 0.5) * 0.1))))
+  }
+
+  const vol = (pts: PricePoint[]) => {
+    const s = { key: 'k', points: [...pts].sort((a, b) => a.date.localeCompare(b.date)) }
+    const fmv = computeFmv(s, NOW_)
+    return computeEntry(fmv, computeRange(s, fmv.fmv, NOW_), s, fmv.fmv, NOW_).volatility
+  }
+
+  it('does not read daily trading as a wildly volatile card', () => {
+    // The bug: dividing a one-day gap by its own root annualizes a few per
+    // cent between two buyers into several hundred per cent a year. It only
+    // appeared once cards had hundreds of sales rather than five.
+    const v = vol(daily())
+    expect(v).not.toBeNull()
+    expect(v!).toBeLessThan(0.6)
+  })
+
+  it('ignores asking prices, which are not prices the card changed hands at', () => {
+    const asks = [at(9, 5200, 'listing'), at(6, 5400, 'listing'), at(3, 5100, 'listing')]
+    expect(vol([...daily(), ...asks])).toBeCloseTo(vol(daily())!, 6)
+  })
+
+  it('ignores the print the band already excluded', () => {
+    expect(vol([...daily(), at(200, 10_187)])).toBeCloseTo(vol(daily())!, 6)
+  })
+
+  it('still reports a card that genuinely moves as volatile', () => {
+    const moving = Array.from({ length: 40 }, (_, i) =>
+      at(360 - i * 9, i % 2 === 0 ? 1000 : 1900))
+    expect(vol(moving)!).toBeGreaterThan(vol(daily())! * 2)
+  })
+})

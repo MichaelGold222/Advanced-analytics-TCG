@@ -599,6 +599,36 @@ tenth of the high, and the panel says "the high rests on 1 sale — treat it as
 one print, not a level". `excluded` reports anything dropped, because silently
 discarding a person's data is not on.
 
+### The volatility beside the band was measured on different prices
+
+The band was fixed to drop a lone print and to count only prices somebody
+paid. The volatility printed two lines under it was still read off the **raw
+window** — asks, quotes, this app's own snapshots and the excluded print
+included — and scaled by the root of the *actual* gap between sales. On a card
+trading daily in a tight band around $3,300 that reported **179% annualized**,
+which pegged the required discount at its 30% cap, directly beside a band that
+was by then correct.
+
+Two separate errors, each enough on its own:
+
+- **The spacing was not floored.** Two buyers paying a few per cent apart on
+  consecutive days is not the card moving that far in a day. `MIN_GAP_DAYS`
+  has floored this inside `dailyReturns` since the projections were fixed; the
+  displayed figure never used it, so the two disagreed about the same card and
+  the gap grew with every backfill. This was invisible at five sales a card and
+  became the headline number the moment Alt supplied hundreds.
+- **The points were the wrong points.** Stepping a return from a sale to an
+  ask and back manufactures a round trip the market never made.
+
+`bandEvidence` is the rule, split out of `computeRange` so the band and
+everything measured beside it read the same prices. `computeEntry` and
+**`computeForecast`** both take `bandEvidence(...).kept` now — the simulation
+was resampling those same phantom returns into every path.
+
+`annualizedVolatility` is **deleted from stats.ts** rather than left unused. An
+exported estimator that does the obvious wrong thing is how this comes back;
+the comment at its old address says where to go instead.
+
 ### The entry target is read off recent sales, not the year
 
 Reported: "a card that normally sells for 1.2k you're never gonna buy around
@@ -1001,43 +1031,29 @@ https://michaelgold222.github.io/Advanced-analytics-TCG/ on every push. The
 footer carries the build time, which is the way to tell a stale page from a
 current one — a browser will otherwise serve a cached copy indefinitely.
 
-### Paused on 2026-09-21 with the credit balance at zero
+### Where it got to, 2026-09-22
 
-**Nothing is broken and nothing is lost.** Prices, pictures, typed-in values
-and imported sheets all persist in the browser. The app is green: 500 tests,
-typecheck, lint and build all clean, working tree clean, everything pushed.
+The app is green: 596 tests, typecheck, lint and build all clean, everything
+pushed. Prices, pictures, typed-in values and imported sheets persist in the
+browser.
 
-The balance is at zero because **four diagnostic runs of the API check in ten
-minutes spent roughly 95 credits of a 200-a-month plan** — `get_cert_full_profile`
-turns out to cost 10 a call, not the 3 that was assumed, and it was being
-called twice per run. Half of it re-asked picture questions that run 27 had
-already answered and written into this file. That is the single most expensive
-mistake of the session and the reason the check's probes are now opt-in.
-Read this file before asking the API anything.
+**The credit crisis of 2026-09-21 is over and its lesson is not.** Four
+diagnostic runs of the API check in ten minutes spent roughly 95 credits of a
+200-a-month plan — `get_cert_full_profile` costs 10 a call, not the 3 that was
+assumed, and it was being called twice per run. Half of that re-asked picture
+questions run 27 had already answered and written into this file. The plan is
+now the 1,000-credit tier and the check's probes are opt-in. **Read this file
+before asking the API anything.**
 
-### The one question to settle when credits reset
+**The question that was open then is answered.** `get_card_sales_detail`
+returns `"sales":[]` at `limit=200`, forces `limit:50`, still claims
+`has_more:true`, and charges for it. It is not used. `get_card_sales` — one
+call, one credit, hundreds of dated prices — is what the backfill runs on, and
+**Alt** (keyed on the certificate, so promos are no harder than Charizards) is
+what finally covered the cards Card Ladder could not reach at all.
 
-**Does `get_card_sales_detail` return full sales history, and what does a call
-cost?** Everything downstream turns on it, it has never been called, and it can
-be answered for ~10 credits. Batch every other open question into the same run.
-
-- Card id: `search_by_certs_bulk` returns it as `id` for a card in the
-  catalogue (cert 141142901 → `Zrxi8aY5mAA6roFkKUVX`). A cert that is not
-  catalogued gets a 40-character hash there instead, which the upstream
-  rejects — that case needs its own answer.
-- Run it as: Actions → Price API check → Run workflow, branch
-  `claude/determined-gates-pl6w4q`, `probes: prices,depth`.
-
-Then the fork:
-
-- **If it returns full history** → one month of Parse's Hobby tier ($30, 1,000
-  credits, from the 402 body) backfills every card once. Because refreshes now
-  merge rather than overwrite, that is a **one-time** spend: afterwards the
-  1-credit bulk search keeps the record current for ~3 credits a month. Build
-  the backfill and an export before spending, so a paid backfill cannot be lost
-  to a cleared IndexedDB.
-- **If it caps too** → build the paste importer (below) for whatever cards the
-  history-gaps panel says actually need it.
+The paste importer is built (`pastesales.ts`, `PasteHistory`), so a card no
+feed can reach still has a zero-credit route to correct numbers.
 
 ### What the owner actually asked for, and what is still owed
 
@@ -1049,14 +1065,20 @@ by refreshing more often. Start any future session by reading that panel — it
 turns "all 32 watchlist cards" into a short ordered list, and it may say the
 job is five cards.
 
-Designed and agreed, not built:
+Built since: the backfill (`get_card_sales`, once per card ever), Alt, the
+paste importer, and the band and volatility fixes above.
 
-- **A paste importer.** A box that takes messy pasted text — a sales table
-  copied off a screen — parses dates and prices out of it, shows what it read,
-  and lets it be corrected before it commits. Per card or in a batch. This is
-  the zero-credit route to correct numbers and it works today.
-- **A backfill + export path**, so deep history once fetched is written to a
-  file rather than living only in IndexedDB.
+Still owed:
+
+- **An export path**, so deep history once paid for is written to a file rather
+  than living only in IndexedDB. The weekly cron in `prices.yml` writes the
+  repository copy, but it is committed commented out — the owner turns it on.
+- **The calibration backtest**, which is the one thing that would answer "is
+  this accurate?" with a measurement rather than an argument. See *What is
+  still missing*.
+- **`population`** is fetched from Alt and displayed, and still not modelled.
+  It is the only genuinely exogenous signal here: a pop count climbing is
+  structural downward pressure that no price series contains.
 
 ### Where the data can and cannot come from
 

@@ -9,10 +9,10 @@
  *     result says `estimated` rather than quietly reporting the max of three points.
  */
 import {
-  annualizedVolatility, clamp, clamp01, daysAgo, daysBetween, mad, mean, median, percentile,
-  recencyWeight, rejectOutliers, slope, toISODate,
+  clamp, clamp01, daysAgo, daysBetween, mad, mean, median, percentile,
+  recencyWeight, rejectOutliers, slope, stdev, toISODate,
 } from './stats'
-import { computeForecast } from './forecast'
+import { computeForecast, dailyReturns, MAX_VOLATILITY } from './forecast'
 import type { MarketIndex } from './marketindex'
 import type {
   Confidence, EntryResult, EntryVerdict, FmvResult, ItemAnalysis, LastSale, PricePoint,
@@ -340,13 +340,24 @@ function withoutLonePrints(points: PricePoint[]): { kept: PricePoint[]; dropped:
   return kept.length > 0 ? { kept, dropped } : { kept: points, dropped: [] }
 }
 
-export function computeRange(
-  series: PriceSeries,
-  reference: number | null,
-  now = new Date(),
-  windowDays = WINDOW_DAYS,
-): RangeResult {
-  const inWindow = pointsInWindow(series.points, now, windowDays)
+/**
+ * The prices a band is entitled to be built from, and the lone prints dropped
+ * from them.
+ *
+ * Split out of `computeRange` so that anything measured BESIDE the band is
+ * measured over the same evidence. `computeEntry` used to read volatility
+ * straight off the raw window, which put asking prices, market quotes and this
+ * app's own snapshots into the returns and kept the very print the band had
+ * just excluded — a card moving nine per cent around a flat $3,300 reported as
+ * 179% volatile, with the required discount pegged at its 30% cap, directly
+ * beside a band that was correct.
+ */
+export function bandEvidence(inWindow: PricePoint[]): {
+  priced: PricePoint[]
+  fromTrades: boolean
+  kept: PricePoint[]
+  dropped: PricePoint[]
+} {
   // A band is built from prices, and an opinion is not a price. An asking
   // price nobody took, a market quote, a midpoint and this app's own captured
   // snapshots all set a high the card never reached and a low nobody ever
@@ -378,6 +389,26 @@ export function computeRange(
   // completed sale, so a sentence about what the market did is true of it.
   const fromTrades = priced.length > 0 && own.length === 0
 
+  // One wild price must not define a band built from hundreds. See
+  // BAND_OUTLIER_DEVIATIONS: judged on log price, so the test does not depend
+  // on how expensive the card is, and only once there are enough trades to
+  // tell an outlier from the market.
+  const { kept, dropped } = windowed.length >= MIN_FOR_ROBUST_BAND
+    ? withoutLonePrints(windowed)
+    : { kept: windowed, dropped: [] as PricePoint[] }
+
+  return { priced: windowed, fromTrades, kept, dropped }
+}
+
+export function computeRange(
+  series: PriceSeries,
+  reference: number | null,
+  now = new Date(),
+  windowDays = WINDOW_DAYS,
+): RangeResult {
+  const inWindow = pointsInWindow(series.points, now, windowDays)
+  const { priced: windowed, fromTrades, kept, dropped } = bandEvidence(inWindow)
+
   if (windowed.length === 0) {
     return {
       high: null, low: null, position: null, coverageDays: 0, sampleSize: 0,
@@ -386,13 +417,6 @@ export function computeRange(
       windowDays, oldest: null, newest: null, coversWindow: false,
     }
   }
-  // One wild price must not define a band built from hundreds. See
-  // BAND_OUTLIER_DEVIATIONS: judged on log price, so the test does not depend
-  // on how expensive the card is, and only once there are enough trades to
-  // tell an outlier from the market.
-  const { kept, dropped } = windowed.length >= MIN_FOR_ROBUST_BAND
-    ? withoutLonePrints(windowed)
-    : { kept: windowed, dropped: [] as PricePoint[] }
 
   const prices = kept.map(effectivePrice)
   const high = Math.max(...prices)
@@ -461,6 +485,34 @@ export const MIN_TRADES_FOR_TRADED_ENTRY = 4
  * `ENTRY_MAX_TRADES` are used instead — recency preferred, but never at the
  * cost of having too few prices to read a percentile from.
  */
+/**
+ * How fast the card's value actually moves, measured over the prices the band
+ * is drawn from.
+ *
+ * Two things had to change from the plain standard deviation of log returns
+ * this used to be, and each was inflating the number on its own.
+ *
+ * **The spacing is floored at `MIN_GAP_DAYS`.** Two copies of one slab selling
+ * a day apart at a five per cent difference is two buyers, not the card moving
+ * five per cent in a day; dividing by the root of that gap reads it as several
+ * hundred per cent a year. The forecast has always floored it — the displayed
+ * figure did not, which is why the two disagreed, and the gap between them
+ * grew with every card Alt backfilled into the hundreds of sales.
+ *
+ * **The points are the band's, not the raw window's.** An ask, a quote and a
+ * snapshot are not prices the card changed hands at, and a lone print is one
+ * the band has already ruled out. Measuring returns across them manufactures
+ * a round trip the market never made.
+ *
+ * Capped at `MAX_VOLATILITY` for the reason the forecast caps it: past that
+ * the figure describes the data rather than the card.
+ */
+function measuredVolatility(points: PricePoint[]): number | null {
+  const returns = dailyReturns(points.map((p) => ({ ...p, price: effectivePrice(p) })))
+  if (returns.length < 2) return null
+  return Math.min(MAX_VOLATILITY, stdev(returns.map((r) => r.rate)) * Math.sqrt(365))
+}
+
 export const ENTRY_RECENT_DAYS = 90
 export const ENTRY_MAX_TRADES = 30
 
@@ -473,7 +525,7 @@ export function computeEntry(
 ): EntryResult {
   const fmv = fmvResult.fmv
   const windowed = pointsInWindow(series.points, now)
-  const volatility = annualizedVolatility(windowed.map((p) => ({ date: p.date, price: effectivePrice(p) })))
+  const volatility = measuredVolatility(bandEvidence(windowed).kept)
 
   // A more volatile asset has to be bought further below fair value to be safe.
   const requiredDiscount = volatility == null ? DEFAULT_DISCOUNT : clamp(volatility * 0.5, 0.06, 0.3)
@@ -707,8 +759,11 @@ export function analyzeItem(
   const lastSale = lastSaleAt(series, now)
   // Returns are figured against what a buyer would actually pay: the asking
   // price when there is one, otherwise what the card is worth.
+  // The same evidence the band is drawn from, for the same reason: resampling
+  // returns that step across an ask, a quote or a lone print simulates a round
+  // trip the market never made, and every path inherits it.
   const forecast = withForecast
-    ? computeForecast(series.points, lastSale?.price ?? fmv.fmv, {
+    ? computeForecast(bandEvidence(series.points).kept, lastSale?.price ?? fmv.fmv, {
       index,
       basis: reference ?? lastSale?.price ?? fmv.fmv,
     })
