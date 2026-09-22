@@ -5,20 +5,43 @@ import { ALT_CREDITS_PER_LOOKUP, KEEP_YEARS, altSales, parseAltCert, parseAltCer
  * The shape run 2 of the Alt check returned for cert 77865285 — the 2019
  * Japanese SM promo Card Ladder could not reach at all.
  */
-const LIVE = {
+const LIVE_INNER = {
+  cert: { cert_number: '77865285', grading_company: 'PSA', grade_number: '10.0' },
+  asset: {
+    asset_id: '54decb69-a898-4549-ba68-dceabe7dcfae',
+    name: '2019 Pokemon Sun and Moon Promo Japanese My251 Pokemon Center Midsummer Shining Grand Plan Playing In the Sea Pikachu #392SMP',
+    subject: 'Playing In the Sea Pikachu',
+    card_number: '392SMP',
+    image_url: 'https://alt-images.b-cdn.net/external/ebay/live/206569247952_0.jpg',
+  },
+  alt_value: { current: 470.59320623224426, confidence_metric: 100.0 },
+  // Every grade, not a number — 59 entries on the real card.
+  population: [
+    { grading_company: 'PSA', grade_number: 9.0, count: 12000 },
+    { grading_company: 'PSA', grade_number: 10.0, count: 7905 },
+    { grading_company: 'BGS', grade_number: 10.0, count: 40 },
+  ],
+  sales: [
+    { id: 'a1', date: '2026-09-19', price: 525, auction_house: 'PWCC Fixed Price', auction_type: 'BEST_OFFER', grade_number: 10.0, subject_to_change: true },
+    { id: 'a2', date: '2026-03-02', price: 1000, auction_house: 'Goldin', grade_number: 10.0 },
+    { id: 'a3', date: '2025-11-08', price: 198, auction_house: 'eBay', grade_number: 10.0 },
+    { id: 'a4', date: '2020-09-13', price: 6, auction_house: 'eBay', grade_number: 10.0 },
+  ],
+  sales_count: 1422,
+}
+
+/** `lookup_cert` (singular) answers with the payload under one `data`. */
+const LIVE = { status: 'success', data: LIVE_INNER }
+
+/** `lookup_certs` wraps each record again — the shape the first reader missed. */
+const LIVE_BULK = {
   status: 'success',
   data: {
-    alt_value: 612.5,
-    population: 7856,
-    sales_count: 1422,
-    cert: { cert_number: '77865285', grading_company: 'PSA', grade_number: 10 },
-    asset: { id: 'abc123' },
-    sales: [
-      { id: 1, date: '2026-09-19T00:00:00Z', price: 525, auction_house: 'eBay', grade_number: 10, listing_url: 'https://ebay.com/itm/1' },
-      { id: 2, date: '2026-03-02T12:30:00Z', price: 1000, auction_house: 'Goldin', grade_number: 10 },
-      { id: 3, date: '2025-11-08T00:00:00Z', price: 198, auction_house: 'eBay', grade_number: 10 },
-      { id: 4, date: '2020-09-13T00:00:00Z', price: 6, auction_house: 'eBay', grade_number: 10 },
+    results: [
+      { cert_number: '77865285', status: 'found', error: null, data: LIVE_INNER },
+      { cert_number: '156418165', status: 'found', error: null, data: { ...LIVE_INNER, sales_count: 12 } },
     ],
+    requested_count: 2, found_count: 2, not_found_count: 0, error_count: 0,
   },
 }
 
@@ -50,8 +73,8 @@ describe('what Alt gives that nothing else could', () => {
     expect(byDate.get('2026-03-02')!.venue).toBe('Goldin')
   })
 
-  it('carries the population, which no price series contains', () => {
-    expect(read('').population).toBe(7856)
+  it('carries the population at this grade, which no price series contains', () => {
+    expect(read().population).toBe(7905)
   })
 
   it('reports what Alt holds even when it kept less', () => {
@@ -117,35 +140,55 @@ describe('rows it will not take', () => {
   })
 })
 
-describe('the bulk response, whose shape is not yet measured', () => {
-  // lookup_certs takes cert_numbers (plural, required) but has never been
-  // called, so the reader accepts the plausible shapes rather than assuming.
-  const one = LIVE.data
-
-  it('reads a plain array of records', () => {
-    expect(parseAltCerts({ data: [one] }, ['77865285'])).toHaveLength(1)
+describe('the bulk response, as lookup_certs actually returns it', () => {
+  // Measured in run 3. Each result wraps its payload in a SECOND `data`
+  // object; the first reader looked for list items carrying `sales` directly,
+  // walked past 1,422 sales a card, and reported "nothing for 32
+  // certificates" after calls that had every one succeeded.
+  it('reads both records out of data.results', () => {
+    const out = parseAltCerts(LIVE_BULK, ['77865285', '156418165'], NOW)
+    expect(out.map((c) => c.cert)).toEqual(['77865285', '156418165'])
+    expect(out[0].sales.length).toBeGreaterThan(0)
   })
 
-  it('reads a list nested under any key', () => {
-    expect(parseAltCerts({ data: { results: [one] } }, ['77865285'])).toHaveLength(1)
+  it('takes the population at THIS grade, not the first or the total', () => {
+    // 59 grades come back for a real card; PSA 10 is the one that matters.
+    expect(parseAltCerts(LIVE_BULK, [], NOW)[0].population).toBe(7905)
   })
 
-  it('reads a map of cert to record, taking the cert from the key', () => {
-    const out = parseAltCerts({ data: { '99999999': { sales: one.sales } } }, [])
-    expect(out).toHaveLength(1)
-    expect(out[0].cert).toBe('99999999')
+  it('reads alt_value out of its object rather than expecting a number', () => {
+    expect(parseAltCerts(LIVE_BULK, [], NOW)[0].altValue).toBeCloseTo(470.59, 1)
   })
 
-  it('reads a single record answered without a list', () => {
-    expect(parseAltCerts({ data: one }, ['77865285'])).toHaveLength(1)
+  it('keeps the card name and picture, both free in the same response', () => {
+    const c = parseAltCerts(LIVE_BULK, [], NOW)[0]
+    expect(c.name).toContain('Playing In the Sea Pikachu')
+    expect(c.image).toContain('alt-images')
+  })
+
+  it('leaves out a certificate Alt reports as not found', () => {
+    const body = { data: { results: [
+      { cert_number: '111', status: 'not_found', error: 'no match', data: null },
+      { cert_number: '222', status: 'found', data: LIVE_INNER },
+    ] } }
+    expect(parseAltCerts(body, ['111', '222'], NOW).map((c) => c.cert)).toEqual(['222'])
+  })
+
+  it('still reads the singular lookup_cert shape', () => {
+    expect(parseAltCerts({ data: LIVE_INNER }, ['77865285'], NOW)).toHaveLength(1)
   })
 
   it('does not return the same cert twice', () => {
-    expect(parseAltCerts({ data: [one, one] }, ['77865285', '77865285'])).toHaveLength(1)
+    const body = { data: { results: [
+      { cert_number: '77865285', status: 'found', data: LIVE_INNER },
+      { cert_number: '77865285', status: 'found', data: LIVE_INNER },
+    ] } }
+    expect(parseAltCerts(body, [], NOW)).toHaveLength(1)
   })
 
   it('returns nothing on a shape it cannot read, rather than throwing', () => {
-    expect(parseAltCerts({ data: 'nope' }, [])).toEqual([])
-    expect(parseAltCerts({}, [])).toEqual([])
+    expect(parseAltCerts({ data: 'nope' }, [], NOW)).toEqual([])
+    expect(parseAltCerts({}, [], NOW)).toEqual([])
+    expect(parseAltCerts(null, [], NOW)).toEqual([])
   })
 })

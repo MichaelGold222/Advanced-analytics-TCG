@@ -59,6 +59,12 @@ export interface AltCert {
    * than looking like a short response.
    */
   salesCount: number | null
+  /** Alt's name for the card, which is fuller than most sheets carry. */
+  name: string | null
+  /** A photograph, free in the same response. */
+  image: string | null
+  /** False when Alt reported this certificate as not found. */
+  found: boolean
 }
 
 function num(v: unknown): number | null {
@@ -106,51 +112,94 @@ export function altSales(node: unknown, now = new Date()): PricePoint[] {
   return out.sort((a, b) => a.date.localeCompare(b.date))
 }
 
-/** One `lookup_cert` or one entry of a `lookup_certs` response. */
+/**
+ * One record, as `lookup_certs` actually returns them. Measured, run 3:
+ *
+ * ```
+ * data.results[] = { cert_number, status, error, data: {
+ *     cert:       { cert_number, grading_company, grade_number, ... }
+ *     asset:      { asset_id, name, subject, brand, variety, card_number, image_url }
+ *     alt_value:  { current, confidence_metric, lower_bound, ... }
+ *     population: [ { grading_company, grade_number, count } ]   // every grade
+ *     sales:      [ { id, date, price, auction_house, auction_type,
+ *                     grade_number, listing_url, subject_to_change } ]
+ *     sales_count: 1422 } }
+ * ```
+ *
+ * The payload is nested under a second `data`, and `population` is a list
+ * covering every grade rather than a number. The first reader here was
+ * written against neither — it looked for list items carrying `sales`
+ * directly — so it walked past 1,422 sales a card and reported "nothing for
+ * 32 certificates" after calls that had all succeeded.
+ */
 export function parseAltCert(node: unknown, fallbackCert: string, now = new Date()): AltCert | null {
-  const data = (node as { data?: unknown })?.data ?? node
-  if (!data || typeof data !== 'object') return null
-  const d = data as Record<string, unknown>
-  const certNode = d.cert as Record<string, unknown> | undefined
-  const cert = String(certNode?.cert_number ?? d.cert_number ?? fallbackCert ?? '').trim()
+  if (!node || typeof node !== 'object') return null
+  const outer = node as Record<string, unknown>
+  // `lookup_cert` answers { data: {...} }; a `lookup_certs` result answers
+  // { cert_number, status, data: {...} }. Unwrap either.
+  const inner = (outer.data && typeof outer.data === 'object' ? outer.data : outer) as Record<string, unknown>
+
+  const certNode = inner.cert as Record<string, unknown> | undefined
+  const cert = String(outer.cert_number ?? certNode?.cert_number ?? inner.cert_number ?? fallbackCert ?? '').trim()
   if (!cert) return null
 
-  const pop = d.population
+  const asset = inner.asset as Record<string, unknown> | undefined
+  const altValue = inner.alt_value as Record<string, unknown> | number | undefined
+
   return {
     cert,
-    sales: altSales(d, now),
-    altValue: num(d.alt_value) ?? num((d.alt_value as Record<string, unknown>)?.value),
-    population: typeof pop === 'number' && Number.isFinite(pop)
-      ? pop
-      : num((pop as Record<string, unknown>)?.total ?? (pop as Record<string, unknown>)?.count),
-    salesCount: typeof d.sales_count === 'number' ? d.sales_count : null,
+    sales: altSales(inner, now),
+    altValue: typeof altValue === 'number' ? num(altValue) : num(altValue?.current),
+    population: populationFor(inner.population, certNode),
+    salesCount: typeof inner.sales_count === 'number' ? inner.sales_count : null,
+    name: typeof asset?.name === 'string' ? asset.name : null,
+    image: typeof asset?.image_url === 'string' && asset.image_url.startsWith('https://')
+      ? asset.image_url : null,
+    found: outer.status == null || outer.status === 'found',
   }
 }
 
-/** A `lookup_certs` response, which may nest its results under any key. */
-export function parseAltCerts(body: unknown, asked: string[]): AltCert[] {
+/**
+ * The population at THIS card's grade.
+ *
+ * `population` lists every grade — 59 entries for one card — so taking the
+ * first, or a total, would report the wrong number. Grades arrive as `10.0`
+ * in one place and `"10.0"` in another, hence the loose compare.
+ */
+export function populationFor(list: unknown, cert: Record<string, unknown> | undefined): number | null {
+  if (!Array.isArray(list)) return num(list)
+  const grade = Number(cert?.grade_number)
+  const company = String(cert?.grading_company ?? '').toUpperCase()
+  for (const row of list) {
+    if (!row || typeof row !== 'object') continue
+    const r = row as Record<string, unknown>
+    const sameGrade = Number.isFinite(grade) && Number(r.grade_number) === grade
+    const sameCompany = !company || String(r.grading_company ?? '').toUpperCase() === company
+    if (sameGrade && sameCompany) return num(r.count)
+  }
+  return null
+}
+
+/** A whole `lookup_certs` response. */
+export function parseAltCerts(body: unknown, asked: string[], now = new Date()): AltCert[] {
   const data = (body as { data?: unknown })?.data
+  const rows = (data as { results?: unknown })?.results
+  const list = Array.isArray(rows) ? rows : Array.isArray(data) ? data : null
+
   const out: AltCert[] = []
   const seen = new Set<string>()
-
   const take = (node: unknown, fallback: string) => {
-    const one = parseAltCert(node, fallback)
-    if (one && !seen.has(one.cert)) { seen.add(one.cert); out.push(one) }
+    const one = parseAltCert(node, fallback, now)
+    if (one && one.found && !seen.has(one.cert)) { seen.add(one.cert); out.push(one) }
   }
 
-  if (Array.isArray(data)) {
-    data.forEach((row, i) => take(row, asked[i] ?? ''))
+  if (list) {
+    list.forEach((row, i) => take(row, asked[i] ?? ''))
   } else if (data && typeof data === 'object') {
+    // A single record, or a map of cert -> record.
     const d = data as Record<string, unknown>
-    // Either a list under some key, or a map of cert -> record.
-    const list = Object.values(d).find((v) => Array.isArray(v) && v.some((x) => x && typeof x === 'object' && 'sales' in (x as object)))
-    if (Array.isArray(list)) {
-      list.forEach((row, i) => take(row, asked[i] ?? ''))
-    } else if ('sales' in d) {
-      take(d, asked[0] ?? '')
-    } else {
-      for (const [k, v] of Object.entries(d)) take(v, k)
-    }
+    if ('sales' in d || 'cert' in d) take(d, asked[0] ?? '')
+    else for (const [k, v] of Object.entries(d)) take(v, k)
   }
   return out
 }

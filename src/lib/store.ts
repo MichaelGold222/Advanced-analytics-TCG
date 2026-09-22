@@ -9,6 +9,7 @@ import { create } from 'zustand'
 import { del, get, set } from 'idb-keyval'
 import { WINDOW_COVERED_FRACTION, WINDOW_DAYS, buildSeries } from './analytics'
 import { AltError, fetchAltCerts } from './providers/alt-client'
+import { KEEP_YEARS } from './providers/alt'
 import { importWorkbook, mergeHistory, reclassify } from './ingest'
 import { itemKey } from './key'
 import { holdingAsWatchItem } from './portfolio'
@@ -548,8 +549,14 @@ export const useStore = create<AppState>((setState, getState) => ({
       const certSales = { ...getState().certSales }
       const certFacts = { ...getState().certFacts }
       const certDeepFetched = { ...getState().certDeepFetched }
+      const certImages = { ...getState().certImages }
       const at = new Date().toISOString()
       for (const c of got) {
+        // A photograph arrives in the same response. Only used where one is
+        // missing, so a Card Ladder picture already showing is not swapped.
+        if (c.image && !certImages[c.cert]?.thumbnail && !certImages[c.cert]?.image) {
+          certImages[c.cert] = { image: c.image, thumbnail: c.image }
+        }
         if (c.sales.length > 0) certSales[c.cert] = mergeSalePoints(certSales[c.cert] ?? [], c.sales)
         if (c.altValue != null || c.population != null) {
           certFacts[c.cert] = {
@@ -563,15 +570,20 @@ export const useStore = create<AppState>((setState, getState) => ({
         }
       }
 
+      const kept = got.reduce((n, c) => n + c.sales.length, 0)
+      const onRecord = got.reduce((n, c) => n + (c.salesCount ?? c.sales.length), 0)
+
       setState({
-        certSales, certFacts, certDeepFetched,
+        certSales, certFacts, certDeepFetched, certImages,
         certLastFetched: at,
         usage: creditsRemaining == null ? getState().usage : {
           ...getState().usage, creditsRemaining,
         } as AppState['usage'],
         error: missing.length > 0
           ? `Alt had nothing for ${missing.length} certificate${missing.length === 1 ? '' : 's'}: ${missing.slice(0, 5).join(', ')}${missing.length > 5 ? '…' : ''}. Spent ${creditsCharged} credits.`
-          : null,
+          : got.length > 0
+            ? `${got.length} card${got.length === 1 ? '' : 's'} from Alt: ${kept.toLocaleString()} sales kept of ${onRecord.toLocaleString()} on record, for ${creditsCharged} credits. Only the last ${KEEP_YEARS} years are stored.`
+            : null,
       })
       scheduleSave(getState())
     } catch (err) {

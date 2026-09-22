@@ -665,6 +665,33 @@ high was $1,000 — **wrong by 43%**, because a five-sale window happened to
 land on a quiet stretch. That is the whole problem this project had, in one
 card.
 
+**The bulk shape, measured in run 3 — do not guess at this again:**
+
+```
+data.results[] = { cert_number, status, error, data: {
+    cert:       { cert_number, grading_company, grade_number }
+    asset:      { asset_id, name, subject, brand, variety, card_number, image_url }
+    alt_value:  { current, confidence_metric, lower_bound, ... }
+    population: [ { grading_company, grade_number, count } ]   // EVERY grade
+    sales:      [ { id, date, price, auction_house, auction_type,
+                    grade_number, listing_url, subject_to_change } ]
+    sales_count: 1422 } }
+data.requested_count / found_count / not_found_count / error_count
+```
+
+Two traps, both of which the first reader fell into. The payload is nested
+under a **second `data`** — a reader looking for list items that carry `sales`
+directly walks past 1,422 sales a card, which is exactly what produced "Alt
+had nothing for 32 certificates" after calls that had all succeeded and cost
+3 credits. And **`population` is a list covering every grade** (59 entries on
+one card), so taking the first or summing it reports the wrong number;
+`populationFor` matches on grade and company, loosely, since a grade arrives
+as `10.0` in one place and `"10.0"` in another.
+
+`asset.image_url` is a photograph, free in the same response, used only where
+a card has none. `alt_value.current` is a valuation and is kept for display,
+not treated as a sale.
+
 Why it works where the rest did not: **Alt indexes by certificate**, which
 every row here already carries. There is no catalogue lookup in between to
 fail, so a promo is no harder than a Charizard. `lookup_cert` takes
