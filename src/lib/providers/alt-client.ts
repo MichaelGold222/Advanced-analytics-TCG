@@ -9,8 +9,19 @@ import { altCounts, parseAltCerts, type AltCert, type AltCounts } from './alt'
 const BASE = 'https://api.parse.bot'
 const SCRAPER_STORAGE = 'aa-tcg.altScraperId'
 
-/** Certs per bulk call. Conservative: `lookup_certs` has never been called. */
-export const ALT_CERTS_PER_CALL = 25
+/**
+ * Certs per bulk call.
+ *
+ * Measured the hard way: 32 certs split 25 + 7, the batch of 7 came back fine
+ * and the batch of 25 returned nothing — so `lookup_certs` refuses a request
+ * that large, quietly, while still charging for it. Ten is below the largest
+ * size seen to work and above one call per card.
+ *
+ * `splitOnEmpty` covers the rest: a batch that yields nothing is halved and
+ * retried once, so a cap lower than this costs one wasted call rather than a
+ * whole run.
+ */
+export const ALT_CERTS_PER_CALL = 10
 
 let cachedScraper: string | null = null
 let lastResolved: { id: string; task: string; blob: string } | null = null
@@ -132,15 +143,15 @@ export async function fetchAltCerts(
   let sawCounts = false
   let unreadSample: string | null = null
 
-  for (let i = 0; i < wanted.length; i += ALT_CERTS_PER_CALL) {
-    const batch = wanted.slice(i, i + ALT_CERTS_PER_CALL)
+  /** One call. Returns how many records it yielded. */
+  const askFor = async (batch: string[]): Promise<number> => {
     const url = `${BASE}/scraper/${scraper}/lookup_certs?cert_numbers=${encodeURIComponent(batch.join(','))}`
     const res = await fetch(url, { headers: { 'X-API-Key': opts.key }, signal: opts.signal })
 
-    const c = Number(res.headers.get('X-Credits-Charged'))
-    if (Number.isFinite(c)) charged += c
-    const r = res.headers.get('X-Credits-Remaining')
-    if (r != null && r.trim() !== '' && Number.isFinite(Number(r))) remaining = Number(r)
+    const charge = Number(res.headers.get('X-Credits-Charged'))
+    if (Number.isFinite(charge)) charged += charge
+    const left = res.headers.get('X-Credits-Remaining')
+    if (left != null && left.trim() !== '' && Number.isFinite(Number(left))) remaining = Number(left)
 
     if (res.status === 401 || res.status === 403) {
       throw new AltError(res.status, 'That API key was refused by Alt.')
@@ -149,24 +160,40 @@ export async function fetchAltCerts(
       // Out of credits or rate limited: keep what came back, stop asking.
       throw new AltError(res.status, 'Out of credits, or asking too fast. What arrived has been kept.')
     }
-    if (res.ok) {
-      const body: unknown = await res.json()
-      const before = out.length
-      out.push(...parseAltCerts(body, batch))
-      const c = altCounts(body)
-      if (c.requested != null || c.found != null) {
-        sawCounts = true
-        totals.requested += c.requested ?? 0
-        totals.found += c.found ?? 0
-        totals.notFound += c.notFound ?? 0
-        totals.errors += c.errors ?? 0
-      }
-      // Alt answered for cards this could not read: keep a sample, because
-      // that is a bug here rather than a gap there, and the two have looked
-      // identical from the outside twice now.
-      if (out.length === before && (c.found ?? 0) > 0 && unreadSample == null) {
-        unreadSample = JSON.stringify(body).slice(0, 400)
-      }
+    if (!res.ok) return 0
+
+    const body: unknown = await res.json()
+    const before = out.length
+    out.push(...parseAltCerts(body, batch))
+    const c = altCounts(body)
+    if (c.requested != null || c.found != null) {
+      sawCounts = true
+      totals.requested += c.requested ?? 0
+      totals.found += c.found ?? 0
+      totals.notFound += c.notFound ?? 0
+      totals.errors += c.errors ?? 0
+    }
+    // Alt answered for cards this could not read: keep a sample, because that
+    // is a bug here rather than a gap there, and the two have looked identical
+    // from the outside twice now.
+    if (out.length === before && (c.found ?? 0) > 0 && unreadSample == null) {
+      unreadSample = JSON.stringify(body).slice(0, 400)
+    }
+    return out.length - before
+  }
+
+  for (let i = 0; i < wanted.length; i += ALT_CERTS_PER_CALL) {
+    const batch = wanted.slice(i, i + ALT_CERTS_PER_CALL)
+    const got = await askFor(batch)
+
+    // A batch that yields nothing when a smaller one would have worked is the
+    // failure that just cost a run: 25 certs returned nothing, 7 were fine,
+    // and the whole thing read as "Alt had nothing". Halve it and try once
+    // more rather than writing off 25 cards on one refused request.
+    if (got === 0 && batch.length > 1) {
+      const mid = Math.ceil(batch.length / 2)
+      await askFor(batch.slice(0, mid))
+      await askFor(batch.slice(mid))
     }
 
     done += batch.length

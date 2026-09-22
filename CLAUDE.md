@@ -695,9 +695,15 @@ not treated as a sale.
 Why it works where the rest did not: **Alt indexes by certificate**, which
 every row here already carries. There is no catalogue lookup in between to
 fail, so a promo is no harder than a Charizard. `lookup_cert` takes
-`cert_number`, `lookup_certs` takes `cert_numbers` — how many per call is
-NOT yet measured, so `ALT_CERTS_PER_CALL` starts at 25: a wrong guess should
-cost one modest call rather than the collection.
+`cert_number`, `lookup_certs` takes `cert_numbers`.
+
+**`lookup_certs` refuses a large batch quietly, and still charges for it.**
+Measured by accident: 32 certs split 25 + 7, the seven came back fine and the
+twenty-five returned nothing — which the app reported as "Alt had nothing for
+25 certificates", indistinguishable from a coverage gap. `ALT_CERTS_PER_CALL`
+is 10, below the largest size seen to work, and a batch that yields nothing is
+halved and retried once. The exact cap is still unmeasured; the halving means
+it does not need to be.
 
 **Only the last `KEEP_YEARS` (2) are kept.** Alt has no date parameter, so
 this saves no credits — it returns everything either way. The reason is what
