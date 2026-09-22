@@ -143,6 +143,14 @@ export function parseAltCert(node: unknown, fallbackCert: string, now = new Date
   const cert = String(outer.cert_number ?? certNode?.cert_number ?? inner.cert_number ?? fallbackCert ?? '').trim()
   if (!cert) return null
 
+  // The certificate alone is not evidence of a record: it can come from the
+  // list of certs that were ASKED about. A row carrying none of the fields a
+  // real record has is something this cannot read, and returning a card with
+  // no sales for it would mark the certificate fetched and never retry it.
+  const recognised = certNode != null || Array.isArray(inner.sales)
+    || inner.asset != null || inner.alt_value != null || inner.sales_count != null
+  if (!recognised) return null
+
   const asset = inner.asset as Record<string, unknown> | undefined
   const altValue = inner.alt_value as Record<string, unknown> | number | undefined
 
@@ -178,6 +186,32 @@ export function populationFor(list: unknown, cert: Record<string, unknown> | und
     if (sameGrade && sameCompany) return num(r.count)
   }
   return null
+}
+
+/**
+ * What Alt itself says it did, straight out of the response.
+ *
+ * The distinction that has cost two rounds: "Alt had nothing for 32
+ * certificates" reads identically whether Alt found nothing or whether it
+ * found everything and the reader could not understand it. Alt counts its own
+ * results, so the answer is in the payload and there is no need to guess.
+ */
+export interface AltCounts {
+  requested: number | null
+  found: number | null
+  notFound: number | null
+  errors: number | null
+}
+
+export function altCounts(body: unknown): AltCounts {
+  const d = (body as { data?: Record<string, unknown> })?.data ?? {}
+  const n = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : null)
+  return {
+    requested: n(d.requested_count),
+    found: n(d.found_count),
+    notFound: n(d.not_found_count),
+    errors: n(d.error_count),
+  }
 }
 
 /** A whole `lookup_certs` response. */

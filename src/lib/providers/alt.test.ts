@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { ALT_CREDITS_PER_LOOKUP, KEEP_YEARS, altSales, parseAltCert, parseAltCerts } from './alt'
+import { ALT_CREDITS_PER_LOOKUP, KEEP_YEARS, altCounts, altSales, parseAltCert, parseAltCerts } from './alt'
 
 /**
  * The shape run 2 of the Alt check returned for cert 77865285 — the 2019
@@ -190,5 +190,38 @@ describe('the bulk response, as lookup_certs actually returns it', () => {
     expect(parseAltCerts({ data: 'nope' }, [], NOW)).toEqual([])
     expect(parseAltCerts({}, [], NOW)).toEqual([])
     expect(parseAltCerts(null, [], NOW)).toEqual([])
+  })
+})
+
+describe('telling "Alt has nothing" apart from "I could not read it"', () => {
+  // Those two produced the identical message twice, and the second time cost
+  // another round to establish which it had been. Alt counts its own results.
+  it('reads the counts Alt puts in the response', () => {
+    expect(altCounts(LIVE_BULK)).toEqual({
+      requested: 2, found: 2, notFound: 0, errors: 0,
+    })
+  })
+
+  it('reports nothing rather than zeroes when they are absent', () => {
+    expect(altCounts({ data: {} })).toEqual({
+      requested: null, found: null, notFound: null, errors: null,
+    })
+    expect(altCounts(null)).toEqual({
+      requested: null, found: null, notFound: null, errors: null,
+    })
+  })
+
+  it('distinguishes a genuine miss: found 0, nothing parsed', () => {
+    const body = { data: { results: [], requested_count: 2, found_count: 0, not_found_count: 2, error_count: 0 } }
+    expect(parseAltCerts(body, ['a', 'b'], NOW)).toHaveLength(0)
+    expect(altCounts(body).found).toBe(0)
+  })
+
+  it('distinguishes a reader bug: found 2, nothing parsed', () => {
+    // A shape this cannot read, with Alt reporting hits — which is the case
+    // that must never again look like "Alt had nothing".
+    const body = { data: { results: [{ surprise: true }], requested_count: 2, found_count: 2, not_found_count: 0, error_count: 0 } }
+    expect(parseAltCerts(body, ['a', 'b'], NOW)).toHaveLength(0)
+    expect(altCounts(body).found).toBe(2)
   })
 })

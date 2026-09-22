@@ -4,7 +4,7 @@
  * A separate API on the same Parse account, so a separate scraper id, its own
  * resolution and its own cache — but the same key and the same credit pool.
  */
-import { parseAltCerts, type AltCert } from './alt'
+import { altCounts, parseAltCerts, type AltCert, type AltCounts } from './alt'
 
 const BASE = 'https://api.parse.bot'
 const SCRAPER_STORAGE = 'aa-tcg.altScraperId'
@@ -73,6 +73,13 @@ export interface AltFetchResult {
   missing: string[]
   creditsCharged: number
   creditsRemaining: number | null
+  /**
+   * What Alt said it did, totalled across the calls — so "Alt found nothing"
+   * can be told apart from "Alt found everything and the reader failed".
+   */
+  counts: AltCounts
+  /** The first response, kept when nothing parsed, so the shape can be seen. */
+  unreadSample: string | null
 }
 
 /**
@@ -89,7 +96,11 @@ export async function fetchAltCerts(
 ): Promise<AltFetchResult> {
   const wanted = [...new Set(certs.map((c) => c.trim()).filter(Boolean))]
   if (wanted.length === 0) {
-    return { certs: [], missing: [], creditsCharged: 0, creditsRemaining: null }
+    return {
+      certs: [], missing: [], creditsCharged: 0, creditsRemaining: null,
+      counts: { requested: null, found: null, notFound: null, errors: null },
+      unreadSample: null,
+    }
   }
 
   const scraper = await resolveAltScraper(opts.key, opts.signal)
@@ -97,6 +108,9 @@ export async function fetchAltCerts(
   let charged = 0
   let remaining: number | null = null
   let done = 0
+  const totals = { requested: 0, found: 0, notFound: 0, errors: 0 }
+  let sawCounts = false
+  let unreadSample: string | null = null
 
   for (let i = 0; i < wanted.length; i += ALT_CERTS_PER_CALL) {
     const batch = wanted.slice(i, i + ALT_CERTS_PER_CALL)
@@ -115,7 +129,25 @@ export async function fetchAltCerts(
       // Out of credits or rate limited: keep what came back, stop asking.
       throw new AltError(res.status, 'Out of credits, or asking too fast. What arrived has been kept.')
     }
-    if (res.ok) out.push(...parseAltCerts(await res.json(), batch))
+    if (res.ok) {
+      const body: unknown = await res.json()
+      const before = out.length
+      out.push(...parseAltCerts(body, batch))
+      const c = altCounts(body)
+      if (c.requested != null || c.found != null) {
+        sawCounts = true
+        totals.requested += c.requested ?? 0
+        totals.found += c.found ?? 0
+        totals.notFound += c.notFound ?? 0
+        totals.errors += c.errors ?? 0
+      }
+      // Alt answered for cards this could not read: keep a sample, because
+      // that is a bug here rather than a gap there, and the two have looked
+      // identical from the outside twice now.
+      if (out.length === before && (c.found ?? 0) > 0 && unreadSample == null) {
+        unreadSample = JSON.stringify(body).slice(0, 400)
+      }
+    }
 
     done += batch.length
     opts.onProgress?.(Math.min(done, wanted.length), wanted.length)
@@ -127,5 +159,9 @@ export async function fetchAltCerts(
     missing: wanted.filter((c) => !got.has(c)),
     creditsCharged: charged,
     creditsRemaining: remaining,
+    counts: sawCounts
+      ? { requested: totals.requested, found: totals.found, notFound: totals.notFound, errors: totals.errors }
+      : { requested: null, found: null, notFound: null, errors: null },
+    unreadSample,
   }
 }

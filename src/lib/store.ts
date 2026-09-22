@@ -539,7 +539,7 @@ export const useStore = create<AppState>((setState, getState) => ({
     })
 
     try {
-      const { certs: got, missing, creditsCharged, creditsRemaining } = await fetchAltCerts(list, {
+      const { certs: got, missing, creditsCharged, creditsRemaining, counts, unreadSample } = await fetchAltCerts(list, {
         key,
         onProgress: (done, total) => setState({
           gradedRefresh: { ...getState().gradedRefresh, done, total, phase: 'history' },
@@ -579,11 +579,17 @@ export const useStore = create<AppState>((setState, getState) => ({
         usage: creditsRemaining == null ? getState().usage : {
           ...getState().usage, creditsRemaining,
         } as AppState['usage'],
-        error: missing.length > 0
-          ? `Alt had nothing for ${missing.length} certificate${missing.length === 1 ? '' : 's'}: ${missing.slice(0, 5).join(', ')}${missing.length > 5 ? '…' : ''}. Spent ${creditsCharged} credits.`
-          : got.length > 0
-            ? `${got.length} card${got.length === 1 ? '' : 's'} from Alt: ${kept.toLocaleString()} sales kept of ${onRecord.toLocaleString()} on record, for ${creditsCharged} credits. Only the last ${KEEP_YEARS} years are stored.`
-            : null,
+        // Three different outcomes that used to share one sentence. Alt counts
+        // its own results, so which one it is need not be guessed at.
+        error: unreadSample != null
+          ? `Alt answered for ${counts.found} card${counts.found === 1 ? '' : 's'} but this build could not read the response — that is a bug here, not a gap at Alt. Shape: ${unreadSample}`
+          : got.length === 0 && (counts.found ?? 0) === 0
+            ? `Alt has no record of ${missing.length} certificate${missing.length === 1 ? '' : 's'}: ${missing.slice(0, 5).join(', ')}${missing.length > 5 ? '…' : ''}. Spent ${creditsCharged} credits.`
+            : missing.length > 0
+              ? `${got.length} of ${list.length} from Alt — ${kept.toLocaleString()} sales kept of ${onRecord.toLocaleString()} on record, ${creditsCharged} credits. No record of: ${missing.slice(0, 5).join(', ')}${missing.length > 5 ? '…' : ''}`
+              : got.length > 0
+                ? `${got.length} card${got.length === 1 ? '' : 's'} from Alt: ${kept.toLocaleString()} sales kept of ${onRecord.toLocaleString()} on record, for ${creditsCharged} credits. Only the last ${KEEP_YEARS} years are stored.`
+                : null,
       })
       scheduleSave(getState())
     } catch (err) {
