@@ -30,7 +30,7 @@ function holding(name: string): Holding {
 const EMPTY_STATE: PersistedState = {
   holdings: [], watchlist: [], uploadedHistory: {}, snapshots: {}, quotes: {}, importLog: [],
   lastRefresh: null, certSales: {}, certCardIds: {}, certFacts: {}, certDeepFetched: {},
-  certLastFetched: null, certImages: {},
+  certLastFetched: null, certImages: {}, watchlistNames: [],
 }
 
 /** A fake GitHub holding at most one gist, recording what was written to it. */

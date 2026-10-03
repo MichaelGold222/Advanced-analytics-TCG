@@ -541,6 +541,23 @@ never ride into the gist.
 A backup file (Download / Restore) carries the same envelope, for a copy that
 depends on nobody's account.
 
+### Named watchlists
+
+Asked for so wanted cards are not "all jumbled together". `WatchItem.list`
+names the list a card is on; absent means none ("Unsorted"), which is every
+card saved before lists existed, so nothing old needed migrating.
+`watchlistNames` is stored apart so an empty list just created exists.
+
+- **A watchlist replace clears only the list it was uploaded into** (or only
+  the unsorted cards, with none open). Before lists, replace emptied the whole
+  watchlist; keeping that would have wiped every other list on each upload.
+  Data & settings uploads with no list, so they replace the unsorted cards.
+- The ranking runs over the cards on screen, so `#1` means first of these.
+- Deleting a list keeps its cards (unsorted) unless the second, red button is
+  pressed.
+- The open list is per-browser (`aa-tcg.watchlistView`, localStorage) and falls
+  back to All if sync removes or renames it.
+
 ### A trap worth remembering
 
 `npx tsc --noEmit` at the repo root checks **nothing** — the root tsconfig is

@@ -306,7 +306,7 @@ export default function App() {
             to the portfolio meant the Watchlist tab offered a box that quietly
             filed the file under holdings — and emptying holdings to fix that
             brought the empty state straight back, so it happened again. */}
-        {isEmpty && tab !== 'data' ? (
+        {isEmpty && tab !== 'data' && !(tab === 'watchlist' && store.watchlistNames.length > 0) ? (
           <div className="card p-8 max-w-3xl mx-auto mt-6">
             <h2 className="text-xl font-semibold mb-2">
               {tab === 'watchlist' ? 'Start with what you are watching' : 'Start with your collection sheet'}
@@ -426,7 +426,10 @@ export default function App() {
             onUpdate={store.updateWatchItem}
             onPasteHistory={(item, points) => store.addPastedHistory(itemKey(item), points)}
             onLinkCardId={(item, cardId) => store.linkCardId(item.cert ?? '', cardId)}
-            onImport={(f) => store.importFile(f, 'watchlist')}
+            onImport={(f, list) => store.importFile(f, 'watchlist', 'replace', list)}
+            listNames={store.watchlistNames}
+            onCreateList={store.createWatchlist} onRenameList={store.renameWatchlist}
+            onDeleteList={store.deleteWatchlist} onMoveToList={store.moveWatchItems}
           />
         ) : (
           <div className="space-y-4">

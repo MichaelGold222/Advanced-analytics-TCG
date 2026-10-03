@@ -66,6 +66,11 @@ export interface WatchItem {
   targetPrice?: number
   quantity?: number
   notes?: string
+  /**
+   * Which of the owner's named watchlists this card is on. Absent means none
+   * ("Unsorted"), which is every card saved before lists existed.
+   */
+  list?: string
   segmentOverride?: Segment | null
   segment: Segment
   segmentReason: string

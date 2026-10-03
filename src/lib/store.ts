@@ -89,6 +89,11 @@ export interface PersistedState {
   certLastFetched: string | null
   /** Pictures by cert. Fetched once and kept: a photo does not go stale. */
   certImages: Record<string, { image: string | null; thumbnail: string | null }>
+  /**
+   * The owner's named watchlists, in the order they made them. Kept apart
+   * from the cards so a list just created, with nothing on it yet, exists.
+   */
+  watchlistNames: string[]
 }
 
 /** Where the copy in the owner's GitHub account stands, as the panel shows it. */
@@ -138,7 +143,20 @@ interface AppState extends PersistedState {
   /** Replace what is here with a backup file's contents. */
   restoreBackup(text: string): Promise<{ holdings: number; watchlist: number }>
   loadFeed(): Promise<void>
-  importFile(file: File, kind: 'portfolio' | 'watchlist', mode?: ImportMode): Promise<void>
+  /**
+   * `list` names the watchlist an upload belongs to. A watchlist replace
+   * clears only that list (or only the unsorted cards, with none), so
+   * uploading one list's sheet never empties the others.
+   */
+  importFile(file: File, kind: 'portfolio' | 'watchlist', mode?: ImportMode, list?: string): Promise<void>
+  /** Make a new, empty named watchlist. Returns the name it was given. */
+  createWatchlist(name: string): string | null
+  /** Rename a list, carrying its cards with it. */
+  renameWatchlist(from: string, to: string): string | null
+  /** Delete a list. Its cards are kept, as unsorted, unless `withCards`. */
+  deleteWatchlist(name: string, withCards?: boolean): void
+  /** Put cards on a list, or take them off every list with null. */
+  moveWatchItems(ids: string[], list: string | null): void
   addWatchItem(item: Omit<WatchItem, 'id' | 'segment' | 'segmentReason'>): void
   removeWatchItem(id: string): void
   updateWatchItem(id: string, patch: Partial<WatchItem>): void
@@ -188,6 +206,7 @@ const EMPTY: PersistedState = {
   certDeepFetched: {},
   certLastFetched: null,
   certImages: {},
+  watchlistNames: [],
 }
 
 /**
@@ -216,6 +235,7 @@ function migrate(saved: PersistedState): PersistedState {
     certDeepFetched: saved.certDeepFetched ?? {},
     certLastFetched: saved.certLastFetched ?? null,
     certImages: saved.certImages ?? {},
+    watchlistNames: saved.watchlistNames ?? [],
     importLog: (saved.importLog ?? []).map((e) => ({
       ...e,
       mapped: e.mapped ?? {},
@@ -243,6 +263,7 @@ function persistable(s: AppState): PersistedState {
     certDeepFetched: s.certDeepFetched,
     certLastFetched: s.certLastFetched,
     certImages: s.certImages,
+    watchlistNames: s.watchlistNames,
   }
 }
 
@@ -903,7 +924,7 @@ export const useStore = create<AppState>((setState, getState) => ({
     return { holdings: state.holdings.length, watchlist: state.watchlist.length }
   },
 
-  async importFile(file, kind, mode = 'replace') {
+  async importFile(file, kind, mode = 'replace', list) {
     try {
       const result = await importWorkbook(file, kind)
       const state = getState()
@@ -914,7 +935,7 @@ export const useStore = create<AppState>((setState, getState) => ({
       const keepHoldings = mode === 'add' || kind !== 'portfolio'
       const keepWatchlist = mode === 'add' || kind !== 'watchlist'
       const holdings = keepHoldings ? [...state.holdings] : []
-      const watchlist = keepWatchlist ? [...state.watchlist] : []
+      const watchlist = keepWatchlist ? [...state.watchlist] : state.watchlist.filter((w) => w.list !== list)
       let imported = 0
       const sheets: string[] = []
       const mapped: Record<string, string> = {}
@@ -932,7 +953,7 @@ export const useStore = create<AppState>((setState, getState) => ({
         issues.push(...r.issues)
       }
       for (const r of result.watchlist) {
-        watchlist.push(...r.items)
+        watchlist.push(...(list ? r.items.map((w) => ({ ...w, list })) : r.items))
         imported += r.items.length
         sheets.push(r.sheetName)
         Object.assign(mapped, r.mapped)
@@ -972,6 +993,61 @@ export const useStore = create<AppState>((setState, getState) => ({
         error: `Could not read ${file.name}: ${err instanceof Error ? err.message : String(err)}`,
       })
     }
+  },
+
+  createWatchlist(name) {
+    const clean = name.trim()
+    if (!clean) return null
+    const names = getState().watchlistNames
+    const existing = names.find((n) => n.toLowerCase() === clean.toLowerCase())
+    if (existing) return existing
+    setState({ watchlistNames: [...names, clean] })
+    scheduleSave(getState())
+    return clean
+  },
+
+  renameWatchlist(from, to) {
+    const clean = to.trim()
+    const { watchlistNames, watchlist } = getState()
+    if (!clean || !watchlistNames.includes(from)) return null
+    if (clean === from) return from
+    if (watchlistNames.some((n) => n !== from && n.toLowerCase() === clean.toLowerCase())) return null
+    setState({
+      watchlistNames: watchlistNames.map((n) => (n === from ? clean : n)),
+      watchlist: watchlist.map((w) => (w.list === from ? { ...w, list: clean } : w)),
+    })
+    scheduleSave(getState())
+    return clean
+  },
+
+  deleteWatchlist(name, withCards = false) {
+    const { watchlistNames, watchlist } = getState()
+    setState({
+      watchlistNames: watchlistNames.filter((n) => n !== name),
+      watchlist: withCards
+        ? watchlist.filter((w) => w.list !== name)
+        : watchlist.map((w) => {
+          if (w.list !== name) return w
+          const { list: _gone, ...rest } = w
+          return rest
+        }),
+    })
+    scheduleSave(getState())
+  },
+
+  moveWatchItems(ids, list) {
+    const set = new Set(ids)
+    const names = getState().watchlistNames
+    setState({
+      watchlistNames: list && !names.includes(list) ? [...names, list] : names,
+      watchlist: getState().watchlist.map((w) => {
+        if (!set.has(w.id)) return w
+        if (list) return { ...w, list }
+        const { list: _gone, ...rest } = w
+        return rest
+      }),
+    })
+    scheduleSave(getState())
   },
 
   addWatchItem(item) {

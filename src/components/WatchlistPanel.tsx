@@ -15,6 +15,8 @@ import { CardThumb } from './CardThumb'
 import { PasteHistory } from './PasteHistory'
 import { thumbFor } from '../lib/images'
 import { SelectionBar, TickBox } from './SelectionBar'
+import { MoveToList, WatchlistTabs } from './WatchlistTabs'
+import { inView, loadView, saveView, type ListView } from '../lib/watchlists'
 import { useFrozenOrder } from '../hooks/useFrozenOrder'
 import { useSelection } from '../hooks/useSelection'
 import { rankWatchlist, type RankedItem } from '../lib/ranking'
@@ -36,24 +38,48 @@ interface Props {
   onPasteHistory: (item: WatchItem, points: PricePoint[]) => void
   /** Bind a Card Ladder card id to this card's cert and fetch its history. */
   onLinkCardId: (item: WatchItem, cardId: string) => Promise<'fetched' | 'refused' | 'no-key'>
-  onImport: (file: File) => Promise<void>
+  /** Upload a sheet into a list, or into the unsorted cards with none. */
+  onImport: (file: File, list?: string) => Promise<void>
   onRemoveMany: (ids: string[]) => void
+  /** The owner's named watchlists. */
+  listNames: string[]
+  onCreateList: (name: string) => string | null
+  onRenameList: (from: string, to: string) => string | null
+  onDeleteList: (name: string, withCards: boolean) => void
+  onMoveToList: (ids: string[], list: string | null) => void
 }
 
 const EMPTY_FORM = { name: '', set: '', number: '', condition: '', cert: '', askingPrice: '', targetPrice: '' }
 
 export function WatchlistPanel({
   watchlist, analyses, series, images, onAdd, onRemove, onRemoveMany, onOverride, onUpdate, onImport,
-  onPasteHistory, onLinkCardId,
+  onPasteHistory, onLinkCardId, listNames, onCreateList, onRenameList, onDeleteList, onMoveToList,
 }: Props) {
   const [form, setForm] = useState(EMPTY_FORM)
   const [expanded, setExpanded] = useState<string | null>(null)
+  const [viewState, setViewState] = useState<ListView>(() => loadView(listNames))
+  // A list renamed or deleted elsewhere (another browser, through sync) must
+  // not leave the page filtered to a name that no longer exists.
+  const view: ListView = useMemo(
+    () => (viewState.kind === 'list' && !listNames.includes(viewState.name) ? { kind: 'all' } : viewState),
+    [viewState, listNames],
+  )
+  const setView = (v: ListView) => { setViewState(v); saveView(v) }
+  const activeList = view.kind === 'list' ? view.name : undefined
+
+  const counts = useMemo(() => {
+    const m = new Map<string, number>()
+    for (const w of watchlist) m.set(w.list ?? '', (m.get(w.list ?? '') ?? 0) + 1)
+    return m
+  }, [watchlist])
+  const shown = useMemo(() => watchlist.filter((w) => inView(w.list, view)), [watchlist, view])
 
   // Ordered by the buy ranking rather than the entry score alone, so the list
-  // itself answers "which of these first?".
+  // itself answers "which of these first?". Ranked within the list on screen,
+  // so "#1" means first of these.
   const ranked = useMemo(
-    () => rankWatchlist(watchlist, itemKey, analyses, series),
-    [watchlist, analyses, series],
+    () => rankWatchlist(shown, itemKey, analyses, series),
+    [shown, analyses, series],
   )
   // The rank is what orders this table, and the asking price is one of the
   // things the rank is made of — so the order has to hold still while one is
@@ -89,18 +115,26 @@ export function WatchlistPanel({
       targetPrice: form.targetPrice ? Number(form.targetPrice) : undefined,
       quantity: 1,
       segmentOverride: null,
+      ...(activeList ? { list: activeList } : {}),
     })
     setForm(EMPTY_FORM)
   }
 
   return (
     <div className="space-y-4">
+      {(watchlist.length > 0 || listNames.length > 0) && (
+        <WatchlistTabs
+          names={listNames} counts={counts} total={watchlist.length} view={view} onView={setView}
+          onCreate={onCreateList} onRename={onRenameList} onDelete={onDeleteList}
+        />
+      )}
+
       {/* Folded away once there is a list to look at. Six fields and an upload
           box are what you want on the first visit and clutter on every one
           after, so the list gets the top of the page instead. */}
       <details className="card p-4" open={rows.length === 0}>
         <summary className="text-sm font-semibold cursor-pointer select-none">
-          Add something you are looking at
+          {activeList ? `Add to “${activeList}”` : 'Add something you are looking at'}
           <span className="muted font-normal"> — type one in, or upload a sheet</span>
         </summary>
         <form onSubmit={submit} className="grid gap-2 sm:grid-cols-2 lg:grid-cols-8 mt-3">
@@ -117,12 +151,24 @@ export function WatchlistPanel({
         </form>
         <div className="mt-4">
           <UploadZone
-            compact label="Upload a watchlist"
-            hint="An .xlsx or .csv of what you are considering. Everything in it goes to the watchlist — nothing is counted as owned."
-            onFile={onImport}
+            compact label={activeList ? `Upload a sheet into “${activeList}”` : 'Upload a watchlist'}
+            hint={activeList
+              ? `Every row goes on “${activeList}”, replacing what is on that list now. Your other lists are left alone.`
+              : listNames.length > 0
+                ? 'An .xlsx or .csv of what you are considering. It replaces the unsorted cards; your named lists are left alone.'
+                : 'An .xlsx or .csv of what you are considering. Everything in it goes to the watchlist — nothing is counted as owned.'}
+            onFile={(f) => onImport(f, activeList)}
           />
         </div>
       </details>
+
+      {rows.length === 0 && watchlist.length > 0 && (
+        <p className="card p-4 text-sm secondary">
+          Nothing on this list yet. Add a card above, upload a sheet into it, or tick cards under
+          {' '}<button type="button" className="underline" onClick={() => setView({ kind: 'all' })}>All</button>{' '}
+          and use &ldquo;Move to list&rdquo;.
+        </p>
+      )}
 
       {rows.length > 0 && (
         <>
@@ -180,6 +226,11 @@ export function WatchlistPanel({
                           w.population != null ? `pop ${w.population}` : null,
                           w.cert && `cert ${w.cert}`,
                         ].filter(Boolean).join(' · ') || '—'}</div>
+                        {view.kind === 'all' && w.list && (
+                          <div className="text-[11px] mt-1">
+                            <span className="rounded px-1.5 py-0.5" style={{ background: 'var(--surface-2)', border: '1px solid var(--border)' }}>{w.list}</span>
+                          </div>
+                        )}
                           </div>
                         </div>
                       </td>
@@ -245,7 +296,9 @@ export function WatchlistPanel({
             selected={selection.selected} noun="watch item"
             onDelete={() => { onRemoveMany(selection.selected); selection.clear() }}
             onClear={selection.clear}
-          />
+          >
+            <MoveToList names={listNames} onMove={(list) => { onMoveToList(selection.selected, list); selection.clear() }} />
+          </SelectionBar>
         </div>
         </>
       )}
