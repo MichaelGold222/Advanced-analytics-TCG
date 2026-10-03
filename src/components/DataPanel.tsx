@@ -141,21 +141,28 @@ export function DataPanel({
           <p className="text-xs secondary leading-relaxed mb-3">
             Prices PSA, BGS, CGC and SGC slabs from their own completed sales, matched by certificate
             number. Paste your key from <span className="font-medium">parse.bot/settings</span>; it stays in
-            this browser and is sent only to Parse.
+            this browser and is sent only to Parse. Your browser&apos;s password manager can save it too, so
+            it fills itself in on your other devices.
           </p>
-          <div className="flex gap-2">
+          {/* A real form with a username field and a submit, because that is
+              what password managers look for before offering to save and
+              autofill — which is the way to carry the key to another browser
+              without the app storing it anywhere but here. */}
+          <form
+            className="flex gap-2"
+            onSubmit={(e) => { e.preventDefault(); setParseKey(parseKey.trim()); setParseSaved(true) }}
+          >
+            <input type="text" name="username" autoComplete="username" value="Parse API key" readOnly hidden />
             <input
-              className="input" type="password" placeholder="Parse API key" value={parseKey}
+              className="input" type="password" name="password" autoComplete="current-password"
+              placeholder="Parse API key" value={parseKey}
               aria-label="Card Ladder API key"
               onChange={(e) => { setParseKeyField(e.target.value); setParseSaved(false) }}
             />
-            <button
-              type="button" className="btn"
-              onClick={() => { setParseKey(parseKey.trim()); setParseSaved(true) }}
-            >
+            <button type="submit" className="btn">
               {parseSaved ? 'Saved' : 'Save'}
             </button>
-          </div>
+          </form>
 
           <div className="flex flex-wrap items-center gap-2 mt-3">
             <button type="button" className="btn btn-primary" onClick={() => onRefreshGraded()} disabled={gradedRefresh.running || certCount === 0}>
