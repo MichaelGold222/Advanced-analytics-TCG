@@ -20,6 +20,10 @@ import {
   fetchCardHistory,
 } from './providers/cardladder-client'
 import { pokemonTcgIo } from './pricing'
+import {
+  SyncError, decide, getDirtyAt, getSyncToken, getSyncedAt, makeEnvelope, pullRemote, pushRemote,
+  readEnvelope, setDirtyAt, setSyncToken, setSyncedAt, whoAmI, type Envelope,
+} from './sync'
 import { daysAgo, toISODate } from './stats'
 import type { Holding, PricePoint, PriceQuote, PriceSeries, Segment, WatchItem } from './types'
 
@@ -52,7 +56,7 @@ export interface RefreshState {
   skipped: { key: string; name: string; reason: string }[]
 }
 
-interface PersistedState {
+export interface PersistedState {
   holdings: Holding[]
   watchlist: WatchItem[]
   uploadedHistory: Record<string, PricePoint[]>
@@ -87,6 +91,20 @@ interface PersistedState {
   certImages: Record<string, { image: string | null; thumbnail: string | null }>
 }
 
+/** Where the copy in the owner's GitHub account stands, as the panel shows it. */
+export interface SyncState {
+  status: 'off' | 'idle' | 'working' | 'error'
+  account: string | null
+  lastSynced: string | null
+  message: string | null
+  /**
+   * Set when connecting finds cards both here and in the account, and they
+   * differ. Which to keep is the owner's call; nothing is overwritten until
+   * they make it.
+   */
+  choice: { remoteSavedAt: string; remoteHoldings: number; remoteWatch: number } | null
+}
+
 /** Whether an upload replaces what is there or adds to it. */
 export type ImportMode = 'replace' | 'add'
 
@@ -105,7 +123,20 @@ interface AppState extends PersistedState {
     phase?: 'prices' | 'history'
   }
 
+  sync: SyncState
   hydrate(): Promise<void>
+  /** Connect a GitHub token and bring this browser and the account into step. */
+  connectSync(token: string): Promise<void>
+  /** Answer the choice `connectSync` raised: keep the account's cards, or this browser's. */
+  resolveSyncChoice(keep: 'account' | 'browser'): Promise<void>
+  /** Forget the token here. The copy in the account is left alone. */
+  disconnectSync(): void
+  /** Pick up changes made in another browser, if this one has none of its own pending. */
+  checkRemote(): Promise<void>
+  /** Everything worth keeping, in the shape a backup file holds. */
+  backupEnvelope(): Envelope<PersistedState>
+  /** Replace what is here with a backup file's contents. */
+  restoreBackup(text: string): Promise<{ holdings: number; watchlist: number }>
   loadFeed(): Promise<void>
   importFile(file: File, kind: 'portfolio' | 'watchlist', mode?: ImportMode): Promise<void>
   addWatchItem(item: Omit<WatchItem, 'id' | 'segment' | 'segmentReason'>): void
@@ -223,11 +254,97 @@ function scheduleSave(state: AppState) {
       /* quota or private mode: the session still works, it just will not persist */
     })
   }, 300)
+  markSyncDirty()
 }
+
+/*
+ * Pushing to the account. Off until the first reconcile has finished, so the
+ * saves that follow loading cannot send a stale copy over a newer one before
+ * it has been pulled.
+ */
+let syncReady = false
+let pushTimer: ReturnType<typeof setTimeout> | undefined
+let pushing: Promise<void> | null = null
+/** What connecting found in the account, held while the owner chooses. */
+let pendingRemote: Envelope<PersistedState> | null = null
+const PUSH_DELAY_MS = 4000
+
+function markSyncDirty() {
+  if (!syncReady || !getSyncToken()) return
+  if (!getDirtyAt()) setDirtyAt(new Date().toISOString())
+  clearTimeout(pushTimer)
+  pushTimer = setTimeout(() => { void pushNow() }, PUSH_DELAY_MS)
+}
+
+function syncPatch(patch: Partial<SyncState>) {
+  useStore.setState((s) => ({ sync: { ...s.sync, ...patch } }))
+}
+
+function syncFailed(err: unknown) {
+  syncPatch({ status: 'error', message: err instanceof Error ? err.message : String(err) })
+}
+
+async function pushNow(): Promise<void> {
+  const token = getSyncToken()
+  if (!token) return
+  if (pushing) await pushing.catch(() => {})
+  clearTimeout(pushTimer)
+  const envelope = makeEnvelope(persistable(useStore.getState()))
+  syncPatch({ status: 'working', message: null })
+  pushing = (async () => {
+    try {
+      await pushRemote(token, envelope)
+      setSyncedAt(envelope.savedAt)
+      // An edit made while the request was in flight keeps its own mark.
+      const dirty = getDirtyAt()
+      if (dirty && dirty <= envelope.savedAt) setDirtyAt(null)
+      syncPatch({ status: 'idle', lastSynced: envelope.savedAt, message: null })
+    } catch (err) {
+      syncFailed(err)
+    } finally {
+      pushing = null
+    }
+  })()
+  await pushing
+}
+
+/** Puts a saved copy in place of what is here, without echoing it back. */
+async function applyEnvelope(envelope: Envelope<PersistedState>) {
+  const state = migrate(envelope.state)
+  useStore.setState({ ...state, snapshots: purgeGradedSnapshots(state.snapshots) })
+  clearTimeout(saveTimer)
+  await set(DB_KEY, persistable(useStore.getState())).catch(() => {})
+  setSyncedAt(envelope.savedAt || null)
+  setDirtyAt(null)
+}
+
+/** Brings this browser and the account into step, the way `decide` says. */
+async function reconcile(token: string): Promise<void> {
+  syncPatch({ status: 'working', message: null })
+  try {
+    const remote = await pullRemote<PersistedState>(token)
+    const action = decide({ remoteSavedAt: remote?.savedAt ?? null, syncedAt: getSyncedAt(), dirtyAt: getDirtyAt() })
+    syncReady = true
+    if (action === 'pull' && remote) {
+      await applyEnvelope(remote)
+      syncPatch({ status: 'idle', lastSynced: remote.savedAt })
+    } else if (action === 'push') {
+      await pushNow()
+    } else {
+      syncPatch({ status: 'idle', lastSynced: getSyncedAt() })
+    }
+  } catch (err) {
+    syncReady = true
+    syncFailed(err)
+  }
+}
+
+const hasCards = (s: PersistedState) => s.holdings.length + s.watchlist.length > 0
 
 export const useStore = create<AppState>((setState, getState) => ({
   ...EMPTY,
   hydrated: false,
+  sync: { status: 'off', account: null, lastSynced: null, message: null, choice: null },
   refresh: { running: false, done: 0, total: 0, lastRun: null, errors: [], skipped: [] },
   error: null,
   feed: null,
@@ -705,6 +822,85 @@ export const useStore = create<AppState>((setState, getState) => ({
     } catch {
       setState({ hydrated: true })
     }
+    const token = getSyncToken()
+    if (!token) {
+      syncReady = true
+      return
+    }
+    syncPatch({ status: 'working', lastSynced: getSyncedAt() })
+    whoAmI(token).then((account) => syncPatch({ account })).catch(() => {})
+    await reconcile(token)
+  },
+
+  async connectSync(token) {
+    token = token.trim()
+    if (!token) return
+    syncPatch({ status: 'working', message: null, choice: null })
+    try {
+      const account = await whoAmI(token)
+      setSyncToken(token)
+      syncPatch({ account })
+      const remote = await pullRemote<PersistedState>(token)
+      const local = persistable(getState())
+      syncReady = true
+      if (!remote || !hasCards(migrate(remote.state))) {
+        await pushNow()
+      } else if (!hasCards(local)) {
+        await applyEnvelope(remote)
+        syncPatch({ status: 'idle', lastSynced: remote.savedAt })
+      } else {
+        const r = migrate(remote.state)
+        pendingRemote = remote
+        syncPatch({
+          status: 'idle',
+          choice: { remoteSavedAt: remote.savedAt, remoteHoldings: r.holdings.length, remoteWatch: r.watchlist.length },
+        })
+        // Nothing is pushed until the choice is made, or this browser's
+        // copy would land on top of the account's before anyone was asked.
+        syncReady = false
+      }
+    } catch (err) {
+      if (err instanceof SyncError && err.status === 401) setSyncToken('')
+      syncFailed(err)
+    }
+  },
+
+  async resolveSyncChoice(keep) {
+    const remote = pendingRemote
+    pendingRemote = null
+    syncPatch({ choice: null })
+    syncReady = true
+    if (keep === 'account' && remote) {
+      await applyEnvelope(remote)
+      syncPatch({ status: 'idle', lastSynced: remote.savedAt })
+    } else {
+      await pushNow()
+    }
+  },
+
+  disconnectSync() {
+    clearTimeout(pushTimer)
+    pendingRemote = null
+    setSyncToken('')
+    syncPatch({ status: 'off', account: null, lastSynced: null, message: null, choice: null })
+  },
+
+  async checkRemote() {
+    const token = getSyncToken()
+    if (!token || !syncReady || pushing || getState().sync.choice) return
+    await reconcile(token)
+  },
+
+  backupEnvelope() {
+    return makeEnvelope(persistable(getState()))
+  },
+
+  async restoreBackup(text) {
+    const envelope = readEnvelope<PersistedState>(text)
+    const state = migrate(envelope.state)
+    setState({ ...state, snapshots: purgeGradedSnapshots(state.snapshots) })
+    scheduleSave(getState())
+    return { holdings: state.holdings.length, watchlist: state.watchlist.length }
   },
 
   async importFile(file, kind, mode = 'replace') {
@@ -987,6 +1183,11 @@ export const useStore = create<AppState>((setState, getState) => ({
   },
 
   async clearAll() {
+    // Reset means this browser. With sync left on, the emptied state would be
+    // pushed over the account's copy on the next edit, which would turn a
+    // local reset into deleting the only other copy. Disconnecting instead
+    // leaves that copy where reconnecting can bring it back.
+    getState().disconnectSync()
     setState({ ...EMPTY, hydrated: true, error: null, refresh: { running: false, done: 0, total: 0, lastRun: null, errors: [], skipped: [] } })
     await del(DB_KEY).catch(() => {})
   },

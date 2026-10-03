@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { AlertCircle, Monitor, Moon, RefreshCw, Sun, X } from 'lucide-react'
 import { DataPanel } from './components/DataPanel'
+import { SyncPanel } from './components/SyncPanel'
 import { HoldingsTable } from './components/HoldingsTable'
 import { SegmentAllocation } from './components/SegmentAllocation'
 import { SegmentPerformance } from './components/SegmentPerformance'
@@ -47,6 +48,11 @@ export default function App() {
   useEffect(() => {
     void store.hydrate()
     void store.loadFeed()
+    // Coming back to this tab after using another browser picks up what was
+    // changed there, rather than holding a stale copy until the next reload.
+    const onVisible = () => { if (document.visibilityState === 'visible') void store.checkRemote() }
+    document.addEventListener('visibilitychange', onVisible)
+    return () => document.removeEventListener('visibilitychange', onVisible)
     // Hydration runs once; the store is a stable singleton.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
@@ -318,6 +324,13 @@ export default function App() {
                 : 'Any .xlsx or .csv with a header row. Column names are matched for you, so “Paid”, “Purchase Price” and “Cost Basis” all work.'}
               onFile={(f) => store.importFile(f, tab === 'watchlist' ? 'watchlist' : 'portfolio')}
             />
+            {store.sync.status === 'off' && (
+              <p className="text-sm secondary mt-5 text-center">
+                Already added your cards in another browser?{' '}
+                <button type="button" className="underline" onClick={() => setTab('data')}>Connect sync in Data &amp; settings</button>{' '}
+                to bring them here.
+              </p>
+            )}
             <div className="flex flex-wrap gap-2 mt-5 justify-center">
               <button type="button" className="btn" onClick={handleTemplate}>Download a template</button>
               {tab === 'watchlist' ? (
@@ -416,6 +429,14 @@ export default function App() {
             onImport={(f) => store.importFile(f, 'watchlist')}
           />
         ) : (
+          <div className="space-y-4">
+          <SyncPanel
+            sync={store.sync}
+            onConnect={store.connectSync} onChoose={store.resolveSyncChoice}
+            onDisconnect={store.disconnectSync} onSyncNow={store.checkRemote}
+            backupText={() => JSON.stringify(store.backupEnvelope())}
+            onRestore={store.restoreBackup}
+          />
           <DataPanel
             importLog={store.importLog} refresh={store.refresh}
             gradedRefresh={store.gradedRefresh} certLastFetched={store.certLastFetched}
@@ -445,6 +466,7 @@ export default function App() {
             holdingCount={holdings.length}
             watchCount={watchlist.length}
           />
+          </div>
         )}
         </ErrorBoundary>
       </main>

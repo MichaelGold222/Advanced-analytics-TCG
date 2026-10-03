@@ -516,6 +516,31 @@ and a blank page.
 with state missing a field the code now reads, reload, and open the tab that
 reads it.
 
+### The cards follow the owner across browsers, through a gist
+
+Reported as "where are the cards I had last time": IndexedDB belongs to one
+origin in one browser, so a different browser, device, or `localhost` against
+the live site is an empty app. The site is static, so `sync.ts` keeps a copy
+in a **secret gist in the owner's own GitHub account**, using a token with
+only the `gist` scope, stored like the Parse key in localStorage
+(`aa-tcg.syncToken`). The Parse key is outside `PersistedState`, so it can
+never ride into the gist.
+
+- Every `scheduleSave` marks the browser dirty and pushes after 4s. Pushing is
+  held off until the first reconcile after load, so a stale copy cannot land
+  on a newer one before it has been pulled.
+- `decide` is the whole conflict rule: pull what moved remotely when nothing
+  here is pending, push what is pending when the remote has not moved, and
+  when both moved the later edit wins.
+- Connecting with cards on both sides that differ **asks** — nothing is
+  overwritten until the owner picks.
+- **Clear all data disconnects sync** rather than pushing an empty state over
+  the only other copy.
+- The API truncates gist content around 1 MB; `pullRemote` follows `raw_url`.
+
+A backup file (Download / Restore) carries the same envelope, for a copy that
+depends on nobody's account.
+
 ### A trap worth remembering
 
 `npx tsc --noEmit` at the repo root checks **nothing** — the root tsconfig is

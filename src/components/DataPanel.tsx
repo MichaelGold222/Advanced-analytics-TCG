@@ -418,7 +418,7 @@ export function DataPanel({
 
         <section className="card p-4">
           <h3 className="text-sm font-semibold mb-2">Reset</h3>
-          <p className="text-xs secondary mb-2">Deletes every holding, watch item and captured price snapshot from this browser. It cannot be undone.</p>
+          <p className="text-xs secondary mb-2">Deletes every holding, watch item and captured price snapshot from this browser. It cannot be undone here, but it also disconnects sync, so a copy saved to GitHub is left untouched and reconnecting brings it back.</p>
           {confirmClear ? (
             <div className="flex gap-2">
               <button type="button" className="btn" style={{ borderColor: 'var(--critical)', color: 'var(--critical)' }} onClick={() => { onClear(); setConfirmClear(false) }}>
