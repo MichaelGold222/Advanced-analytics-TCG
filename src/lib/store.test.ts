@@ -10,7 +10,7 @@ vi.mock('idb-keyval', () => ({
 
 import { purgeGradedSnapshots, selectSeries, useStore } from './store'
 import { pricingTuning, resetPacing } from './pricing'
-import { holdingKey } from './portfolio'
+import { analyzeHoldings, computePortfolioStats, holdingKey } from './portfolio'
 import { computeFmv } from './analytics'
 import type { Holding } from './types'
 
@@ -416,5 +416,73 @@ describe('a saved sheet figure is moved off the override field', () => {
     await useStore.getState().hydrate()
     const [h] = useStore.getState().holdings
     expect(h.importedValue).toBe(1500)
+  })
+})
+
+describe('a slab added by cert reaches the portfolio count', () => {
+  // Reported: "it still says 90 positions, i believe it should say 91". The
+  // tile reads stats.items, which is holdings.length, so a count that does not
+  // move means the row never reached holdings.
+  const altReply = {
+    status: 'success',
+    data: {
+      results: [{
+        cert_number: '99887766',
+        status: 'found',
+        data: {
+          cert: { cert_number: '99887766', grading_company: 'PSA', grade_number: 10 },
+          asset: { name: 'Captain Pikachu', brand: 'Pokemon SV', card_number: '131' },
+          alt_value: { current: 420 },
+          population: [{ grading_company: 'PSA', grade_number: 10, count: 900 }],
+          sales: [
+            { date: '2026-09-01', price: 400, grade_number: 10 },
+            { date: '2026-09-20', price: 440, grade_number: 10 },
+          ],
+          sales_count: 2,
+        },
+      }],
+      requested_count: 1, found_count: 1, not_found_count: 0, error_count: 0,
+    },
+  }
+
+  it('adds the row, so holdings and the position count both move', async () => {
+    // The node environment has no localStorage, which is where the key lives.
+    const store = new Map<string, string>([['aa-tcg.parseKey', 'test-key']])
+    vi.stubGlobal('localStorage', {
+      getItem: (k: string) => store.get(k) ?? null,
+      setItem: (k: string, v: string) => { store.set(k, v) },
+      removeItem: (k: string) => { store.delete(k) },
+    })
+    vi.stubGlobal('fetch', async (input: string | URL) => {
+      const url = String(input)
+      const ok = (json: unknown, headers: Record<string, string> = {}) => ({
+        ok: true, status: 200, headers: new Headers(headers), json: async () => json,
+      } as unknown as Response)
+      // The resolver lists the account's APIs, then reads the one it picked.
+      if (url.includes('/dispatch/tasks/')) return ok({ result_scraper_id: 'alt-1' })
+      if (url.includes('/dispatch/tasks')) return ok({ tasks: [{ id: 't1', slug: 'alt-xyz', name: 'alt.xyz' }] })
+      return ok(altReply, { 'X-Credits-Charged': '3' })
+    })
+
+    useStore.setState({ holdings: [holding({ name: 'Existing', cert: '111' })] })
+    const before = useStore.getState().holdings.length
+
+    const outcome = await useStore.getState().addHoldingByCert({ cert: '99887766', costBasis: 300 })
+
+    const after = useStore.getState().holdings
+    expect(outcome).toBe('added')
+    expect(after).toHaveLength(before + 1)
+
+    // The "N positions" tile reads stats.items, so this is the number the
+    // owner is looking at when they say it should have gone up.
+    const analyses = analyzeHoldings(after, selectSeries(useStore.getState()), new Date('2026-10-08'))
+    expect(computePortfolioStats(after, analyses).items).toBe(before + 1)
+
+    const added = after.find((h) => h.cert === '99887766')!
+    expect(added.name).toBe('Captain Pikachu')
+    expect(added.grade).toBe(10)
+    expect(added.grader).toBe('PSA')
+    // The sales from the same call, so the row lands valued rather than blank.
+    expect(useStore.getState().certSales['99887766']).toHaveLength(2)
   })
 })
