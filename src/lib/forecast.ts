@@ -30,16 +30,10 @@
  * `computeForecast` returns null rather than guess when a card is too thin.
  */
 import { type MarketBeta, type MarketIndex, estimateBeta } from './marketindex'
-import { clamp, daysBetween, mean, median, stdev } from './stats'
-import type { ForecastResult, PricePoint, Projection } from './types'
+import { MIN_GAP_DAYS, clamp, daysBetween, mean, median, stdev } from './stats'
 
-/**
- * Shortest spacing treated as real elapsed time between two sales.
- *
- * Sales closer together than this are near-simultaneous observations of one
- * value, and the difference between them is mostly who turned up to bid.
- */
-export const MIN_GAP_DAYS = 14
+export { MIN_GAP_DAYS }
+import type { ForecastResult, PricePoint, Projection } from './types'
 
 /**
  * Most volatility this will report, however wild the record looks.
@@ -336,15 +330,24 @@ function splitAgainstMarket(index: MarketIndex, beta: MarketBeta, weight: number
   const marketDriftPerDay = shrunkDrift(
     index.driftPerYear / 365, index.volatility, indexSpanDays,
   )
-  const idiosyncratic = weight * beta.idiosyncratic + (1 - weight) * PRIOR_IDIOSYNCRATIC
+  // Capped on the way in, not merely on the way out. MAX_VOLATILITY is
+  // described as a backstop and an index bypassed it completely: this branch
+  // returned whatever the regression produced, and `drawsAt` rescales the
+  // residual pool to exactly this number, so an inflated one is what every
+  // simulated path is built from. A card reading 300% a year projected a
+  // ten-year high of $561 million beside a median of $3,125.
+  const idiosyncratic = Math.min(
+    MAX_VOLATILITY,
+    weight * beta.idiosyncratic + (1 - weight) * PRIOR_IDIOSYNCRATIC,
+  )
   const alphaPerDay = shrunkDrift(beta.rawAlphaPerDay, idiosyncratic, beta.spanDays)
-  const marketVolatility = index.volatility
+  const marketVolatility = Math.min(MAX_VOLATILITY, index.volatility)
 
   return {
     beta: beta.beta,
     marketVolatility,
     idiosyncratic,
-    volatility: Math.hypot(beta.beta * marketVolatility, idiosyncratic),
+    volatility: Math.min(MAX_VOLATILITY, Math.hypot(beta.beta * marketVolatility, idiosyncratic)),
     marketDriftPerDay,
     alphaPerDay,
     driftPerDay: beta.beta * marketDriftPerDay + alphaPerDay,

@@ -545,3 +545,55 @@ describe('the trend stays affordable on a deeply backfilled card', () => {
     expect(robustDrift(points)).toBeCloseTo(mid, 12)
   })
 })
+
+describe('the projection fan cannot reach half a billion dollars', () => {
+  /**
+   * Reported: a Captain Pikachu whose ten-year projection read $0.09 to
+   * $561,103,776 around a median of $3,125, and a one-year band of $32 to
+   * $38,409. Two faults compounded.
+   *
+   * `estimateBeta` scaled each pair by the root of the real gap between sales,
+   * which on Alt's dense history means one day — so a few per cent between two
+   * buyers annualized into the hundreds. And `splitAgainstMarket` then returned
+   * that figure with no cap: MAX_VOLATILITY is described as a backstop, and the
+   * whole backstop was bypassed whenever a market index existed, which on a
+   * collection this size it always does. `drawsAt` rescales the residual pool
+   * to exactly that number, so every simulated path was built from it.
+   */
+  const day = (n: number) => new Date(Date.parse('2026-10-08') - n * 86_400_000).toISOString().slice(0, 10)
+
+  function denseCard(base: number, key: string, seedAt: number): PriceSeries {
+    let seed = seedAt
+    const rand = () => { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed / 0x7fffffff }
+    const points: PricePoint[] = []
+    for (let age = 700; age >= 0; age--) {
+      points.push({ date: day(age), price: base * (1 + (rand() - 0.5) * 0.18), source: 'sale' })
+    }
+    return { key, points }
+  }
+
+  const collection = () => {
+    const m = new Map<string, PriceSeries>()
+    for (let i = 0; i < 12; i++) m.set(`k${i}`, denseCard(400 + i * 220, `k${i}`, 7 + i * 31))
+    return m
+  }
+
+  it('keeps volatility inside the documented backstop even with an index', () => {
+    const m = collection()
+    const index = buildRepeatSalesIndex(m, new Date('2026-10-08'))
+    expect(index).not.toBeNull()
+    const f = computeForecast(m.get('k3')!.points, 1000, { index, basis: 1000 })
+    expect(f).not.toBeNull()
+    expect(f!.volatility).toBeLessThanOrEqual(MAX_VOLATILITY)
+  })
+
+  it('keeps the ten-year fan within a believable multiple of today', () => {
+    const m = collection()
+    const index = buildRepeatSalesIndex(m, new Date('2026-10-08'))
+    const f = computeForecast(m.get('k3')!.points, 1000, { index, basis: 1000 })!
+    const ten = f.projections.find((p) => p.years === 10)!
+    // $561m on a $3,125 card is 180,000x. Even a wild graded card is not that.
+    expect(ten.high / 1000).toBeLessThan(100)
+    expect(ten.low / 1000).toBeGreaterThan(0.005)
+  })
+})

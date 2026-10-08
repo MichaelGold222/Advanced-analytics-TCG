@@ -100,6 +100,24 @@ export function slope(xs: number[], ys: number[]): number | null {
  * spacing at `MIN_GAP_DAYS`, over the prices `bandEvidence` admits.
  */
 
+/**
+ * Shortest spacing treated as real elapsed time between two sales.
+ *
+ * Sales closer together than this are near-simultaneous observations of one
+ * value, and the difference between them is mostly who turned up to bid.
+ * Dividing a price difference by the root of a one-day gap reads two buyers
+ * disagreeing by eight per cent as the card moving eight per cent in a day,
+ * which annualizes into the hundreds.
+ *
+ * It lives here rather than in forecast.ts because TWO places scale a return
+ * by its gap and only one of them was floored. `estimateBeta` was not, and
+ * once Alt supplied hundreds of sales a card — so that consecutive sales are
+ * often a day apart — it reported idiosyncratic volatility near 300% a year
+ * and the ten-year fan reached half a billion dollars. A measurement
+ * convention shared by two modules belongs where both can see it.
+ */
+export const MIN_GAP_DAYS = 14
+
 export function daysBetween(a: string, b: string): number {
   const ms = Date.parse(b) - Date.parse(a)
   if (Number.isNaN(ms)) return 0

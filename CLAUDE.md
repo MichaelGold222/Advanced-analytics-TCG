@@ -825,6 +825,53 @@ Framed throughout as distance from the year's high, which is how the owner
 reasons about it: "the target is 35% off the high, and a quarter of the year's
 sales went at or below it".
 
+### Three ways, then: the same gap bug in a second place, past a bypassed cap
+
+Reported as "all of them on the watchlist are way off", with the numbers that
+made it diagnosable:
+
+```
+            low        median            high      expected return
+1 year     $32.46      $1,007        $38,409      73.7% (-94% to 6522%)
+5 years     $1.32      $2,814     $11,417,704      37.1% (-70% to 622%)
+10 years    $0.09      $3,125    $561,103,776      18.3% (-58% to 297%)
+```
+
+A ten-year high of $561m beside a median of $3,125 is 180,000x, which needs
+volatility around 300% a year. The cap is 120%. Two faults compounded, and the
+first is the bug this file already describes, in a second place nobody looked:
+
+- **`estimateBeta` scaled every pair by the root of the ACTUAL gap between the
+  two sales.** `dailyReturns` has floored this at `MIN_GAP_DAYS` since the
+  projections were fixed — and `estimateBeta` scales a return by a gap too, and
+  never got it. Harmless while a card had nine sales a year apart. Alt supplies
+  hundreds, so consecutive sales are often ONE DAY apart, and a few per cent
+  between two buyers became hundreds of per cent a year. Measured: the same
+  card sampled daily read **146%**, sampled monthly **32%** — a fourfold spread
+  from nothing but how often it was observed. With the floor: 38% and 32%.
+  `MIN_GAP_DAYS` now lives in **stats.ts**, because two modules scale by a gap
+  and keeping the convention next to one of them is what let the other drift.
+  The weight follows the same floor: `w = 1/gap` let a pile of same-week pairs
+  dominate the regression by claiming a precision they do not have.
+- **`splitAgainstMarket` returned that figure uncapped.** `MAX_VOLATILITY` is
+  described in this file as a backstop, and the backstop was bypassed entirely
+  whenever a market index existed — which on a collection this size it always
+  does, so the cap had effectively stopped existing. `drawsAt` rescales the
+  residual pool to exactly that number, so every one of the two thousand paths
+  was built from it. Capped on the way in now, not merely on the way out.
+
+After: 39% volatility, and a ten-year fan of $105 to $2,646 around $534 on a
+card starting at $1,000.
+
+**What was checked and left alone.** The alpha fallback looked guilty — on a
+noisy synthetic card it read −57% a year on a flat series. Against clean data
+with a known answer it is exact and density-invariant: flat reads 0.0%, +20% a
+year reads 18.2% (the log rate, which is right), −20% reads −22.3%, and all
+three are identical sampled daily, weekly or monthly. The −57% was the test
+generator, not the estimator. **`separable: false` is also not a fault** — a
+market with no shape cannot be separated from elapsed time, beta falls back to
+1 as designed, and the card's own drift is then read by the fallback, correctly.
+
 ### Two ways the projections were simply wrong
 
 Reported as a ten-year median of $56 million, and both causes were real.

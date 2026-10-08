@@ -41,7 +41,7 @@
  * series. It is dropped before the real fit, because a handful left in will
  * drag whole periods.
  */
-import { daysBetween, mad, mean, stdev, toISODate } from './stats'
+import { MIN_GAP_DAYS, daysBetween, mad, mean, stdev, toISODate } from './stats'
 import type { PricePoint, PriceSeries, PriceSource } from './types'
 
 /** Target pairs per bucket before the index widens its periods. */
@@ -498,12 +498,21 @@ export function estimateBeta(points: PricePoint[], index: MarketIndex): MarketBe
   if (pairs.length < MIN_PAIRS_FOR_BETA) return null
 
   const spanDays = daysBetween(pairs[0].fromDate, pairs[pairs.length - 1].toDate)
+  // The spacing used for SCALING is floored at MIN_GAP_DAYS; the gap itself is
+  // kept, since a drift accrues over real elapsed time and only the scaling was
+  // wrong. Two buyers paying eight per cent apart on consecutive days is not
+  // the card moving eight per cent in a day, and dividing by the root of a
+  // one-day gap reads it that way — about 300% a year, which is what every
+  // simulated path was then built from. The weight follows the same floor: it
+  // is one over the variance, so a pile of same-week pairs would otherwise
+  // dominate the regression by claiming a precision they do not have.
   const rows = pairs.map((p) => ({
     market: indexChangeBetween(index, p.fromDate, p.toDate),
     days: p.gapDays,
+    spacing: Math.max(p.gapDays, MIN_GAP_DAYS),
     y: p.logReturn,
     // Variance grows with elapsed time, so precision falls with it.
-    w: 1 / p.gapDays,
+    w: 1 / Math.max(p.gapDays, MIN_GAP_DAYS),
   }))
 
   let s11 = 0
@@ -570,8 +579,8 @@ export function estimateBeta(points: PricePoint[], index: MarketIndex): MarketBe
 
   // Residuals, put on a common daily footing so intervals of different lengths
   // can be compared at all.
-  const scaledResid = rows.map((r) => (r.y - beta * r.market - rawAlphaPerDay * r.days) / Math.sqrt(r.days))
-  const scaledTotal = rows.map((r) => r.y / Math.sqrt(r.days))
+  const scaledResid = rows.map((r) => (r.y - beta * r.market - rawAlphaPerDay * r.days) / Math.sqrt(r.spacing))
+  const scaledTotal = rows.map((r) => r.y / Math.sqrt(r.spacing))
   const idiosyncratic = scaledResid.length >= 2 ? stdev(scaledResid) * Math.sqrt(365) : 0
   const totalVol = scaledTotal.length >= 2 ? stdev(scaledTotal) * Math.sqrt(365) : 0
   const marketShare = identifiable && totalVol > 1e-9

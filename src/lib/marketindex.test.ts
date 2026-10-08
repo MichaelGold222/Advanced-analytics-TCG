@@ -353,3 +353,49 @@ describe('splitting a card into the market and itself', () => {
     expect(b.rawAlphaPerDay * 365).toBeLessThan(0.45)
   })
 })
+
+describe('dense history must not be read as a wild card', () => {
+  /**
+   * Reported as "all of them on the watchlist are way off", with a Captain
+   * Pikachu projecting a ten-year high of $561,103,776 beside a median of
+   * $3,125 and a one-year band of $32 to $38,409.
+   *
+   * `estimateBeta` scaled each pair's return by the root of the ACTUAL gap
+   * between the two sales. Alt supplies hundreds of sales a card, so
+   * consecutive sales are often a day apart, and two buyers paying a few per
+   * cent apart on consecutive days was read as the card moving that far in a
+   * day — annualizing into the hundreds of per cent. `dailyReturns` has
+   * floored this since the projections were fixed; this second place that
+   * scales by a gap never got the fix.
+   */
+  const market = () => syntheticMarket({
+    cards: 10, salesPerCard: 10, path: (d) => 0.0004 * d, noise: 0.05,
+  })
+
+  /** One card, same prices, sampled every `every` days. */
+  const card = (every: number): PricePoint[] => {
+    let seed = 999
+    const rand = () => { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed / 0x7fffffff }
+    const pts: PricePoint[] = []
+    for (let d = 0; d <= 700; d += every) pts.push(sale(d, 1000 * (1 + (rand() - 0.5) * 0.18)))
+    return pts
+  }
+
+  it('does not report a few per cent between buyers as hundreds of per cent a year', () => {
+    const index = buildRepeatSalesIndex(market())!
+    const daily = estimateBeta(card(1), index)!
+    // 38% with the floor, 146% without it. A graded card does not move 146% a
+    // year; the bound sits between the two so the gate actually gates.
+    expect(daily.idiosyncratic).toBeLessThan(0.8)
+  })
+
+  it('reads about the same volatility however densely the card is sampled', () => {
+    // The card's value is doing the same thing in all three; only the number
+    // of observations differs. Before the floor, sampling daily instead of
+    // monthly multiplied the measured volatility several times over.
+    const index = buildRepeatSalesIndex(market())!
+    const vols = [1, 7, 30].map((every) => estimateBeta(card(every), index)!.idiosyncratic)
+    const spread = Math.max(...vols) / Math.min(...vols)
+    expect(spread).toBeLessThan(2)
+  })
+})
