@@ -373,10 +373,10 @@ function LastSoldCell({
   }
 
   const shown = override ?? last?.price ?? imported ?? null
-  // The date the card actually sold, not only how long ago. "12d ago" answers
-  // a different question from "when", and a date is what anyone checking a
-  // position against their own records needs.
-  const when = last && (last.ageDays === 0 ? 'today' : last.ageDays === 1 ? 'yesterday' : `${last.ageDays}d ago`)
+  // The date it sold, and only the date. An age in days beside it answers the
+  // same question twice and reads as clutter in a narrow column; the date is
+  // what anyone checking a position against their own records needs, and the
+  // age is derivable from it by anyone who wants it.
   const where = last?.venue ? VENUE_LABELS[last.venue] ?? last.venue : null
 
   return (
@@ -384,18 +384,13 @@ function LastSoldCell({
       {shown == null ? <span className="muted">—</span> : <div className="tabular">{money(shown)}</div>}
       {/* Nothing under an edited figure: it is the number, not a status. */}
       {override == null && (
-        last
-          ? (
-            <>
-              <div className="text-[11px] muted">{[shortDate(last.date), when].filter(Boolean).join(' · ')}</div>
-              {where && <div className="text-[11px] muted">{where}</div>}
-            </>
-          )
-          : (
+        <div className="text-[11px] muted">
+          {last
+            ? [shortDate(last.date), where].filter(Boolean).join(' · ')
             // A sheet's figure counts toward the portfolio total, so a row
             // carrying one must not read "no sales" with a dash beside it.
-            <div className="text-[11px] muted">{imported != null ? 'from your sheet' : 'no sales'}</div>
-          )
+            : imported != null ? 'from your sheet' : 'no sales'}
+        </div>
       )}
     </>
   )

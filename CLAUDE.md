@@ -275,10 +275,12 @@ its sheet figure counted toward the portfolio total. It now says **"from your
 sheet"**, because a number in the total has to be accounted for somewhere on
 screen.
 
-**Last sold now carries its date.** It showed the price and "12d ago", which
-answers a different question from "when". Anyone checking a position against
-their own records needs the date, so the cell prints `19 Sep 26 · 12d ago` with
-the venue under it.
+**Last sold now carries its date**, and only the date: `19 Sep 26 · Goldin` on
+one line under the price. It used to print "12d ago", which answers a different
+question from "when" — but printing both answered the same question twice and
+read as clutter in a narrow column, so the age went rather than joining it. The
+age is derivable from the date by anyone who wants it; the date is not
+derivable from the age without doing arithmetic.
 
 ### Slab photographs
 
