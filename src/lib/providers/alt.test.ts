@@ -225,3 +225,62 @@ describe('telling "Alt has nothing" apart from "I could not read it"', () => {
     expect(altCounts(body).found).toBe(2)
   })
 })
+
+describe("a slab's band is built from its own grade only", () => {
+  // Reported as "your high and low formula on the watchlist is way wrong".
+  // Alt's sales belong to the asset — the card — not to the slab, and every
+  // row carries its own grade_number. Taking them all put PSA 9s, 8s and raw
+  // copies into a PSA 10's band: the measured "full range" on cert 77865285
+  // was $6 to $3,325 on a card whose own grade trades in the hundreds.
+  const payload = (sales: unknown[], grade: unknown = 10) => ({
+    cert: { cert_number: '77865285', grading_company: 'PSA', grade_number: grade },
+    sales,
+  })
+  const mixed = [
+    { date: '2026-09-01T00:00:00Z', price: 6, grade_number: 4 },
+    { date: '2026-09-02T00:00:00Z', price: 120, grade_number: 8 },
+    { date: '2026-09-03T00:00:00Z', price: 480, grade_number: 10 },
+    { date: '2026-09-04T00:00:00Z', price: 520, grade_number: 10 },
+    { date: '2026-09-05T00:00:00Z', price: 3325, grade_number: 10.5 },
+  ]
+
+  it('keeps only the sales at this certificate’s grade', () => {
+    const prices = altSales(payload(mixed), NOW).map((p) => p.price)
+    expect(prices).toEqual([480, 520])
+  })
+
+  it('matches a grade that arrives as a string, as it does in places', () => {
+    const prices = altSales(payload(mixed, '10.0'), NOW).map((p) => p.price)
+    expect(prices).toEqual([480, 520])
+  })
+
+  it('drops a row that does not say what grade it was', () => {
+    // Once the rest of the response has proved it knows grades, a row without
+    // one is as unusable as a row at the wrong grade.
+    const prices = altSales(payload([...mixed, { date: '2026-09-06T00:00:00Z', price: 9000 }]), NOW)
+      .map((p) => p.price)
+    expect(prices).toEqual([480, 520])
+  })
+
+  it('keeps everything where no row carries a grade at all', () => {
+    // A filter that silently empties a card is worse than one that does not
+    // run, so with nothing to filter on this behaves as it did before.
+    const rows = [
+      { date: '2026-09-03T00:00:00Z', price: 480 },
+      { date: '2026-09-04T00:00:00Z', price: 520 },
+    ]
+    expect(altSales(payload(rows), NOW).map((p) => p.price)).toEqual([480, 520])
+  })
+
+  it('keeps everything where the certificate does not say its grade', () => {
+    expect(altSales({ sales: mixed }, NOW).map((p) => p.price)).toEqual([6, 120, 480, 520, 3325])
+  })
+
+  it('reports the full count on record even though it kept fewer', () => {
+    // "1,422 on record, 394 kept" has to stay honest: the filter changes what
+    // is stored, not what Alt says it holds.
+    const card = parseAltCert({ data: { ...payload(mixed), sales_count: 1422 } }, '77865285', NOW)
+    expect(card!.sales).toHaveLength(2)
+    expect(card!.salesCount).toBe(1422)
+  })
+})

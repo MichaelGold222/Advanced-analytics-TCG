@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { AlertCircle, Monitor, Moon, RefreshCw, Sun, X } from 'lucide-react'
+import { AddBySlab } from './components/AddBySlab'
 import { DataPanel } from './components/DataPanel'
 import { SyncPanel } from './components/SyncPanel'
 import { HoldingsTable } from './components/HoldingsTable'
@@ -406,6 +407,11 @@ export default function App() {
           </div>
         ) : tab === 'holdings' ? (
           <div className="space-y-4">
+            <AddBySlab
+              onAdd={(input) => { void store.addHoldingByCert(input) }}
+              busy={store.gradedRefresh.running}
+              empty={holdings.length === 0}
+            />
             <MisplacedRows candidates={misplaced} onMove={store.moveToWatchlist} />
             <HoldingsTable
               holdings={holdings} analyses={holdingAnalyses}

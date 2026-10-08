@@ -158,6 +158,21 @@ interface AppState extends PersistedState {
   /** Put cards on a list, or take them off every list with null. */
   moveWatchItems(ids: string[], list: string | null): void
   addWatchItem(item: Omit<WatchItem, 'id' | 'segment' | 'segmentReason'>): void
+  /**
+   * Add a slab to holdings from its certificate number alone.
+   *
+   * The spreadsheet was the only way in, so buying a card meant editing a file
+   * and re-importing it. A certificate is the one thing printed on the slab and
+   * the one key Alt indexes by, so it is enough on its own: the card's name,
+   * set, number, grade, population, photograph and whole sale history all come
+   * back from it in a single call.
+   */
+  addHoldingByCert(input: {
+    cert: string
+    quantity?: number
+    costBasis?: number
+    purchaseDate?: string
+  }): Promise<'added' | 'added-unidentified' | 'duplicate' | 'failed'>
   removeWatchItem(id: string): void
   updateWatchItem(id: string, patch: Partial<WatchItem>): void
   setSegmentOverride(id: string, segment: Segment | null, kind: 'holding' | 'watch'): void
@@ -1083,6 +1098,98 @@ export const useStore = create<AppState>((setState, getState) => ({
     const watchItem: WatchItem = { ...item, id: `${key}#m${Date.now()}`, ...cls }
     setState({ watchlist: [...getState().watchlist, watchItem] })
     scheduleSave(getState())
+  },
+
+  async addHoldingByCert({ cert, quantity = 1, costBasis = 0, purchaseDate }) {
+    const number = String(cert ?? '').trim().replace(/\s+/g, '')
+    if (!number) {
+      setState({ error: 'Enter the certificate number printed on the slab.' })
+      return 'failed'
+    }
+    // One slab is one row. Two copies of the same card are a quantity, and two
+    // rows sharing a certificate would double-count it in the portfolio total.
+    if (getState().holdings.some((h) => h.cert === number)) {
+      setState({ error: `Cert ${number} is already in holdings.` })
+      return 'duplicate'
+    }
+
+    const place = (h: Omit<Holding, 'id' | 'segment' | 'segmentReason'>) => {
+      const cls = reclassify({ ...h, segmentOverride: h.segmentOverride ?? null })
+      const holding: Holding = { ...h, id: `${itemKey(h)}#c${Date.now()}`, ...cls }
+      setState({ holdings: [...getState().holdings, holding] })
+    }
+
+    const key = getParseKey()
+    if (!key) {
+      // Added anyway rather than refused. The row is the thing the owner asked
+      // for; the identity is what a key buys, and a later refresh fills it in.
+      place({ name: `Cert ${number}`, cert: number, quantity, costBasis, purchaseDate, segmentOverride: null })
+      setState({ error: 'Added, but with no name: add your Parse API key in Data & settings and press Fetch sold comps to fill it in.' })
+      scheduleSave(getState())
+      return 'added-unidentified'
+    }
+
+    setState({ gradedRefresh: { ...getState().gradedRefresh, running: true, done: 0, total: 1, phase: 'history', unmatched: [], failed: [], startedAt: Date.now() } })
+    try {
+      const { certs: got, creditsCharged, creditsRemaining } = await fetchAltCerts([number], { key })
+      const found = got[0]
+      if (!found) {
+        place({ name: `Cert ${number}`, cert: number, quantity, costBasis, purchaseDate, segmentOverride: null })
+        setState({ error: `Added, but Alt has no record of cert ${number} — check the number, or fill the card's details in by hand. Spent ${creditsCharged} credits.` })
+        scheduleSave(getState())
+        return 'added-unidentified'
+      }
+
+      place({
+        name: found.name ?? `Cert ${number}`,
+        set: found.set ?? undefined,
+        number: found.number ?? undefined,
+        grader: found.grader ?? undefined,
+        grade: found.grade ?? undefined,
+        population: found.population ?? undefined,
+        cert: number,
+        quantity,
+        costBasis,
+        purchaseDate,
+        segmentOverride: null,
+      })
+
+      // The sales came back in the same call. Storing them here is what makes
+      // the row land already valued instead of empty until the next refresh.
+      const at = new Date().toISOString()
+      const certSales = { ...getState().certSales }
+      const certFacts = { ...getState().certFacts }
+      const certImages = { ...getState().certImages }
+      const certDeepFetched = { ...getState().certDeepFetched }
+      if (found.sales.length > 0) certSales[number] = mergeSalePoints(certSales[number] ?? [], found.sales)
+      if (found.altValue != null || found.population != null) {
+        certFacts[number] = { clValue: found.altValue ?? null, pop: found.population ?? null }
+      }
+      if (found.image && !certImages[number]?.image) certImages[number] = { image: found.image, thumbnail: found.image }
+      certDeepFetched[number] = {
+        at, sales: found.sales.length, unavailable: false, underlying: found.salesCount ?? found.sales.length,
+      }
+
+      setState({
+        certSales, certFacts, certImages, certDeepFetched, certLastFetched: at,
+        usage: creditsRemaining == null ? getState().usage : { ...getState().usage, creditsRemaining } as AppState['usage'],
+        error: `Added ${found.name ?? `cert ${number}`} — ${found.sales.length.toLocaleString()} sales kept of ${(found.salesCount ?? found.sales.length).toLocaleString()} on record, for ${creditsCharged} credits.`,
+      })
+      scheduleSave(getState())
+      return 'added'
+    } catch (err) {
+      // Nothing is added on a failure: a half-made row with no identity and no
+      // sales is worse than the button having done nothing, and the credits
+      // message needs to be the thing that is read.
+      setState({
+        error: err instanceof AltError ? err.message
+          : `Could not look up cert ${number}: ${err instanceof Error ? err.message : String(err)}`,
+      })
+      return 'failed'
+    } finally {
+      setState({ gradedRefresh: { ...getState().gradedRefresh, running: false, startedAt: null } })
+      scheduleSave(getState())
+    }
   },
 
   removeWatchItem(id) {

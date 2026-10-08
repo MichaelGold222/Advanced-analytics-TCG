@@ -61,6 +61,21 @@ export interface AltCert {
   salesCount: number | null
   /** Alt's name for the card, which is fuller than most sheets carry. */
   name: string | null
+  /**
+   * The grader and grade off the certificate itself, and the set and number
+   * off the asset.
+   *
+   * All four arrive in the same response and were previously parsed only as
+   * far as `population` needed. They are read out now because a holding added
+   * by its slab number has nothing else to go on: the item key is built from
+   * name, set, number and grade, so a card added without them would key
+   * differently from the same card imported from a sheet and the two would not
+   * share a price history.
+   */
+  grader: 'PSA' | 'BGS' | 'CGC' | 'SGC' | null
+  grade: number | null
+  set: string | null
+  number: string | null
   /** A photograph, free in the same response. */
   image: string | null
   /** False when Alt reported this certificate as not found. */
@@ -94,6 +109,25 @@ export function altSales(node: unknown, now = new Date()): PricePoint[] {
   if (!Array.isArray(rows)) return []
   const cutoff = new Date(now.getTime() - KEEP_YEARS * 365.25 * 86_400_000)
     .toISOString().slice(0, 10)
+
+  // The grade this certificate is in, and whether the sales say what grade
+  // they were. Alt's sales belong to the ASSET — the card — not to the slab,
+  // and every row carries its own `grade_number`, which is only meaningful
+  // because they differ. Taking them all put PSA 9s, 8s and raw copies into a
+  // PSA 10's band: cert 77865285 measured a "full range" of $6 to $3,325 on a
+  // card whose own grade trades between $200 and $1,000, and a $6 sale is not
+  // a PSA 10 of anything. The low was the obvious casualty and the high is no
+  // safer, since a higher grade of the same card sells for more.
+  //
+  // Only applied where there is something to apply it with: the cert's grade
+  // has to be known and the rows have to carry grades. Where they do not,
+  // everything is kept, which is the behaviour this had before — a filter
+  // that silently empties a card is worse than one that does not run.
+  const certNode = (node as { cert?: Record<string, unknown> })?.cert
+  const want = Number(certNode?.grade_number)
+  const graded = Number.isFinite(want)
+    && rows.some((r) => r && typeof r === 'object' && Number.isFinite(Number((r as Record<string, unknown>).grade_number)))
+
   const seen = new Set<string>()
   const out: PricePoint[] = []
   for (const r of rows) {
@@ -103,6 +137,9 @@ export function altSales(node: unknown, now = new Date()): PricePoint[] {
     const date = isoDay(row.date)
     if (!price || !date) continue
     if (date < cutoff) continue
+    // A row whose grade is absent is as unusable as one at the wrong grade
+    // once the rest of the response has proved it knows grades.
+    if (graded && Number(row.grade_number) !== want) continue
     const sig = `${date}|${price}`
     if (seen.has(sig)) continue
     seen.add(sig)
@@ -161,10 +198,22 @@ export function parseAltCert(node: unknown, fallbackCert: string, now = new Date
     population: populationFor(inner.population, certNode),
     salesCount: typeof inner.sales_count === 'number' ? inner.sales_count : null,
     name: typeof asset?.name === 'string' ? asset.name : null,
+    grader: graderOf(certNode?.grading_company),
+    grade: num(Number(certNode?.grade_number)),
+    set: typeof asset?.brand === 'string' && asset.brand.trim() ? asset.brand.trim() : null,
+    number: typeof asset?.card_number === 'string' && asset.card_number.trim()
+      ? asset.card_number.trim()
+      : typeof asset?.card_number === 'number' ? String(asset.card_number) : null,
     image: typeof asset?.image_url === 'string' && asset.image_url.startsWith('https://')
       ? asset.image_url : null,
     found: outer.status == null || outer.status === 'found',
   }
+}
+
+/** Only the four graders the rest of the app knows; anything else is unknown. */
+export function graderOf(v: unknown): 'PSA' | 'BGS' | 'CGC' | 'SGC' | null {
+  const up = String(v ?? '').trim().toUpperCase()
+  return up === 'PSA' || up === 'BGS' || up === 'CGC' || up === 'SGC' ? up : null
 }
 
 /**

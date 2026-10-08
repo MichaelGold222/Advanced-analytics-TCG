@@ -99,22 +99,26 @@ export function HoldingsTable({
                 />
               </th>
               <th>Item</th>
-              <th>Segment</th>
+              {/* The headline figure leads. What a position is worth is the
+                  thing being looked up; what was paid for it is context. */}
+              <th className="num" title="What this position is worth: last sold times the quantity held">Market value</th>
               <th className="num">Invested</th>
-              <th className="num" title="Median of the last 5 completed comps across every venue. A steadier estimate than any one sale, shown for reference.">Median of 5</th>
               <th className="num" title="The most recent completed sale of this exact card at this grade, and the date it sold">Last sold</th>
-              <th className="num" title="Lowest this card has traded in the last 30 days — the band it is actually trading in now.">1-mo low</th>
-              <th className="num" title="Highest this card has traded in the last 30 days.">1-mo high</th>
-              <th className="num" title="Lowest this card has traded in the last 6 months. Where the sales on record do not reach back that far, the actual span is shown under the figure.">6-mo low</th>
-              <th className="num" title="Highest this card has traded in the last 6 months. Where the sales on record do not reach back that far, the actual span is shown under the figure.">6-mo high</th>
+              <th className="num" title="Median of the last 5 completed comps across every venue. A steadier estimate than any one sale, shown for reference.">Median of 5</th>
+              {/* A low and a high are one fact about a window, and splitting
+                  them across two columns cost the width that pushed Return off
+                  the edge of the table. */}
+              <th className="num" title="The band this card has actually traded in over the last 30 days — what it is trading at now.">1-mo range</th>
+              <th className="num" title="The band this card has actually traded in over the last 6 months. Where the sales on record do not reach back that far, the actual span is shown under the figures.">6-mo range</th>
               <th className="num" title="Highest this card has traded in the last 12 months. Where the sales on record do not reach back that far, the actual span is shown under the figure — a 12-month label over three months of sales is not a yearly high.">Yearly high</th>
               <th className="num" title="Last sold minus what you paid">Unrealized</th>
               <th className="num" title="Unrealized gain over what you paid">Return</th>
+              <th>Segment</th>
               <th aria-label="Actions" />
             </tr>
           </thead>
           <tbody>
-            {rows.map(({ h, a, cost, fmv, unrealized, roi }) => {
+            {rows.map(({ h, a, cost, fmv, value, unrealized, roi }) => {
               const inferred = classify({ ...h, override: null }).segment
               return (
                 <tr key={h.id} style={selection.isSelected(h.id) ? { background: 'var(--surface-2)' } : undefined}>
@@ -140,12 +144,8 @@ export function HoldingsTable({
                       </div>
                     </div>
                   </td>
-                  <td>
-                    <SegmentPicker value={h.segmentOverride ?? null} inferred={inferred} onChange={(s) => onOverride(h.id, s)} />
-                    <div className="text-[11px] muted mt-1 max-w-52">{h.segmentReason}</div>
-                  </td>
+                  <td className="num tabular font-medium">{value == null ? <span className="muted">—</span> : money(value)}</td>
                   <td className="num tabular">{money(cost)}</td>
-                  <td className="num"><PriceCell analysis={a} /></td>
                   <td className="num">
                     <LastSoldCell
                       analysis={a} override={h.userPrice ?? null}
@@ -155,10 +155,9 @@ export function HoldingsTable({
                       onCancel={() => setEditingId(null)}
                     />
                   </td>
-                  <td className="num"><LowCell range={a?.oneMonthRange} fmv={fmv} /></td>
-                  <td className="num"><HighCell range={a?.oneMonthRange} fmv={fmv} /></td>
-                  <td className="num"><LowCell range={a?.sixMonthRange} fmv={fmv} /></td>
-                  <td className="num"><HighCell range={a?.sixMonthRange} fmv={fmv} /></td>
+                  <td className="num"><PriceCell analysis={a} /></td>
+                  <td className="num"><RangeCell range={a?.oneMonthRange} fmv={fmv} /></td>
+                  <td className="num"><RangeCell range={a?.sixMonthRange} fmv={fmv} /></td>
                   <td className="num"><HighCell range={a?.range} fmv={fmv} /></td>
 
                   <td className="num tabular" style={{ color: unrealized == null ? undefined : unrealized >= 0 ? 'var(--delta-up)' : 'var(--delta-down)' }}>
@@ -166,6 +165,10 @@ export function HoldingsTable({
                   </td>
                   <td className="num tabular" style={{ color: roi == null ? undefined : roi >= 0 ? 'var(--delta-up)' : 'var(--delta-down)' }}>
                     {pct(roi)}
+                  </td>
+                  <td>
+                    <SegmentPicker value={h.segmentOverride ?? null} inferred={inferred} onChange={(s) => onOverride(h.id, s)} />
+                    <div className="text-[11px] muted mt-1 max-w-52">{h.segmentReason}</div>
                   </td>
                   <td>
                     <div className="flex gap-1">
@@ -290,20 +293,25 @@ function HighCell({ range, fmv }: { range?: RangeResult; fmv: number | null }) {
  * The mirror of the high: together they say where in its recent band the card
  * is trading, which a single number on its own cannot.
  */
-function LowCell({ range, fmv }: { range?: RangeResult; fmv: number | null }) {
+/**
+ * A window's low and high as one cell.
+ *
+ * They were two columns each, for two windows — four columns saying what two
+ * can, and the width went straight onto the end of the table, where Unrealized
+ * and Return fell off the edge. A low and a high are one fact about a period
+ * and belong in one cell; the coverage note that says what the band really
+ * spans is printed once rather than twice.
+ */
+function RangeCell({ range, fmv }: { range?: RangeResult; fmv: number | null }) {
   const low = range?.low ?? null
-  if (low == null) return <span className="muted">—</span>
+  const high = range?.high ?? null
+  if (low == null || high == null) return <span className="muted">—</span>
 
-  const above = fmv != null && low > 0 ? (fmv - low) / low : null
+  const atLow = fmv != null && low > 0 && (fmv - low) / low <= 0.001
   return (
     <>
-      <div className="tabular">{money(low)}</div>
-      {above != null && above > 0.001 && (
-        <div className="text-[11px] muted tabular">{plainPct(above, 1)} above</div>
-      )}
-      {above != null && above <= 0.001 && (
-        <div className="text-[11px] tabular" style={{ color: 'var(--delta-down)' }}>at low</div>
-      )}
+      <div className="tabular whitespace-nowrap">{money(low)} – {money(high)}</div>
+      {atLow && <div className="text-[11px] tabular" style={{ color: 'var(--delta-down)' }}>at low</div>}
       {range && <CoverageNote range={range} />}
     </>
   )

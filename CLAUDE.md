@@ -295,6 +295,81 @@ The frame is drawn whether or not a picture exists, so rows do not jump as
 images load, and a broken link falls back to the placeholder rather than a
 torn-image icon.
 
+### A slab can be added by its certificate alone
+
+`AddBySlab` + `addHoldingByCert`. The spreadsheet was the only way into
+holdings, so buying a card meant editing a file and re-importing it — and a
+re-import is a replace, so it meant re-exporting everything else too.
+
+A certificate is the one thing printed on the slab and the one key Alt indexes
+by, which makes it sufficient on its own: name, set, number, grader, grade,
+population, photograph and the whole sale history come back in a single call,
+so the row lands already valued rather than empty until the next refresh.
+`parseAltCert` now reads `cert.grading_company`, `cert.grade_number`,
+`asset.brand` and `asset.card_number` out of the response — all four were
+already arriving and only `population` had been using them. They matter because
+`itemKey` is built from name, set, number and grade: a row added without them
+would key differently from the same card imported from a sheet, and the two
+would not share a price history.
+
+The cost is on the button (`Add · 3 credits`), not in a footnote. A number
+nobody warned about is how this project emptied its credit balance once.
+
+Three outcomes rather than one: identified and added; added without an identity
+(no API key, or Alt has no record) with the reason said out loud; or nothing
+added at all, which is what a failed call does — a half-made row with no
+identity and no sales is worse than a button that did nothing.
+
+### Holdings: market value leads, and the low/high pairs became ranges
+
+Reported as "it cuts off the return portion", with a request for market value
+in its own column. Both were true and related. The table had fourteen columns
+and **no market value column at all** — the figure was computed, used for
+sorting, named in the sort menu as "Sort: market value", and never displayed;
+`Unrealized` and `Return` were pushed off the right edge.
+
+- **Market value is now the first figure**, ahead of `Invested`. What a position
+  is worth is the thing being looked up; what was paid for it is context.
+- **`1-mo low` + `1-mo high` became `1-mo range`**, and the same for six months.
+  A low and a high are one fact about a window, and splitting each across two
+  columns spent exactly the width that pushed `Return` off the edge. Four
+  columns became two, so the table lost two columns while gaining one.
+- `Segment` moved to the end: it is a picker, not a number, and it was sitting
+  between the card and its figures.
+
+### "The high and low are way wrong" — not reproduced, and what was ruled out
+
+Reported on the watchlist. Four things were checked before changing anything,
+and **none of them was the cause**, which is worth recording so the next
+session does not re-check them:
+
+- **The band math is exact.** Against synthetic collections of 800 sales —
+  flat, a 4-sale run-up, a 25-sale run-up, and a card that doubled over the
+  year — `computeRange` returned the true minimum and maximum of the window in
+  every case, with nothing excluded. The `withoutLonePrints` guard was the
+  suspect, since a tight cluster of hundreds of sales shrinks the robust scale;
+  it dropped nothing in any scenario.
+- **The wiring is right.** The meter reads `range` (52 weeks) and `bandRows`
+  labels each window with the range object it actually holds.
+- **Alt is not mixing grades.** This was the strong hypothesis — Alt's sales
+  belong to the *asset*, every row carries its own `grade_number`, and the
+  measured "full range $6 – $3,325" looked like a raw copy in a PSA 10's band.
+  The captured live response says otherwise: all four of its sales carry
+  `grade_number: 10.0` against a cert graded `"10.0"`, the $6 one included —
+  that was a genuine cheap PSA 10 sale in 2020, before the card appreciated.
+  **A filter went in anyway** (`altSales` drops rows that are not at the
+  certificate's grade, and keeps everything where the rows carry no grades or
+  the cert does not state one) because the guard costs nothing when the data is
+  already clean, but it is a guard and not a fix — do not credit it with one.
+- **The stale explanation was fixed**, which may be the whole report: a card
+  whose band did not cover its window was still being told "the bulk endpoint
+  returns only the newest few sales per slab" and to go and build a
+  spreadsheet. Obsolete since Alt, and it reads as the app explaining a wrong
+  number with a wrong reason.
+
+What is still needed is one concrete case — the card, what the app shows, and
+what it should be. Without it there is nothing to reproduce.
+
 ### The watchlist table had thirteen columns
 
 Now ten. The rank number folded into the buy case (`#3 · 75 strong`), the

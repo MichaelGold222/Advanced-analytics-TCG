@@ -405,16 +405,19 @@ function Reasoning({
           <p className="text-xs muted mb-2">
             <strong>This app has {range.sampleSize} sale{range.sampleSize === 1 ? '' : 's'} for
             this card</strong>, the oldest from {range.oldest} — {Math.round(range.coverageDays)}{' '}
-            days. That is a limit of how the prices are fetched, not of what the card has
-            done: the bulk endpoint returns only the newest few sales per slab, and Card
-            Ladder itself holds far more. So every window above rests on those same{' '}
-            {range.sampleSize}, and none of them is a real 52-week high.
+            days. So every window above rests on those same {range.sampleSize}, and none of
+            them is a real 52-week high.
           </p>
           <p className="text-xs muted mb-2">
-            To get the true high, put the fuller history into a sheet — any card with a
-            dated price column — and upload it. Dated prices from your own sheet now build
-            the band for the months these sales do not reach. Refreshing also deepens the
-            record over time, but only as fast as the card trades.
+            {/* This used to blame the five-sale bulk endpoint and tell the owner to
+                go and build a spreadsheet. Alt returns a card's whole history off
+                its certificate — hundreds of sales, often thousands — so pressing
+                the button is the answer wherever there is a cert, and the sheet is
+                the fallback rather than the first resort. */}
+            If this card has a cert number, <strong>Fetch sold comps</strong> pulls its full
+            history keyed on that certificate. Where there is no cert, or nothing holds a
+            record of it, paste or upload the dated prices you have — they build the band
+            for the months these sales do not reach.
           </p>
           </>
         )}
