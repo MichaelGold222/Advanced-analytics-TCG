@@ -491,3 +491,57 @@ describe('sales close together are two buyers, not a violent market', () => {
     expect(f.volatility).toBeLessThanOrEqual(MAX_VOLATILITY)
   })
 })
+
+describe('the trend stays affordable on a deeply backfilled card', () => {
+  // Theil-Sen is quadratic. At the nine sales a card used to carry that is 36
+  // pairs; at the eight hundred Alt now supplies it is 342,378, per card, on
+  // every analysis. See MAX_DRIFT_PAIRS.
+  const day = (n: number) => new Date(Date.parse('2026-10-08') - n * 86_400_000).toISOString().slice(0, 10)
+
+  function deep(count: number, annual: number): PricePoint[] {
+    let seed = 99
+    const rnd = () => { seed = (seed * 1103515245 + 12345) % 2147483648; return seed / 2147483648 }
+    const perDay = Math.log1p(annual) / 365
+    return Array.from({ length: count }, (_, k) => {
+      const age = 720 - Math.round((k / count) * 720)
+      return {
+        date: day(age),
+        price: 1000 * Math.exp(perDay * (720 - age)) * (1 + (rnd() - 0.5) * 0.2),
+        source: 'sale' as const,
+      }
+    })
+  }
+
+  it('reads the same trend from a sample as from every pair', () => {
+    // 1,600 sales is 1.28m pairs, well past the cap, so this one is sampled.
+    const annualized = (perDay: number) => Math.expm1(perDay * 365)
+    for (const trend of [0, 0.25, -0.3]) {
+      const measured = annualized(robustDrift(deep(1600, trend))!)
+      expect(Math.abs(measured - trend)).toBeLessThan(0.02)
+    }
+  })
+
+  it('gives the same answer every time, so the number does not wobble on redraw', () => {
+    const points = deep(1600, 0.25)
+    expect(robustDrift(points)).toBe(robustDrift([...points]))
+  })
+
+  it('is still exact for a card below the cap', () => {
+    // 200 sales is 19,900 pairs — under MAX_DRIFT_PAIRS, so no sampling at all
+    // and no existing card's published number moves.
+    const points = deep(200, 0.25)
+    const slopes: number[] = []
+    const s = [...points].sort((a, b) => a.date.localeCompare(b.date))
+    for (let i = 0; i < s.length; i++) {
+      for (let j = i + 1; j < s.length; j++) {
+        const dt = (Date.parse(s[j].date) - Date.parse(s[i].date)) / 86_400_000
+        if (dt > 0) slopes.push((Math.log(s[j].price) - Math.log(s[i].price)) / dt)
+      }
+    }
+    slopes.sort((a, b) => a - b)
+    const mid = slopes.length % 2
+      ? slopes[(slopes.length - 1) / 2]
+      : (slopes[slopes.length / 2 - 1] + slopes[slopes.length / 2]) / 2
+    expect(robustDrift(points)).toBeCloseTo(mid, 12)
+  })
+})

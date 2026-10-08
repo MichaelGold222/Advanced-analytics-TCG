@@ -188,27 +188,61 @@ export function shrunkVolatility(returns: DailyReturn[], prior = PRIOR_VOLATILIT
 }
 
 /**
- * Trend as the median of all pairwise slopes — the Theil-Sen estimator.
+ * The most pairs this will compare before it starts sampling them.
+ *
+ * Theil-Sen is quadratic, which is free at the nine sales a card used to have
+ * (36 pairs) and is not free at eight hundred (342,378 pairs, per card, on
+ * every analysis). A 122-card collection with two years of Alt history behind
+ * each card was spending five seconds a render inside this one function.
+ *
+ * The cap is set well above any card the estimator has ever been tested on, so
+ * an ordinary card still gets the exact median of every pair and its number
+ * does not move. Only a card deep enough to be slow switches to sampling.
+ */
+export const MAX_DRIFT_PAIRS = 40_000
+
+/**
+ * Trend as the median of pairwise slopes — the Theil-Sen estimator.
  *
  * Least squares is pulled around by a single unusual sale, and in a set of six
  * that is a coin flip. The median slope needs about a third of the points to be
  * wrong before it moves, which matches a market where one odd auction result is
  * ordinary.
+ *
+ * Past `MAX_DRIFT_PAIRS` the median is taken over a sample of the pairs rather
+ * than all of them. That is the same population, read from a subset: the
+ * median of forty thousand slopes drawn uniformly sits within a hair of the
+ * median of a million, and the alternative was the whole quantity being too
+ * slow to compute. The draw is seeded on the series itself, so the number is
+ * the same on every render and across reloads — a trend that wobbled each time
+ * the page was drawn would be worse than a slow one.
  */
 export function robustDrift(points: PricePoint[]): number | null {
   const s = [...points].filter((p) => p.price > 0).sort((a, b) => a.date.localeCompare(b.date))
   if (s.length < 3) return null
-  const first = s[0].date
+  const n = s.length
   const slopes: number[] = []
-  for (let i = 0; i < s.length; i++) {
-    for (let j = i + 1; j < s.length; j++) {
-      const dt = daysBetween(s[i].date, s[j].date)
-      if (dt <= 0) continue
-      slopes.push((Math.log(s[j].price) - Math.log(s[i].price)) / dt)
+  const slopeAt = (i: number, j: number) => {
+    const dt = daysBetween(s[i].date, s[j].date)
+    if (dt <= 0) return
+    slopes.push((Math.log(s[j].price) - Math.log(s[i].price)) / dt)
+  }
+
+  if ((n * (n - 1)) / 2 <= MAX_DRIFT_PAIRS) {
+    for (let i = 0; i < n; i++) for (let j = i + 1; j < n; j++) slopeAt(i, j)
+  } else {
+    // Two distinct indices drawn uniformly and then ordered, which is uniform
+    // over unordered pairs. Drawing i first and j from what is left of the
+    // series would not be: it would over-weight the late sales.
+    const rand = seededRandom(n * 7919 + Math.round(s[0].price) + Math.round(s[n - 1].price))
+    for (let k = 0; k < MAX_DRIFT_PAIRS; k++) {
+      const a = Math.floor(rand() * n) % n
+      const b = Math.floor(rand() * n) % n
+      if (a === b) continue
+      slopeAt(Math.min(a, b), Math.max(a, b))
     }
   }
   if (slopes.length === 0) return null
-  void first
   return median(slopes)
 }
 

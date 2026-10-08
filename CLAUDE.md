@@ -738,6 +738,47 @@ built on it produces figures with no meaning.
 must stay where it started, at every horizon. That is what both bugs broke, and
 it is what the tests now assert.
 
+### A quadratic that was free at nine sales and is not at eight hundred
+
+A 122-cert fetch from Alt brought back **101,033 sales kept of 156,396 on
+record, for 39 credits** — ten times the data the app had ever held, since the
+previous full fetch was 32 cards and 10,768 sales. Measured at that scale, on
+synthetic series of the same shape:
+
+| | |
+|---|---|
+| `buildRepeatSalesIndex`, whole collection | 134 ms |
+| 122 cards analysed, no forecast (holdings) | 548 ms |
+| 122 cards analysed, with forecast (watchlist) | ~5,100 ms |
+| store serialized to IndexedDB | 233 ms, 14.8 MB |
+
+`robustDrift` is Theil-Sen — the median of **every pairwise slope**. Nine sales
+is 36 pairs; 828 is 342,378, per card, on every analysis. Per-card forecast
+cost went 29 ms at 20 sales to 372 ms at 828, growing as the square, so it
+would get worse with every month of accrued history.
+
+`MAX_DRIFT_PAIRS` (40,000) caps it. Under the cap every pair is still compared
+and the number is bit-for-bit what it was, which is most cards and every card
+in the tests. Over it the median is taken over a uniform sample of pairs, which
+measured within **0.03 percentage points a year** of the exact answer on cards
+built with a known trend. The draw is seeded on the series, so the figure does
+not wobble between redraws — two indices drawn uniformly and then ordered,
+since drawing the second from what is left of the series would over-weight the
+late sales.
+
+**What this did NOT fix, and the measurement that nearly went unreported.** With
+a market index present — which it is, on a collection this size — the forecast
+takes `estimateBeta` and never calls `robustDrift` at all. So the collection-wide
+five seconds was unchanged by this, and the first version of this note claiming
+a speedup there would have been wrong. The win is real but narrower: 372 ms to
+87 ms per card on the no-index path, and a quadratic removed before it grew.
+
+The remaining ~63 ms a card is the Monte Carlo itself — 2,000 paths times 365
+days, times 122 cards is some 89 million steps — and it is paid once per change
+rather than per render, because `computeForecast` caches on its inputs. Cutting
+it further means fewer paths (noisier bands), or moving the work off the main
+thread. Neither is done.
+
 ### Two different reasons a number is wrong, and only one is fixed by backfilling
 
 `historygaps.ts`, shown in Data & settings. The owner asked for accurate
