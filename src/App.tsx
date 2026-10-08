@@ -130,6 +130,7 @@ export default function App() {
   // The most recent import, so the banner can say where its rows landed. Kept
   // until dismissed or superseded, since the answer matters most right after.
   const lastImport = store.importLog[store.importLog.length - 1]
+  const holdingIds = useMemo(() => holdings.map((h) => h.id), [holdings])
   // Stored holdings keep whatever they were parsed as, so an importer fix only
   // reaches a sheet that is uploaded again. Say so rather than showing zeros.
   const costMissing = holdings.length > 0 && stats.costBasis === 0
@@ -291,10 +292,13 @@ export default function App() {
 
         <ImportResultBanner
           entry={lastImport}
+          holdingIds={holdingIds}
+          watchCount={watchlist.length}
           onGoToWatchlist={() => setTab('watchlist')}
           onGoToHoldings={() => setTab('holdings')}
-          onMoveHoldingsToWatchlist={() => {
-            store.moveToWatchlist(holdings.map((h) => h.id))
+          onMoveHoldingsToWatchlist={(ids) => {
+            // The rows that import placed, not every holding there is.
+            store.moveToWatchlist(ids)
             setTab('watchlist')
           }}
         />

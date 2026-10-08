@@ -43,6 +43,24 @@ export interface ImportLogEntry {
   ignoredHeaders: string[]
   /** Which tab each sheet's rows were sent to. */
   routed: { sheet: string; to: 'holdings' | 'watchlist' | 'price history'; because?: string }[]
+  /**
+   * The ids this import created, so "move those rows" can mean those rows.
+   *
+   * The banner's button moved `holdings.map((h) => h.id)` — every holding
+   * there was, not the ones the import had placed. Any row from an earlier
+   * import, and any slab typed in by cert since, went with them.
+   */
+  placed?: { holdings: string[]; watchlist: string[] }
+  /**
+   * How many rows each list held once this import had landed.
+   *
+   * The banner is news about an import, and news goes out of date. Reported:
+   * adding a slab by cert left it saying "90 rows went to your holdings" with
+   * 91 rows in there — a true sentence about the import, read as a claim about
+   * the list, with nothing to retire it. Comparing against the live count is
+   * what tells the banner the list has moved on without it.
+   */
+  totalAfter?: { holdings: number; watchlist: number }
   issues: { row: number; message: string }[]
   historyPoints: number
 }
@@ -286,6 +304,10 @@ function migrate(saved: PersistedState): PersistedState {
       routed: e.routed ?? [],
       issues: e.issues ?? [],
       sheets: e.sheets ?? [],
+      // An entry saved before ids were recorded cannot say which rows it
+      // placed. Empty rather than absent, so the banner treats it as having
+      // nothing left to act on instead of acting on everything.
+      placed: e.placed ?? { holdings: [], watchlist: [] },
     })),
   }
 }
@@ -1021,6 +1043,11 @@ export const useStore = create<AppState>((setState, getState) => ({
         unmappedHeaders: [...new Set(unmappedHeaders)],
         ignoredHeaders: [...new Set(ignoredHeaders)],
         issues: issues.slice(0, 50), historyPoints,
+        placed: {
+          holdings: result.holdings.flatMap((r) => r.items.map((h) => h.id)),
+          watchlist: result.watchlist.flatMap((r) => r.items.map((w) => w.id)),
+        },
+        totalAfter: { holdings: holdings.length, watchlist: watchlist.length },
       }
 
       const next = {

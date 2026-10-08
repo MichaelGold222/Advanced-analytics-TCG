@@ -447,6 +447,34 @@ reason: the app made a routing decision and said nothing, so the only way to
 learn the answer was to go looking. The fix for a wrong routing should be a
 button, not a bug report.
 
+### The import banner outlived the import
+
+Reported: adding a slab by its cert number left the page saying *"90 rows from
+pokemon portfolio.xlsx went to your holdings, where they count toward portfolio
+value"* — with 91 rows in there. A true sentence about an import, read as a
+claim about the list, with nothing to retire it when the list moved on.
+
+The worse half was the button beside it. **"Not owned — move to the watchlist"
+called `moveToWatchlist(holdings.map((h) => h.id))`** — every holding there
+was, not the rows that import placed. A row from an earlier import, and the
+slab just typed in by cert, would have gone with them. The banner exists to
+make a wrong routing a button rather than a bug report, and the button was
+wrong about its own scope.
+
+- `ImportLogEntry.placed` records the ids each import created, so "those rows"
+  means those rows. The banner offers only the ones still present, and says how
+  many when it is fewer than were imported.
+- `ImportLogEntry.totalAfter` records what each list held once the import
+  landed. The banner hides as soon as a live count differs — a slab added, a
+  row deleted, rows moved — because past that moment it only describes a state
+  that no longer exists.
+- `migrate` gives an entry saved before this an **empty** `placed` rather than
+  leaving it absent, so an old entry is treated as having nothing left to act
+  on instead of everything.
+
+Six tests in `ImportResultBanner.test.tsx`, including the reported case: 90
+imported, 91 present, banner gone.
+
 ### The upload that was never routed at all
 
 Three reports of "my watchlist went to holdings" had three different causes,
