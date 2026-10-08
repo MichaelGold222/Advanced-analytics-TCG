@@ -221,10 +221,37 @@ const EMPTY: PersistedState = {
  * for a change that looked additive, and the fix belongs here, once, rather
  * than in every component that reads one of these.
  */
+/**
+ * Stored holdings carry the sheet's value in `userPrice`, which now means
+ * something else.
+ *
+ * `userPrice` used to receive both the owner's typed figure and whatever an
+ * imported sheet's value column said, and it beats every fetched sale — so a
+ * collection imported from a spreadsheet was frozen at that spreadsheet's
+ * numbers and no refresh could move it. The field is now the typed figure
+ * only, and the sheet's goes to `importedValue`, ranking below anything
+ * fetched.
+ *
+ * That leaves what is already saved. Nothing recorded which of the two a
+ * stored number was, and the two cannot be told apart after the fact, so this
+ * moves all of them to `importedValue`. On a collection of a hundred-odd
+ * imported rows that is right for all but a handful, and it is the direction
+ * whose failure is visible and repairable: a card whose value was genuinely
+ * typed goes back to showing its fetched price, and typing it again makes it
+ * stick. Leaving them where they are would instead mean the reported bug is
+ * still there for every row already saved, silently, until the sheet is
+ * imported again.
+ */
+function movePricedFromSheet(h: Holding): Holding {
+  if (h.userPrice == null || h.importedValue != null) return h
+  const { userPrice, ...rest } = h
+  return { ...rest, importedValue: userPrice }
+}
+
 function migrate(saved: PersistedState): PersistedState {
   return {
     ...saved,
-    holdings: saved.holdings ?? [],
+    holdings: (saved.holdings ?? []).map(movePricedFromSheet),
     watchlist: saved.watchlist ?? [],
     uploadedHistory: saved.uploadedHistory ?? {},
     snapshots: saved.snapshots ?? {},

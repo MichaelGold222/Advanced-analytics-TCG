@@ -137,7 +137,7 @@ export default function App() {
     const key = holdingKey(h)
     const s = series.get(key)
     if (!s) return []
-    const uv = unitValue(holdingAnalyses.get(key), h.userPrice)
+    const uv = unitValue(holdingAnalyses.get(key), h.userPrice, h.importedValue)
     return [{
       key: h.id,
       name: h.name,
@@ -150,7 +150,7 @@ export default function App() {
   const topHoldings = useMemo<HoldingBar[]>(() => {
     const byName = new Map<string, HoldingBar>()
     for (const h of holdings) {
-      const uv = unitValue(holdingAnalyses.get(holdingKey(h)), h.userPrice)
+      const uv = unitValue(holdingAnalyses.get(holdingKey(h)), h.userPrice, h.importedValue)
       if (uv == null) continue
       const value = uv * h.quantity
       const label = h.set ? `${h.name} · ${h.set}` : h.name

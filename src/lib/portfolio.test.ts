@@ -262,3 +262,57 @@ describe('rows that landed in the wrong tab', () => {
     expect(holdingAsWatchItem(holding({})).askingPrice).toBeUndefined()
   })
 })
+
+describe('a spreadsheet figure is not a typed override', () => {
+  // Reported as "I refreshed prices and my portfolio holdings page didn't
+  // update". It had not: `userPrice` received both the owner's typed figure
+  // and whatever an imported sheet's "Market Value" column said, and it beats
+  // every fetched sale — so an imported collection was pinned to its sheet
+  // and no refresh could move it.
+  const slab = holding({ name: 'Charizard', segment: 'vintage', costBasis: 1000, cert: '123' })
+  const sold = (price: number): PriceSeries => ({
+    key: holdingKey(slab),
+    points: [
+      { date: daysBack(40), price: price * 0.95, source: 'sale' },
+      { date: daysBack(20), price: price * 0.98, source: 'sale' },
+      { date: daysBack(2), price, source: 'sale' },
+    ],
+  })
+
+  const valueOf = (h: Holding, series: PriceSeries) =>
+    unitValue(analyzeHoldings([h], new Map([[holdingKey(h), series]]), NOW).get(holdingKey(h)),
+      h.userPrice, h.importedValue)
+
+  it('lets a fetched sale overrule the sheet', () => {
+    const fromSheet = { ...slab, importedValue: 4000 }
+    expect(valueOf(fromSheet, sold(9900))).toBe(9900)
+  })
+
+  it('still lets a typed figure overrule a fetched sale', () => {
+    const typed = { ...slab, userPrice: 12_000 }
+    expect(valueOf(typed, sold(9900))).toBe(12_000)
+  })
+
+  it('falls back to the sheet only where nothing has been fetched', () => {
+    const fromSheet = { ...slab, importedValue: 4000 }
+    expect(valueOf(fromSheet, { key: holdingKey(slab), points: [] })).toBe(4000)
+  })
+
+  it('counts the sheet figure in the portfolio total rather than dropping it', () => {
+    // It is the worst evidence available and still better than calling the
+    // position worthless.
+    const fromSheet = { ...slab, importedValue: 4000, quantity: 2 }
+    const stats = computePortfolioStats(
+      [fromSheet],
+      analyzeHoldings([fromSheet], new Map([[holdingKey(fromSheet), { key: holdingKey(fromSheet), points: [] }]]), NOW),
+    )
+    expect(stats.marketValue).toBe(8000)
+  })
+
+  it('prefers a sale to the sheet even when the sale is lower', () => {
+    // The direction matters: a sheet exported at a peak would otherwise hold a
+    // position up forever.
+    const fromSheet = { ...slab, importedValue: 9000 }
+    expect(valueOf(fromSheet, sold(3000))).toBe(3000)
+  })
+})

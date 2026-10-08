@@ -388,3 +388,33 @@ describe('fetching the pictures', () => {
     expect(Object.keys(useStore.getState().certImages).sort()).toEqual(['111', '222'])
   })
 })
+
+describe('a saved sheet figure is moved off the override field', () => {
+  // Stored state is older than the code. Every holding already in IndexedDB
+  // carries its sheet's value in `userPrice`, which now means "the owner typed
+  // this" and still outranks every fetched sale — so without this the reported
+  // bug stays live for every row already saved, silently, until the sheet is
+  // imported again.
+  it('migrates it on hydrate', async () => {
+    const { get } = await import('idb-keyval')
+    vi.mocked(get).mockResolvedValueOnce({
+      holdings: [holding({ name: 'Charizard', cert: '123', userPrice: 4000 })],
+      watchlist: [],
+    })
+    await useStore.getState().hydrate()
+    const [h] = useStore.getState().holdings
+    expect(h.importedValue).toBe(4000)
+    expect(h.userPrice).toBeUndefined()
+  })
+
+  it('leaves a figure alone once it has been moved', async () => {
+    const { get } = await import('idb-keyval')
+    vi.mocked(get).mockResolvedValueOnce({
+      holdings: [holding({ name: 'Blastoise', importedValue: 1500 })],
+      watchlist: [],
+    })
+    await useStore.getState().hydrate()
+    const [h] = useStore.getState().holdings
+    expect(h.importedValue).toBe(1500)
+  })
+})

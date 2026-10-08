@@ -705,3 +705,24 @@ describe('contents overrule the button when they are unambiguous', () => {
     expect(r.watchlist).toHaveLength(0)
   })
 })
+
+describe("a sheet's value column does not become a typed override", () => {
+  // The import side of "I refreshed prices and my holdings page didn't
+  // update". A "Market Value" column landed in `userPrice`, which the
+  // valuation treats as the owner's own figure and ranks above every fetched
+  // sale, so the whole imported collection was frozen at its sheet's numbers.
+  const rows: Cell[][] = [
+    ['Card Name', 'Set', 'Card Number', 'Grade', 'Cert', 'Cost Basis', 'Market Value'],
+    ['Charizard', 'Base Set', '4', 'PSA 10', '12345678', 1000, 4000],
+  ]
+
+  it('files it as the sheet figure, not the owner figure', () => {
+    const [h] = rowsToHoldings(sheet(rows)).items
+    expect(h.importedValue).toBe(4000)
+    expect(h.userPrice).toBeUndefined()
+  })
+
+  it('still recognises the column, so it is not reported as unreadable', () => {
+    expect(mapColumns(rows[0] as string[]).userPrice).toBe(6)
+  })
+})

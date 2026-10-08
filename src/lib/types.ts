@@ -36,8 +36,29 @@ export interface Holding {
   /** Per-unit acquisition cost. */
   costBasis: number
   purchaseDate?: string
-  /** Per-unit price the user supplied in the sheet, if any. */
+  /**
+   * A per-unit value the owner typed in, by the pencil on a row.
+   *
+   * This outranks everything fetched, because whoever typed it knows something
+   * the sales record does not — a lot sale that was not representative, a
+   * grade correction, a private deal.
+   *
+   * It is deliberately NOT where an imported sheet's value column lands. One
+   * field used to serve both, and the consequence was that every holding
+   * imported from a spreadsheet was pinned to whatever that sheet said and no
+   * amount of fetching could move it: the whole holdings page sat still after
+   * a refresh that had worked. See `importedValue`.
+   */
   userPrice?: number
+  /**
+   * What the imported sheet's value column said — "Market Value", "Current
+   * Value", "FMV", "Last Sale", "Price".
+   *
+   * A stale quote from whenever the sheet was exported, not the owner's own
+   * judgement, so it ranks BELOW anything fetched and stands in only where
+   * nothing has been fetched at all.
+   */
+  importedValue?: number
   language?: string
   notes?: string
   /** Explicit segment from the sheet; wins over inference. */

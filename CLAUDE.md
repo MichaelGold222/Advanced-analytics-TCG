@@ -238,6 +238,48 @@ Worth knowing: `costBasis` claims "Entry Price", so a watchlist using that
 header to mean "the price I would pay" has it set aside rather than read as a
 target. The log now names it, which is how anyone would find out.
 
+### One field meant two things, and the holdings page never moved
+
+Reported as "I refreshed prices and my portfolio holdings page didn't update".
+It had not, and it never could have.
+
+`userPrice` received **both** the figure the owner types with the pencil on a
+row **and** whatever an imported sheet's value column said — the aliases are
+"Market Value", "Current Value", "FMV", "Value", "Last Sale", "Price", which is
+what every collection export carries. `unitValue` treats that field as the
+owner's own judgement and ranks it above every fetched sale, with a comment
+explaining why that is right. It is right, for a typed figure. For a column in
+a spreadsheet it meant an imported collection was pinned to whatever that sheet
+said on the day it was exported, and no refresh could ever move it.
+
+This is why it looked like the redraw bug and was not: `selectSeries` and the
+memo were fine, the sales were in the store, the analyses were recomputed
+correctly — and then the displayed value came off a field none of that touches.
+**Checking that state updates is not the same as checking that the number on
+screen is derived from it.**
+
+- `userPrice` is now the typed figure only.
+- `importedValue` is the sheet's, and ranks **below** anything fetched and
+  above nothing — it stands in only where no sales have been fetched at all,
+  because it is still better than reporting the position as worthless.
+- `migrate` moves every stored `userPrice` to `importedValue`. Nothing recorded
+  which of the two a saved number was and the two cannot be told apart
+  afterwards, so all of them move. On a collection of imported rows that is
+  right for all but a handful, and it is the direction whose failure is visible
+  and repairable — a genuinely typed value reverts to its fetched price and
+  typing it again makes it stick. The other direction leaves the reported bug
+  live for every already-saved row.
+
+A row with no fetched sales used to read "no sales" with a dash beside it while
+its sheet figure counted toward the portfolio total. It now says **"from your
+sheet"**, because a number in the total has to be accounted for somewhere on
+screen.
+
+**Last sold now carries its date.** It showed the price and "12d ago", which
+answers a different question from "when". Anyone checking a position against
+their own records needs the date, so the cell prints `19 Sep 26 · 12d ago` with
+the venue under it.
+
 ### Slab photographs
 
 `certImages` is keyed by certificate and already covered the watchlist —

@@ -349,7 +349,12 @@ export function rowsToHoldings(sheet: RawSheet): ImportResult<Holding> {
     }
     const quantity = toNumber(f.get('quantity')) ?? 1
     const costBasis = perUnitCost(f.get('costBasis'), f.get('investment'), quantity)
-    const userPrice = toNumber(f.get('userPrice'))
+    // A sheet's value column is a market quote from whenever the sheet was
+    // exported, not the owner's own figure, so it goes to `importedValue` and
+    // ranks below anything fetched. It used to land in `userPrice`, which the
+    // valuation treats as a typed override that beats every sale — so a whole
+    // imported collection was frozen at its spreadsheet's numbers.
+    const importedValue = toNumber(f.get('userPrice'))
     const key = itemKey({
       name: f.name, set: f.set, number: f.number, variation: f.variation,
       grader: f.grader, grade: f.grade,
@@ -370,7 +375,7 @@ export function rowsToHoldings(sheet: RawSheet): ImportResult<Holding> {
       quantity: quantity > 0 ? quantity : 1,
       costBasis,
       purchaseDate: toDate(f.get('purchaseDate')),
-      userPrice,
+      importedValue,
       language: f.language,
       notes: f.notes,
       segmentOverride: f.override,

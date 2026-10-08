@@ -28,12 +28,24 @@ export function holdingKey(h: Pick<Holding, 'name' | 'set' | 'number' | 'grader'
  * and the per-position figures agree. Where nothing has sold inside the window
  * the median stands in rather than leaving the position unvalued.
  */
-export function unitValue(analysis?: ItemAnalysis, manual?: number | null): number | null {
-  // A value typed in by hand outranks anything fetched: whoever entered it
-  // knows something the sales record does not, and silently overruling them
-  // would make the number they typed look broken.
+export function unitValue(
+  analysis?: ItemAnalysis,
+  manual?: number | null,
+  imported?: number | null,
+): number | null {
+  // A value TYPED IN outranks anything fetched: whoever entered it knows
+  // something the sales record does not, and silently overruling them would
+  // make the number they typed look broken.
   if (manual != null && manual > 0) return manual
-  return analysis?.lastSale?.price ?? analysis?.fmv.fmv ?? null
+  const fetched = analysis?.lastSale?.price ?? analysis?.fmv.fmv ?? null
+  if (fetched != null) return fetched
+  // A figure from an imported sheet is a quote from the day that sheet was
+  // exported. It is better than nothing and worse than every sale, so it sits
+  // here — last. Putting it where `manual` is pinned every imported holding to
+  // its spreadsheet and made a successful refresh look like it had done
+  // nothing: the reported symptom was "I refreshed prices and my holdings
+  // page didn't update", and this line was the whole of it.
+  return imported != null && imported > 0 ? imported : null
 }
 
 export function analyzeHoldings(
@@ -75,7 +87,7 @@ export function computePortfolioStats(
 
   for (const h of holdings) {
     const seg = bySegment.get(h.segment)!
-    const uv = unitValue(analyses.get(holdingKey(h)), h.userPrice)
+    const uv = unitValue(analyses.get(holdingKey(h)), h.userPrice, h.importedValue)
     const positionCost = h.costBasis * h.quantity
     const positionValue = uv != null ? uv * h.quantity : null
 

@@ -6,7 +6,7 @@ import { CardThumb } from './CardThumb'
 import { thumbFor } from '../lib/images'
 import { SelectionBar, TickBox } from './SelectionBar'
 import { useSelection } from '../hooks/useSelection'
-import { money, pct, plainPct } from '../lib/format'
+import { money, pct, plainPct, shortDate } from '../lib/format'
 import { classify } from '../lib/classify'
 import { holdingKey, unitValue } from '../lib/portfolio'
 import { SEGMENTS, SEGMENT_LABELS } from '../lib/types'
@@ -43,7 +43,7 @@ export function HoldingsTable({
       .map((h) => {
         const a = analyses.get(holdingKey(h))
         const fmv = a?.fmv.fmv ?? null
-        const uv = unitValue(a, h.userPrice)
+        const uv = unitValue(a, h.userPrice, h.importedValue)
         const value = uv == null ? null : uv * h.quantity
         const cost = h.costBasis * h.quantity
         return { h, a, fmv, value, cost, unrealized: value == null ? null : value - cost, roi: value == null || cost <= 0 ? null : (value - cost) / cost }
@@ -102,7 +102,7 @@ export function HoldingsTable({
               <th>Segment</th>
               <th className="num">Invested</th>
               <th className="num" title="Median of the last 5 completed comps across every venue. A steadier estimate than any one sale, shown for reference.">Median of 5</th>
-              <th className="num" title="The most recent completed sale of this exact card at this grade">Last sold</th>
+              <th className="num" title="The most recent completed sale of this exact card at this grade, and the date it sold">Last sold</th>
               <th className="num" title="Lowest this card has traded in the last 30 days — the band it is actually trading in now.">1-mo low</th>
               <th className="num" title="Highest this card has traded in the last 30 days.">1-mo high</th>
               <th className="num" title="Lowest this card has traded in the last 6 months. Where the sales on record do not reach back that far, the actual span is shown under the figure.">6-mo low</th>
@@ -149,6 +149,7 @@ export function HoldingsTable({
                   <td className="num">
                     <LastSoldCell
                       analysis={a} override={h.userPrice ?? null}
+                      imported={h.importedValue ?? null}
                       editing={editingId === h.id}
                       onChange={(v) => { onSetValue(h.id, v); setEditingId(null) }}
                       onCancel={() => setEditingId(null)}
@@ -208,10 +209,13 @@ export function HoldingsTable({
       {rows.length > 0 && (
         <p className="text-xs muted leading-relaxed px-4 pb-4">
           Unrealized and return are measured against <strong>Last sold</strong> — what the card actually went
-          for — so they compare a price paid with a price achieved. <strong>Median of 5</strong> sits beside it
-          as the steadier estimate; where nothing has sold inside the year, it stands in.
+          for, with the date it went for it — so they compare a price paid with a price achieved.
+          <strong>Median of 5</strong> sits beside it as the steadier estimate; where nothing has sold inside
+          the year, it stands in.
           The pencil on a row sets your own figure for that card, for when you know a sale was not
           representative. Clearing the box hands it back to the fetched price.
+          A row reading <em>from your sheet</em> has no fetched sales at all and is showing the value its
+          spreadsheet carried — fetch comps for it and the real price takes over.
         </p>
       )}
     </section>
@@ -322,10 +326,13 @@ const VENUE_LABELS: Record<string, string> = {
  * bounced back, and committed on blur or Enter.
  */
 function LastSoldCell({
-  analysis, override, editing, onChange, onCancel,
+  analysis, override, imported, editing, onChange, onCancel,
 }: {
   analysis?: ItemAnalysis
+  /** A figure typed in by the owner, which outranks every sale. */
   override: number | null
+  /** What the imported sheet said, which outranks nothing. */
+  imported: number | null
   editing: boolean
   onChange: (v: number | null) => void
   onCancel: () => void
@@ -365,7 +372,10 @@ function LastSoldCell({
     )
   }
 
-  const shown = override ?? last?.price ?? null
+  const shown = override ?? last?.price ?? imported ?? null
+  // The date the card actually sold, not only how long ago. "12d ago" answers
+  // a different question from "when", and a date is what anyone checking a
+  // position against their own records needs.
   const when = last && (last.ageDays === 0 ? 'today' : last.ageDays === 1 ? 'yesterday' : `${last.ageDays}d ago`)
   const where = last?.venue ? VENUE_LABELS[last.venue] ?? last.venue : null
 
@@ -374,9 +384,18 @@ function LastSoldCell({
       {shown == null ? <span className="muted">—</span> : <div className="tabular">{money(shown)}</div>}
       {/* Nothing under an edited figure: it is the number, not a status. */}
       {override == null && (
-        <div className="text-[11px] muted">
-          {last ? [where, when].filter(Boolean).join(' · ') : 'no sales'}
-        </div>
+        last
+          ? (
+            <>
+              <div className="text-[11px] muted">{[shortDate(last.date), when].filter(Boolean).join(' · ')}</div>
+              {where && <div className="text-[11px] muted">{where}</div>}
+            </>
+          )
+          : (
+            // A sheet's figure counts toward the portfolio total, so a row
+            // carrying one must not read "no sales" with a dash beside it.
+            <div className="text-[11px] muted">{imported != null ? 'from your sheet' : 'no sales'}</div>
+          )
       )}
     </>
   )
